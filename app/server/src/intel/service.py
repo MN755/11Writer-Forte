@@ -6,12 +6,14 @@ import sqlite3
 import uuid
 from collections.abc import Iterable
 from datetime import datetime, timezone
+from math import asin, cos, radians, sin, sqrt
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import func
+from sqlalchemy import func, text
 from sqlmodel import SQLModel, Session, select
 
+from .db import get_database_status
 from .models import (
     AlertCreate,
     AlertSeverity,
@@ -27,6 +29,7 @@ from .models import (
     EntityResolutionCreate,
     EventCreate,
     GeofenceCreate,
+    IntelDatabaseStatus,
     IngestFileRequest,
     IntelAlert,
     IntelAnalyticProduct,
@@ -39,6 +42,8 @@ from .models import (
     IntelGeofence,
     IntelIngestJob,
     IntelObservation,
+    IntelSpatialNearbyItem,
+    IntelSpatialNearbyResponse,
     IntelSource,
     ObservationCreate,
     OverviewResponse,
@@ -122,6 +127,16 @@ def _truncate(value: str, max_length: int = 240) -> str:
     return value if len(value) <= max_length else f"{value[: max_length - 3]}..."
 
 
+def _haversine_m(lat_a: float, lon_a: float, lat_b: float, lon_b: float) -> float:
+    earth_radius_m = 6_371_000.0
+    lat_a_rad = radians(lat_a)
+    lat_b_rad = radians(lat_b)
+    delta_lat = radians(lat_b - lat_a)
+    delta_lon = radians(lon_b - lon_a)
+    value = sin(delta_lat / 2.0) ** 2 + cos(lat_a_rad) * cos(lat_b_rad) * sin(delta_lon / 2.0) ** 2
+    return 2.0 * earth_radius_m * asin(sqrt(value))
+
+
 def _extract_bbox(geometry_geojson: dict[str, Any]) -> tuple[float | None, float | None, float | None, float | None]:
     coordinates = geometry_geojson.get("coordinates")
     if not coordinates:
@@ -154,6 +169,9 @@ def _extract_bbox(geometry_geojson: dict[str, Any]) -> tuple[float | None, float
 class IntelService:
     def __init__(self, session: Session) -> None:
         self.session = session
+
+    def database_status(self) -> IntelDatabaseStatus:
+        return get_database_status(self.session)
 
     def list_sources(self, kind: str | None = None, limit: int = 100) -> list[IntelSource]:
         statement = select(IntelSource).order_by(IntelSource.created_at.desc()).limit(limit)
@@ -1076,6 +1094,29 @@ class IntelService:
             last_updated_at=_utc_now_iso(),
         )
 
+    def spatial_nearby(self, latitude: float, longitude: float, radius_m: float = 50_000.0, limit: int = 25) -> IntelSpatialNearbyResponse:
+        status = self.database_status()
+        bounded_limit = max(1, min(limit, 250))
+        bounded_radius_m = max(1.0, min(radius_m, 5_000_000.0))
+        if status.postgis_available and status.spatial_backend == "postgis":
+            results = self._spatial_nearby_postgis(latitude, longitude, bounded_radius_m, bounded_limit)
+        else:
+            results = self._spatial_nearby_python(latitude, longitude, bounded_radius_m, bounded_limit)
+        caveats = list(status.caveats)
+        caveats.append(
+            "Geospatial proximity is a triage aid; nearby results do not prove causality, relevance, or complete coverage."
+        )
+        return IntelSpatialNearbyResponse(
+            latitude=latitude,
+            longitude=longitude,
+            radius_m=bounded_radius_m,
+            limit=bounded_limit,
+            spatial_backend=status.spatial_backend,
+            database=status,
+            results=results,
+            caveats=caveats,
+        )
+
     def _record_custody(self, payload: CustodyRecordCreate, *, commit: bool) -> IntelCustodyRecord:
         record = IntelCustodyRecord(
             custody_record_id=payload.custody_record_id or _new_id("custody"),
@@ -1096,6 +1137,223 @@ class IntelService:
             self.session.commit()
             self.session.refresh(record)
         return record
+
+    def _spatial_nearby_postgis(
+        self,
+        latitude: float,
+        longitude: float,
+        radius_m: float,
+        limit: int,
+    ) -> list[IntelSpatialNearbyItem]:
+        rows = self.session.execute(
+            text(
+                """
+                WITH query_point AS (
+                    SELECT ST_SetSRID(ST_MakePoint(:longitude, :latitude), 4326) AS geom
+                )
+                SELECT *
+                FROM (
+                    SELECT
+                        'event' AS subject_kind,
+                        event_id AS subject_id,
+                        title,
+                        summary,
+                        ST_DistanceSphere(geom, query_point.geom) AS distance_m,
+                        latitude,
+                        longitude,
+                        NULL::text AS source_id,
+                        event_id,
+                        NULL::text AS entity_id,
+                        geofence_id,
+                        'postgis-dwithin' AS matched_via
+                    FROM intel_events, query_point
+                    WHERE geom IS NOT NULL
+                      AND ST_DWithin(geom::geography, query_point.geom::geography, :radius_m)
+                    UNION ALL
+                    SELECT
+                        'entity' AS subject_kind,
+                        entity_id AS subject_id,
+                        name AS title,
+                        description AS summary,
+                        ST_DistanceSphere(geom, query_point.geom) AS distance_m,
+                        latitude,
+                        longitude,
+                        primary_source_id AS source_id,
+                        NULL::text AS event_id,
+                        entity_id,
+                        NULL::text AS geofence_id,
+                        'postgis-dwithin' AS matched_via
+                    FROM intel_entities, query_point
+                    WHERE geom IS NOT NULL
+                      AND ST_DWithin(geom::geography, query_point.geom::geography, :radius_m)
+                    UNION ALL
+                    SELECT
+                        'observation' AS subject_kind,
+                        observation_id AS subject_id,
+                        title,
+                        summary,
+                        ST_DistanceSphere(geom, query_point.geom) AS distance_m,
+                        latitude,
+                        longitude,
+                        source_id,
+                        event_id,
+                        entity_id,
+                        NULL::text AS geofence_id,
+                        'postgis-dwithin' AS matched_via
+                    FROM intel_observations, query_point
+                    WHERE geom IS NOT NULL
+                      AND ST_DWithin(geom::geography, query_point.geom::geography, :radius_m)
+                    UNION ALL
+                    SELECT
+                        'geofence' AS subject_kind,
+                        geofence_id AS subject_id,
+                        name AS title,
+                        description AS summary,
+                        0.0 AS distance_m,
+                        CASE
+                            WHEN min_latitude IS NOT NULL AND max_latitude IS NOT NULL
+                            THEN (min_latitude + max_latitude) / 2.0
+                            ELSE NULL
+                        END AS latitude,
+                        CASE
+                            WHEN min_longitude IS NOT NULL AND max_longitude IS NOT NULL
+                            THEN (min_longitude + max_longitude) / 2.0
+                            ELSE NULL
+                        END AS longitude,
+                        NULL::text AS source_id,
+                        NULL::text AS event_id,
+                        NULL::text AS entity_id,
+                        geofence_id,
+                        'postgis-intersects' AS matched_via
+                    FROM intel_geofences, query_point
+                    WHERE COALESCE(geometry_geom, bbox_geom) IS NOT NULL
+                      AND ST_Intersects(COALESCE(geometry_geom, bbox_geom), query_point.geom)
+                ) nearby
+                ORDER BY distance_m ASC, subject_kind ASC, subject_id ASC
+                LIMIT :limit
+                """
+            ),
+            {
+                "latitude": latitude,
+                "longitude": longitude,
+                "radius_m": radius_m,
+                "limit": limit,
+            },
+        ).mappings()
+        return [
+            IntelSpatialNearbyItem(
+                subject_kind=str(row["subject_kind"]),
+                subject_id=str(row["subject_id"]),
+                title=str(row["title"]),
+                summary=str(row["summary"] or ""),
+                distance_m=float(row["distance_m"] or 0.0),
+                latitude=row["latitude"],
+                longitude=row["longitude"],
+                source_id=row["source_id"],
+                event_id=row["event_id"],
+                entity_id=row["entity_id"],
+                geofence_id=row["geofence_id"],
+                matched_via=str(row["matched_via"]),
+            )
+            for row in rows
+        ]
+
+    def _spatial_nearby_python(
+        self,
+        latitude: float,
+        longitude: float,
+        radius_m: float,
+        limit: int,
+    ) -> list[IntelSpatialNearbyItem]:
+        results: list[IntelSpatialNearbyItem] = []
+
+        for event in self.list_events(limit=2_000):
+            if event.latitude is None or event.longitude is None:
+                continue
+            distance_m = _haversine_m(latitude, longitude, event.latitude, event.longitude)
+            if distance_m <= radius_m:
+                results.append(
+                    IntelSpatialNearbyItem(
+                        subject_kind="event",
+                        subject_id=event.event_id,
+                        title=event.title,
+                        summary=event.summary,
+                        distance_m=distance_m,
+                        latitude=event.latitude,
+                        longitude=event.longitude,
+                        event_id=event.event_id,
+                        geofence_id=event.geofence_id,
+                        matched_via="python-haversine",
+                    )
+                )
+
+        for entity in self.list_entities(limit=2_000):
+            if entity.latitude is None or entity.longitude is None:
+                continue
+            distance_m = _haversine_m(latitude, longitude, entity.latitude, entity.longitude)
+            if distance_m <= radius_m:
+                results.append(
+                    IntelSpatialNearbyItem(
+                        subject_kind="entity",
+                        subject_id=entity.entity_id,
+                        title=entity.name,
+                        summary=entity.description,
+                        distance_m=distance_m,
+                        latitude=entity.latitude,
+                        longitude=entity.longitude,
+                        source_id=entity.primary_source_id,
+                        entity_id=entity.entity_id,
+                        matched_via="python-haversine",
+                    )
+                )
+
+        for observation in self.list_observations(limit=2_000):
+            if observation.latitude is None or observation.longitude is None:
+                continue
+            distance_m = _haversine_m(latitude, longitude, observation.latitude, observation.longitude)
+            if distance_m <= radius_m:
+                results.append(
+                    IntelSpatialNearbyItem(
+                        subject_kind="observation",
+                        subject_id=observation.observation_id,
+                        title=observation.title,
+                        summary=observation.summary,
+                        distance_m=distance_m,
+                        latitude=observation.latitude,
+                        longitude=observation.longitude,
+                        source_id=observation.source_id,
+                        event_id=observation.event_id,
+                        entity_id=observation.entity_id,
+                        matched_via="python-haversine",
+                    )
+                )
+
+        for geofence in self.list_geofences(limit=1_000):
+            if self._point_inside_geofence(latitude, longitude, geofence):
+                results.append(
+                    IntelSpatialNearbyItem(
+                        subject_kind="geofence",
+                        subject_id=geofence.geofence_id,
+                        title=geofence.name,
+                        summary=geofence.description,
+                        distance_m=0.0,
+                        latitude=(
+                            (geofence.min_latitude + geofence.max_latitude) / 2.0
+                            if None not in {geofence.min_latitude, geofence.max_latitude}
+                            else None
+                        ),
+                        longitude=(
+                            (geofence.min_longitude + geofence.max_longitude) / 2.0
+                            if None not in {geofence.min_longitude, geofence.max_longitude}
+                            else None
+                        ),
+                        geofence_id=geofence.geofence_id,
+                        matched_via="python-bbox-containment",
+                    )
+                )
+
+        results.sort(key=lambda item: (item.distance_m, item.subject_kind, item.subject_id))
+        return results[:limit]
 
     def _upsert_event_entity_link(self, event_id: str, entity_id: str, confidence_score: float) -> None:
         existing = self.session.exec(

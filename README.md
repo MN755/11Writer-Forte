@@ -40,6 +40,8 @@ The backend now also exposes a unified intelligence substrate at `/api/intel/*` 
 - cited summaries and report artifacts
 - local file intake for JSON, text-like files, and SQLite datasets
 - event-feed sync from the existing `/api/events/*` surface into canonical intel events and observations
+- runtime database capability inspection at `/api/intel/runtime/database`
+- proximity search at `/api/intel/spatial/nearby`
 
 ## Runtime Principles
 
@@ -103,9 +105,11 @@ python -m src.cli sync-event-feeds --feeds all --max-records-per-feed 50
 - `11writer routes`
 - `11writer doctor`
 - `11writer intel-overview`
+- `11writer intel-db`
 - `11writer ingest-file`
 - `11writer evaluate-alerts`
 - `11writer sync-event-feeds`
+- `11writer spatial-nearby`
 
 ## Key Environment Variables
 
@@ -117,6 +121,11 @@ python -m src.cli sync-event-feeds --feeds all --max-records-per-feed 50
 - `REFERENCE_DATABASE_URL=` optional subsystem override
 - `SOURCE_DISCOVERY_DATABASE_URL=` optional subsystem override
 - `WAVE_MONITOR_DATABASE_URL=` optional subsystem override
+
+## PostGIS Runtime Notes
+
+- On PostgreSQL, startup bootstraps the `postgis` extension plus managed spatial columns, triggers, and GIST indexes for the intel core tables.
+- On SQLite, the runtime stays usable for development and tests, but geospatial proximity falls back to Python instead of PostGIS operators.
 
 ## Known Gaps
 

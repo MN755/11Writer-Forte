@@ -535,6 +535,44 @@ class OverviewResponse(SQLModel):
     last_updated_at: str
 
 
+class IntelDatabaseStatus(CamelInputModel):
+    dialect: str
+    driver: str | None = None
+    server_version: str | None = None
+    postgis_available: bool = False
+    postgis_version: str | None = None
+    spatial_backend: str
+    managed_spatial_columns: list[str] = Field(default_factory=list)
+    managed_spatial_indexes: list[str] = Field(default_factory=list)
+    caveats: list[str] = Field(default_factory=list)
+
+
+class IntelSpatialNearbyItem(CamelInputModel):
+    subject_kind: str
+    subject_id: str
+    title: str
+    summary: str = ""
+    distance_m: float
+    latitude: float | None = None
+    longitude: float | None = None
+    source_id: str | None = None
+    event_id: str | None = None
+    entity_id: str | None = None
+    geofence_id: str | None = None
+    matched_via: str
+
+
+class IntelSpatialNearbyResponse(CamelInputModel):
+    latitude: float
+    longitude: float
+    radius_m: float
+    limit: int
+    spatial_backend: str
+    database: IntelDatabaseStatus
+    results: list[IntelSpatialNearbyItem] = Field(default_factory=list)
+    caveats: list[str] = Field(default_factory=list)
+
+
 class EventFeedSyncRequest(CamelInputModel):
     feeds: list[str] = Field(default_factory=list)
     max_records_per_feed: int = 100
