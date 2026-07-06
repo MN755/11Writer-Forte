@@ -26,12 +26,8 @@ from src.forte.api.signals import wave_router as forte_wave_signal_router
 from src.forte.api.wave_trust_overrides import root_router as forte_wave_trust_override_root_router
 from src.forte.api.wave_trust_overrides import wave_router as forte_wave_trust_override_wave_router
 from src.forte.api.waves import router as forte_wave_router
-from src.forte.api.deps import db as forte_db
 from src.forte.core.settings import settings as forte_settings
-from src.forte.db.init_db import init_db as init_forte_db
 from src.intel.api import router as intel_router
-from src.intel.db import db as intel_db
-from src.intel.db import init_db as init_intel_db
 from src.routes.aircraft import router as aircraft_router
 from src.routes.analyst import router as analyst_router
 from src.routes.anchorage_vaac import router as anchorage_vaac_router
@@ -71,6 +67,7 @@ from src.routes.washington_vaac import router as washington_vaac_router
 from src.routes.wave_monitor import router as wave_monitor_router
 from src.routes.water_quality_context import router as water_quality_context_router
 from src.routes.weather_context import router as weather_context_router
+from src.services.backend_database_service import bootstrap_backend_databases
 from src.webcam.refresh import WebcamRefreshService, WebcamWorker
 from src.services.runtime_scheduler_service import (
     RuntimeSchedulerCoordinator,
@@ -87,8 +84,7 @@ warnings.filterwarnings("ignore", category=UnsupportedFieldAttributeWarning)
 @asynccontextmanager
 async def _lifespan(_: FastAPI):
     settings = get_settings()
-    init_forte_db(forte_db)
-    init_intel_db(intel_db)
+    bootstrap_backend_databases(settings)
     stop_event: asyncio.Event | None = None
     worker_task: asyncio.Task[None] | None = None
     source_discovery_stop_event: asyncio.Event | None = None
