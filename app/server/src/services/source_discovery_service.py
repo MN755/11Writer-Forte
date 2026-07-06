@@ -30,6 +30,7 @@ from src.services.media_evidence_service import (
     sample_media_frames,
 )
 from src.services.rss_feed_service import parse_feed_document
+from src.services.storage_profile_service import resolve_runtime_storage_mode
 from src.services.wave_llm_provider_config_service import WaveLlmProviderConfigService
 from src.services.wave_llm_service import WaveLlmService
 from src.source_discovery.db import session_scope
@@ -414,7 +415,7 @@ class SourceDiscoveryService:
             return SourceDiscoveryMemoryOverviewResponse(
                 metadata={
                     "source": "source-discovery-memory",
-                    "storageMode": "persistent-sqlite",
+                    "storageMode": resolve_runtime_storage_mode(self._settings),
                     "reputationMode": "claim-outcome-v1",
                     "count": len(memories),
                 },

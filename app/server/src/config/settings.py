@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -177,6 +177,8 @@ class Settings(BaseSettings):
     )
     windy_webcams_api_key: str | None = Field(default=None, alias="WINDY_WEBCAMS_API_KEY")
     windy_webcams_base_url: str = Field(default="https://api.windy.com/api/webcams/v2", alias="WINDY_WEBCAMS_BASE_URL")
+    primary_database_url: str | None = Field(default=None, alias="PRIMARY_DATABASE_URL")
+    primary_database_enable_postgis: bool = Field(default=False, alias="PRIMARY_DATABASE_ENABLE_POSTGIS")
     reference_database_url: str = Field(default="sqlite:///./data/reference.db", alias="REFERENCE_DATABASE_URL")
     ourairports_reference_source_mode: str = Field(
         default="fixture",
@@ -1414,6 +1416,23 @@ class Settings(BaseSettings):
     webcam_worker_enabled: bool = Field(default=False, alias="WEBCAM_WORKER_ENABLED")
     webcam_worker_poll_seconds: int = Field(default=15, alias="WEBCAM_WORKER_POLL_SECONDS")
     webcam_worker_run_on_startup: bool = Field(default=False, alias="WEBCAM_WORKER_RUN_ON_STARTUP")
+
+    @model_validator(mode="after")
+    def _apply_primary_database_defaults(self) -> "Settings":
+        primary_database_url = self.primary_database_url
+        if not primary_database_url:
+            return self
+        if self.reference_database_url == "sqlite:///./data/reference.db":
+            self.reference_database_url = primary_database_url
+        if self.wave_monitor_database_url == "sqlite:///./data/wave_monitor.db":
+            self.wave_monitor_database_url = primary_database_url
+        if self.source_discovery_database_url == "sqlite:///./data/source_discovery.db":
+            self.source_discovery_database_url = primary_database_url
+        if self.webcam_database_url is None:
+            self.webcam_database_url = primary_database_url
+        if self.marine_database_url_override is None:
+            self.marine_database_url_override = primary_database_url
+        return self
 
     @property
     def cors_origins(self) -> list[str]:

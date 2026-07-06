@@ -201,6 +201,33 @@ class SourceStatusResponse(CamelModel):
     sources: list[SourceStatus]
 
 
+StorageBackend = Literal["sqlite", "postgresql", "postgresql+postgis", "unknown"]
+
+
+class StorageComponentStatus(CamelModel):
+    component: str
+    database_url: str
+    backend: StorageBackend
+    uses_primary_database: bool = False
+    reachable: bool = True
+    initialized: bool = False
+    table_count: int = 0
+    error: str | None = None
+
+
+class StorageStatusResponse(CamelModel):
+    runtime_mode: str
+    storage_mode: str
+    primary_database_url: str | None = None
+    primary_database_backend: StorageBackend | None = None
+    primary_database_postgis_enabled: bool = False
+    shared_storage: bool = False
+    distinct_database_count: int = 0
+    bootstrapped: bool = False
+    components: list[StorageComponentStatus] = Field(default_factory=list)
+    caveats: list[str] = Field(default_factory=list)
+
+
 class AircraftQuery(CamelModel):
     lamin: float
     lamax: float

@@ -12,6 +12,7 @@ import uvicorn
 from src.config.settings import Settings, get_settings
 from src.reference.ingest import cli as reference_ingest_cli
 from src import runtime_worker
+from src.services.storage_profile_service import bootstrap_storage, build_storage_status
 from src.webcam import worker as webcam_worker
 
 
@@ -38,6 +39,7 @@ def build_doctor_report(
         "code_oss_reference": root.joinpath("third_party", "code-oss-reference"),
     }
     frontend_status = {name: path.exists() for name, path in frontend_paths.items()}
+    storage_status = build_storage_status(runtime_settings).model_dump(mode="json", by_alias=True)
     return {
         "runtime_mode": runtime_settings.app_runtime_mode,
         "platform": {
@@ -51,6 +53,7 @@ def build_doctor_report(
             "wave_monitor_database_url": runtime_settings.wave_monitor_database_url,
             "source_discovery_database_url": runtime_settings.source_discovery_database_url,
         },
+        "storage": storage_status,
         "workers": {
             "webcam_worker_enabled": runtime_settings.webcam_worker_enabled,
             "source_discovery_scheduler_enabled": runtime_settings.source_discovery_scheduler_enabled,
@@ -132,6 +135,20 @@ def build_parser() -> argparse.ArgumentParser:
     doctor_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
     doctor_parser.set_defaults(handler=_handle_doctor)
 
+    db_status_parser = subparsers.add_parser(
+        "db-status",
+        help="Report unified storage profile and component readiness.",
+    )
+    db_status_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+    db_status_parser.set_defaults(handler=_handle_db_status)
+
+    db_bootstrap_parser = subparsers.add_parser(
+        "db-bootstrap",
+        help="Create backend storage objects for all configured components.",
+    )
+    db_bootstrap_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+    db_bootstrap_parser.set_defaults(handler=_handle_db_bootstrap)
+
     return parser
 
 
@@ -203,8 +220,10 @@ def _handle_doctor(args: argparse.Namespace) -> None:
     print(f"platform       : {report['platform']['system']} {report['platform']['release']}")
     print(f"frontend purge : {report['frontend_runtime_removed']}")
     print(f"repo root      : {report['repo_root']}")
+    print(f"storage mode   : {report['storage']['storageMode']}")
     print()
     print("databases")
+    print(f"  primary      : {report['storage']['primaryDatabaseUrl'] or '(not set)'}")
     print(f"  reference    : {report['api']['reference_database_url']}")
     print(f"  wave-monitor : {report['api']['wave_monitor_database_url']}")
     print(f"  source-disc. : {report['api']['source_discovery_database_url']}")
@@ -217,3 +236,54 @@ def _handle_doctor(args: argparse.Namespace) -> None:
     print("frontend paths")
     for name, exists in report["frontend_runtime_paths"].items():
         print(f"  {name:<16} {exists}")
+
+
+def _handle_db_status(args: argparse.Namespace) -> None:
+    report = build_storage_status(get_settings()).model_dump(mode="json", by_alias=True)
+    if args.json:
+        print(json.dumps(report, indent=2, sort_keys=True))
+        return
+    print(ASCII_BANNER)
+    print()
+    print(f"storage mode   : {report['storageMode']}")
+    print(f"primary db     : {report['primaryDatabaseUrl'] or '(not set)'}")
+    print(f"shared storage : {report['sharedStorage']}")
+    print(f"db count       : {report['distinctDatabaseCount']}")
+    print()
+    print("components")
+    for component in report["components"]:
+        print(
+            "  "
+            f"{component['component']:<17}"
+            f"{component['backend']:<20}"
+            f"reachable={component['reachable']} "
+            f"initialized={component['initialized']}"
+        )
+    if report["caveats"]:
+        print()
+        print("caveats")
+        for caveat in report["caveats"]:
+            print(f"  - {caveat}")
+
+
+def _handle_db_bootstrap(args: argparse.Namespace) -> None:
+    report = bootstrap_storage(get_settings()).model_dump(mode="json", by_alias=True)
+    if args.json:
+        print(json.dumps(report, indent=2, sort_keys=True))
+        return
+    print(ASCII_BANNER)
+    print()
+    print("storage bootstrap complete")
+    print(f"storage mode   : {report['storageMode']}")
+    print(f"shared storage : {report['sharedStorage']}")
+    print(f"db count       : {report['distinctDatabaseCount']}")
+    print()
+    print("components")
+    for component in report["components"]:
+        print(
+            "  "
+            f"{component['component']:<17}"
+            f"{component['backend']:<20}"
+            f"reachable={component['reachable']} "
+            f"initialized={component['initialized']}"
+        )

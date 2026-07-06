@@ -34,6 +34,8 @@ Useful CLI commands:
 
 ```bash
 11writer doctor
+11writer db-status
+11writer db-bootstrap
 11writer serve --host 127.0.0.1 --port 8000
 11writer worker --worker all --loop
 11writer webcam-worker --once
@@ -52,6 +54,7 @@ Useful CLI commands:
 
 - FastAPI backend foundation is real.
 - Runtime workers and reference ingestion are CLI-operable.
+- Primary-database fanout, storage bootstrap, and storage-status reporting now exist for headless operations.
 - Wave Monitor and source-discovery concepts are being folded out of 7Po8 into the main runtime.
 - Frontend code is not part of the supported runtime anymore.
 

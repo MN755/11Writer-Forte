@@ -62,6 +62,17 @@ def test_doctor_json_output(monkeypatch, capsys) -> None:
                 "source_discovery_database_url": "sqlite:///./data/source_discovery.db",
                 "cors_origins": [],
             },
+            "storage": {
+                "storageMode": "persistent-sqlite",
+                "primaryDatabaseUrl": None,
+                "primaryDatabaseBackend": None,
+                "primaryDatabasePostgisEnabled": False,
+                "sharedStorage": False,
+                "distinctDatabaseCount": 3,
+                "bootstrapped": False,
+                "components": [],
+                "caveats": [],
+            },
             "workers": {
                 "webcam_worker_enabled": False,
                 "source_discovery_scheduler_enabled": False,
@@ -83,3 +94,38 @@ def test_doctor_json_output(monkeypatch, capsys) -> None:
     assert exit_code == 0
     assert payload["frontend_runtime_removed"] is True
     assert payload["runtime_mode"] == "backend-only"
+
+
+def test_db_status_json_output(monkeypatch, capsys) -> None:
+    class _FakeReport:
+        def model_dump(self, *, mode: str, by_alias: bool) -> dict[str, object]:
+            assert mode == "json"
+            assert by_alias is True
+            return {
+                "storageMode": "persistent-postgis",
+                "primaryDatabaseUrl": "postgresql+psycopg://user:pass@db/11writer",
+                "primaryDatabaseBackend": "postgresql+postgis",
+                "primaryDatabasePostgisEnabled": True,
+                "sharedStorage": True,
+                "distinctDatabaseCount": 1,
+                "bootstrapped": False,
+                "components": [
+                    {
+                        "component": "reference",
+                        "backend": "postgresql+postgis",
+                        "reachable": True,
+                        "initialized": True,
+                    }
+                ],
+                "caveats": [],
+            }
+
+    monkeypatch.setattr(cli, "build_storage_status", lambda settings: _FakeReport())
+    monkeypatch.setattr(cli, "get_settings", lambda: Settings(_env_file=None))
+
+    exit_code = cli.main(["db-status", "--json"])
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["storageMode"] == "persistent-postgis"
+    assert payload["sharedStorage"] is True

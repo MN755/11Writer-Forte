@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from src.config.settings import Settings
+from src.services.storage_profile_service import resolve_runtime_storage_mode
 from src.services.source_discovery_service import SourceDiscoveryService
 from src.types.source_discovery import SourceDiscoveryCandidateSeed
 from src.wave_monitor.db import session_scope
@@ -82,7 +83,7 @@ class WaveMonitorService:
             return _overview_response(
                 settings=self._settings,
                 monitors=serialized,
-                storage_mode="persistent-sqlite",
+                storage_mode=resolve_runtime_storage_mode(self._settings),
                 scheduler_mode=(
                     "backend-only-ready"
                     if self._settings.wave_monitor_scheduler_enabled or self._settings.app_runtime_mode == "backend-only"
