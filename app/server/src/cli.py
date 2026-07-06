@@ -15,7 +15,8 @@ from src.forte.db.init_db import init_db as init_forte_db
 from src.forte.scheduler.worker import run_loop as run_forte_scheduler_loop
 from src.intel.db import db as intel_db
 from src.intel.db import init_db as init_intel_db
-from src.intel.models import IngestFileRequest
+from src.intel.event_sync import EVENT_FEED_KEYS, EventFeedSyncService
+from src.intel.models import EventFeedSyncRequest, IngestFileRequest
 from src.intel.service import IntelService
 from src.runtime_worker import _run as run_runtime_workers
 
@@ -72,6 +73,19 @@ def _build_parser() -> argparse.ArgumentParser:
     evaluate_alerts = subparsers.add_parser("evaluate-alerts", help="Evaluate geofence rules and create alert records.")
     evaluate_alerts.add_argument("--actor", default="cli", help="Actor name for chain-of-custody records.")
     evaluate_alerts.add_argument("--json", action="store_true", help="Emit JSON instead of plain text.")
+
+    sync_event_feeds = subparsers.add_parser("sync-event-feeds", help="Sync event feed surfaces into the intel core.")
+    sync_event_feeds.add_argument(
+        "--feeds",
+        default="all",
+        help=f"Comma-separated feed keys or 'all'. Supported: {', '.join(EVENT_FEED_KEYS)}",
+    )
+    sync_event_feeds.add_argument("--max-records-per-feed", type=int, default=100)
+    sync_event_feeds.add_argument("--actor", default="cli", help="Actor name for chain-of-custody records.")
+    sync_event_feeds.add_argument("--skip-geofence-alerts", action="store_true", help="Skip post-sync geofence alert evaluation.")
+    sync_event_feeds.add_argument("--loop", action="store_true", help="Run continuously until stopped.")
+    sync_event_feeds.add_argument("--interval-seconds", type=int, default=300, help="Loop interval in seconds.")
+    sync_event_feeds.add_argument("--json", action="store_true", help="Emit JSON instead of plain text.")
 
     subparsers.add_parser("doctor", help="Run basic environment checks.")
     return parser
@@ -213,6 +227,63 @@ def _evaluate_alerts(actor: str, as_json: bool) -> None:
         print(f"{item['alert_id']}: {item['title']}")
 
 
+async def _run_event_feed_sync_once(args: argparse.Namespace) -> dict[str, Any]:
+    init_intel_db(intel_db)
+    settings = get_settings()
+    generator = intel_db.get_session()
+    session = next(generator)
+    try:
+        service = EventFeedSyncService(settings, IntelService(session))
+        feeds = [] if args.feeds == "all" else [feed.strip() for feed in args.feeds.split(",") if feed.strip()]
+        result = await service.sync(
+            EventFeedSyncRequest(
+                feeds=feeds,
+                max_records_per_feed=max(1, args.max_records_per_feed),
+                actor=args.actor,
+                evaluate_geofences=not args.skip_geofence_alerts,
+            )
+        )
+        return result.model_dump(mode="json")
+    finally:
+        try:
+            next(generator)
+        except StopIteration:
+            pass
+
+
+def _print_event_feed_sync_result(payload: dict[str, Any], as_json: bool) -> None:
+    if as_json:
+        print(json.dumps(payload, indent=2))
+        return
+    print(f"started_at: {payload['started_at']}")
+    print(f"completed_at: {payload['completed_at']}")
+    print(f"feed_count: {payload['feed_count']}")
+    print(f"synced_feed_count: {payload['synced_feed_count']}")
+    print(f"created_alert_count: {payload['created_alert_count']}")
+    for item in payload["results"]:
+        print(
+            f"{item['feed_key']}: status={item['status']} fetched={item['fetched_count']} "
+            f"events+={item['events_created']} events~={item['events_updated']} "
+            f"obs+={item['observations_created']} obs~={item['observations_updated']}"
+        )
+        if item["detail"]:
+            print(f"  detail: {item['detail']}")
+
+
+def _sync_event_feeds(args: argparse.Namespace) -> None:
+    async def _loop() -> None:
+        if not args.loop:
+            payload = await _run_event_feed_sync_once(args)
+            _print_event_feed_sync_result(payload, as_json=args.json)
+            return
+        while True:
+            payload = await _run_event_feed_sync_once(args)
+            _print_event_feed_sync_result(payload, as_json=args.json)
+            await asyncio.sleep(max(5, args.interval_seconds))
+
+    asyncio.run(_loop())
+
+
 def _module_version(name: str) -> str:
     try:
         module = importlib.import_module(name)
@@ -275,6 +346,10 @@ def main() -> None:
 
     if args.command == "evaluate-alerts":
         _evaluate_alerts(actor=args.actor, as_json=args.json)
+        return
+
+    if args.command == "sync-event-feeds":
+        _sync_event_feeds(args)
         return
 
     if args.command == "doctor":

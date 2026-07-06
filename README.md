@@ -39,6 +39,7 @@ The backend now also exposes a unified intelligence substrate at `/api/intel/*` 
 - rule-based confidence assessments
 - cited summaries and report artifacts
 - local file intake for JSON, text-like files, and SQLite datasets
+- event-feed sync from the existing `/api/events/*` surface into canonical intel events and observations
 
 ## Runtime Principles
 
@@ -88,6 +89,7 @@ python -m src.cli serve
 cd app/server
 python -m src.cli worker --worker all --once
 python -m src.cli forte-worker --interval-seconds 30
+python -m src.cli sync-event-feeds --feeds all --max-records-per-feed 50
 ```
 
 ## CLI
@@ -103,6 +105,7 @@ python -m src.cli forte-worker --interval-seconds 30
 - `11writer intel-overview`
 - `11writer ingest-file`
 - `11writer evaluate-alerts`
+- `11writer sync-event-feeds`
 
 ## Key Environment Variables
 

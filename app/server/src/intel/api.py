@@ -6,7 +6,9 @@ from collections.abc import Generator
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session
 
+from src.config.settings import Settings, get_settings
 from .db import db, ensure_current_database
+from .event_sync import EVENT_FEED_KEYS, EventFeedSyncService
 from .models import (
     AlertCreate,
     AnalyticProductCreate,
@@ -15,6 +17,8 @@ from .models import (
     EntityCreate,
     EntityResolutionCreate,
     EventCreate,
+    EventFeedSyncRequest,
+    EventFeedSyncResponse,
     GeofenceCreate,
     IngestFileRequest,
     IntelAlert,
@@ -292,4 +296,21 @@ def ingest_file(request: IngestFileRequest, service: IntelService = Depends(get_
     try:
         return service.ingest_file(request)
     except (FileNotFoundError, ValueError, OSError, json.JSONDecodeError) as exc:
+        raise _http_400(exc) from exc
+
+
+@router.get("/sync/event-feeds/catalog")
+def event_feed_catalog() -> dict[str, object]:
+    return {"feeds": list(EVENT_FEED_KEYS)}
+
+
+@router.post("/sync/event-feeds", response_model=EventFeedSyncResponse)
+async def sync_event_feeds(
+    request: EventFeedSyncRequest,
+    settings: Settings = Depends(get_settings),
+    session: Session = Depends(get_session),
+) -> EventFeedSyncResponse:
+    try:
+        return await EventFeedSyncService(settings, IntelService(session)).sync(request)
+    except ValueError as exc:
         raise _http_400(exc) from exc

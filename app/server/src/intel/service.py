@@ -197,6 +197,74 @@ class IntelService:
         self.session.refresh(source)
         return source
 
+    def upsert_source(self, payload: SourceCreate, *, commit: bool = True) -> tuple[IntelSource, bool]:
+        source_id = payload.source_id or _new_id("source")
+        existing = self.get_source(source_id)
+        if existing is None:
+            source = IntelSource(
+                source_id=source_id,
+                name=payload.name,
+                kind=payload.kind,
+                description=payload.description,
+                canonical_uri=payload.canonical_uri,
+                base_domain=payload.base_domain,
+                trust_tier=payload.trust_tier,
+                integrity_score=payload.integrity_score,
+                default_confidence=payload.default_confidence,
+                temporal_resolution_seconds=payload.temporal_resolution_seconds,
+                data_latency_seconds=payload.data_latency_seconds,
+                enabled=payload.enabled,
+                formats=list(payload.formats),
+                tags=list(payload.tags),
+                metadata_json=_coerce_jsonable(payload.metadata_json),
+            )
+            self.session.add(source)
+            self._record_custody(
+                CustodyRecordCreate(
+                    subject_kind=CustodySubjectKind.SOURCE,
+                    subject_id=source.source_id,
+                    action=CustodyAction.CREATED,
+                    actor=payload.actor,
+                    tool_name="intel.upsert_source",
+                ),
+                commit=False,
+            )
+            if commit:
+                self.session.commit()
+                self.session.refresh(source)
+            return source, True
+
+        existing.name = payload.name
+        existing.kind = payload.kind
+        existing.description = payload.description
+        existing.canonical_uri = payload.canonical_uri
+        existing.base_domain = payload.base_domain
+        existing.trust_tier = payload.trust_tier
+        existing.integrity_score = payload.integrity_score
+        existing.default_confidence = payload.default_confidence
+        existing.temporal_resolution_seconds = payload.temporal_resolution_seconds
+        existing.data_latency_seconds = payload.data_latency_seconds
+        existing.enabled = payload.enabled
+        existing.formats = sorted({*existing.formats, *payload.formats})
+        existing.tags = sorted({*existing.tags, *payload.tags})
+        existing.metadata_json = _coerce_jsonable({**existing.metadata_json, **payload.metadata_json})
+        existing.updated_at = utc_now()
+        self.session.add(existing)
+        self._record_custody(
+            CustodyRecordCreate(
+                subject_kind=CustodySubjectKind.SOURCE,
+                subject_id=existing.source_id,
+                action=CustodyAction.UPDATED,
+                actor=payload.actor,
+                tool_name="intel.upsert_source",
+            ),
+            commit=False,
+        )
+        if commit:
+            self.session.commit()
+            self.session.refresh(existing)
+        return existing, False
+
     def list_entities(self, entity_type: str | None = None, limit: int = 100) -> list[IntelEntity]:
         statement = select(IntelEntity).order_by(IntelEntity.updated_at.desc()).limit(limit)
         if entity_type:
@@ -284,6 +352,80 @@ class IntelService:
         self.session.refresh(event)
         return event
 
+    def upsert_event(self, payload: EventCreate, *, commit: bool = True) -> tuple[IntelEvent, bool]:
+        event_id = payload.event_id or _new_id("event")
+        existing = self.get_event(event_id)
+        if existing is None:
+            event = IntelEvent(
+                event_id=event_id,
+                event_type=payload.event_type,
+                title=payload.title,
+                status=payload.status,
+                summary=payload.summary,
+                redaction_level=payload.redaction_level,
+                geofence_id=payload.geofence_id,
+                latitude=payload.latitude,
+                longitude=payload.longitude,
+                altitude_meters=payload.altitude_meters,
+                geometry_wkt=payload.geometry_wkt,
+                confidence_score=payload.confidence_score,
+                confidence_rule_version=payload.confidence_rule_version,
+                started_at=payload.started_at,
+                ended_at=payload.ended_at,
+                detected_at=payload.detected_at or utc_now(),
+                tags=list(payload.tags),
+                metadata_json=_coerce_jsonable(payload.metadata_json),
+            )
+            self.session.add(event)
+            self._record_custody(
+                CustodyRecordCreate(
+                    subject_kind=CustodySubjectKind.EVENT,
+                    subject_id=event.event_id,
+                    action=CustodyAction.CREATED,
+                    actor=payload.actor,
+                    tool_name="intel.upsert_event",
+                ),
+                commit=False,
+            )
+            if commit:
+                self.session.commit()
+                self.session.refresh(event)
+            return event, True
+
+        existing.event_type = payload.event_type
+        existing.title = payload.title
+        existing.status = payload.status
+        existing.summary = payload.summary
+        existing.redaction_level = payload.redaction_level
+        existing.geofence_id = payload.geofence_id
+        existing.latitude = payload.latitude
+        existing.longitude = payload.longitude
+        existing.altitude_meters = payload.altitude_meters
+        existing.geometry_wkt = payload.geometry_wkt
+        existing.confidence_score = payload.confidence_score
+        existing.confidence_rule_version = payload.confidence_rule_version
+        existing.started_at = payload.started_at
+        existing.ended_at = payload.ended_at
+        existing.detected_at = payload.detected_at or existing.detected_at
+        existing.tags = sorted({*existing.tags, *payload.tags})
+        existing.metadata_json = _coerce_jsonable({**existing.metadata_json, **payload.metadata_json})
+        existing.updated_at = utc_now()
+        self.session.add(existing)
+        self._record_custody(
+            CustodyRecordCreate(
+                subject_kind=CustodySubjectKind.EVENT,
+                subject_id=existing.event_id,
+                action=CustodyAction.UPDATED,
+                actor=payload.actor,
+                tool_name="intel.upsert_event",
+            ),
+            commit=False,
+        )
+        if commit:
+            self.session.commit()
+            self.session.refresh(existing)
+        return existing, False
+
     def list_observations(
         self,
         event_id: str | None = None,
@@ -359,6 +501,95 @@ class IntelService:
         if recompute_event_confidence and payload.event_id:
             self.recompute_event_assessment(payload.event_id, actor=payload.actor)
         return observation
+
+    def upsert_observation(
+        self,
+        payload: ObservationCreate,
+        *,
+        recompute_event_confidence: bool = True,
+        commit: bool = True,
+    ) -> tuple[IntelObservation, bool]:
+        observation_id = payload.observation_id or _new_id("observation")
+        existing = self.get_observation(observation_id)
+        if existing is None:
+            observation = self.create_observation(
+                ObservationCreate(
+                    observation_id=observation_id,
+                    source_id=payload.source_id,
+                    event_id=payload.event_id,
+                    entity_id=payload.entity_id,
+                    observation_type=payload.observation_type,
+                    title=payload.title,
+                    summary=payload.summary,
+                    observed_at=payload.observed_at,
+                    collected_at=payload.collected_at,
+                    latitude=payload.latitude,
+                    longitude=payload.longitude,
+                    altitude_meters=payload.altitude_meters,
+                    geometry_wkt=payload.geometry_wkt,
+                    raw_uri=payload.raw_uri,
+                    extracted_text=payload.extracted_text,
+                    raw_hash_sha256=payload.raw_hash_sha256,
+                    confidence_score=payload.confidence_score,
+                    is_ground_truth=payload.is_ground_truth,
+                    tags=list(payload.tags),
+                    raw_payload_json=dict(payload.raw_payload_json),
+                    metadata_json=dict(payload.metadata_json),
+                    actor=payload.actor,
+                ),
+                recompute_event_confidence=recompute_event_confidence,
+            )
+            return observation, True
+
+        if self.get_source(payload.source_id) is None:
+            raise ValueError(f"Unknown source_id: {payload.source_id}")
+        if payload.event_id and self.get_event(payload.event_id) is None:
+            raise ValueError(f"Unknown event_id: {payload.event_id}")
+        if payload.entity_id and self.get_entity(payload.entity_id) is None:
+            raise ValueError(f"Unknown entity_id: {payload.entity_id}")
+
+        existing.source_id = payload.source_id
+        existing.event_id = payload.event_id
+        existing.entity_id = payload.entity_id
+        existing.observation_type = payload.observation_type
+        existing.title = payload.title
+        existing.summary = payload.summary
+        existing.observed_at = payload.observed_at
+        existing.collected_at = payload.collected_at or existing.collected_at
+        existing.latitude = payload.latitude
+        existing.longitude = payload.longitude
+        existing.altitude_meters = payload.altitude_meters
+        existing.geometry_wkt = payload.geometry_wkt
+        existing.raw_uri = payload.raw_uri
+        existing.extracted_text = payload.extracted_text
+        existing.raw_hash_sha256 = payload.raw_hash_sha256
+        existing.confidence_score = payload.confidence_score
+        existing.is_ground_truth = payload.is_ground_truth
+        existing.tags = sorted({*existing.tags, *payload.tags})
+        existing.raw_payload_json = _coerce_jsonable(payload.raw_payload_json)
+        existing.metadata_json = _coerce_jsonable({**existing.metadata_json, **payload.metadata_json})
+        existing.updated_at = utc_now()
+        self.session.add(existing)
+        if payload.event_id and payload.entity_id:
+            self._upsert_event_entity_link(payload.event_id, payload.entity_id, payload.confidence_score)
+        self._record_custody(
+            CustodyRecordCreate(
+                subject_kind=CustodySubjectKind.OBSERVATION,
+                subject_id=existing.observation_id,
+                action=CustodyAction.UPDATED,
+                actor=payload.actor,
+                input_hash_sha256=payload.raw_hash_sha256,
+                tool_name="intel.upsert_observation",
+                metadata_json={"source_id": payload.source_id},
+            ),
+            commit=False,
+        )
+        if commit:
+            self.session.commit()
+            self.session.refresh(existing)
+            if recompute_event_confidence and payload.event_id:
+                self.recompute_event_assessment(payload.event_id, actor=payload.actor)
+        return existing, False
 
     def list_geofences(self, limit: int = 100) -> list[IntelGeofence]:
         return list(
