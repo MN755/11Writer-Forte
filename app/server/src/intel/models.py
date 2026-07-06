@@ -533,3 +533,34 @@ class OverviewResponse(SQLModel):
     active_event_count: int
     source_count: int
     last_updated_at: str
+
+
+class EventFeedSyncRequest(CamelInputModel):
+    feeds: list[str] = Field(default_factory=list)
+    max_records_per_feed: int = 100
+    actor: str = "system"
+    evaluate_geofences: bool = True
+
+
+class EventFeedSyncFeedResult(CamelInputModel):
+    feed_key: str
+    source_id: str
+    status: str
+    fetched_count: int = 0
+    events_created: int = 0
+    events_updated: int = 0
+    observations_created: int = 0
+    observations_updated: int = 0
+    detail: str = ""
+    event_ids: list[str] = Field(default_factory=list)
+    caveats: list[str] = Field(default_factory=list)
+
+
+class EventFeedSyncResponse(CamelInputModel):
+    started_at: str
+    completed_at: str
+    feed_count: int
+    synced_feed_count: int
+    created_alert_count: int = 0
+    results: list[EventFeedSyncFeedResult] = Field(default_factory=list)
+    caveats: list[str] = Field(default_factory=list)

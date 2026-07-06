@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import sqlite3
 from pathlib import Path
@@ -11,9 +12,11 @@ from src.config.settings import get_settings
 from src.forte.api.deps import db as forte_db
 from src.intel.db import db as intel_db
 from src.intel.db import init_db as init_intel_db
+from src.intel.event_sync import EventFeedSyncService
 from src.intel.models import (
     EntityCreate,
     EventCreate,
+    EventFeedSyncRequest,
     GeofenceCreate,
     IngestFileRequest,
     ObservationCreate,
@@ -259,3 +262,62 @@ def test_intel_routes_expose_backend_core_and_file_intake(tmp_path: Path, monkey
     assert ingest_response.json()["observations_created"] == 1
     assert overview_response.json()["counts"]["observations"] >= 1
     assert observations_response.json()[0]["source_id"] == "source:route-test"
+
+
+def test_event_feed_sync_service_handles_all_registered_feeds(tmp_path: Path, monkeypatch) -> None:
+    _configure_sqlite(monkeypatch, tmp_path)
+    settings = get_settings()
+
+    def _exercise(service: IntelService):
+        result = asyncio.run(
+            EventFeedSyncService(settings, service).sync(
+                EventFeedSyncRequest(actor="pytest", max_records_per_feed=1, evaluate_geofences=False)
+            )
+        )
+        overview = service.overview()
+        custody = service.list_custody(limit=500)
+        return {
+            "feed_count": result.feed_count,
+            "synced_feed_count": result.synced_feed_count,
+            "statuses": {item.feed_key: item.status for item in result.results},
+            "observation_count": overview.counts["observations"],
+            "event_count": overview.counts["events"],
+            "custody_count": len(custody),
+        }
+
+    result = _with_service(_exercise)
+
+    assert result["feed_count"] >= 20
+    assert result["synced_feed_count"] == result["feed_count"]
+    assert set(result["statuses"].values()) == {"ok"}
+    assert result["observation_count"] >= result["feed_count"]
+    assert result["event_count"] >= result["feed_count"]
+    assert result["custody_count"] >= result["feed_count"]
+
+
+def test_event_feed_sync_route_creates_intel_records(tmp_path: Path, monkeypatch) -> None:
+    _configure_sqlite(monkeypatch, tmp_path)
+
+    with TestClient(create_application()) as client:
+        catalog_response = client.get("/api/intel/sync/event-feeds/catalog")
+        sync_response = client.post(
+            "/api/intel/sync/event-feeds",
+            json={
+                "feeds": ["earthquakes", "nws-alerts", "geonet"],
+                "maxRecordsPerFeed": 2,
+                "actor": "pytest",
+                "evaluateGeofences": False,
+            },
+        )
+        overview_response = client.get("/api/intel/overview")
+
+    assert catalog_response.status_code == 200
+    assert "earthquakes" in catalog_response.json()["feeds"]
+    assert sync_response.status_code == 200
+    payload = sync_response.json()
+    assert payload["feedCount"] == 3
+    assert payload["syncedFeedCount"] == 3
+    assert all(item["status"] == "ok" for item in payload["results"])
+    assert overview_response.status_code == 200
+    assert overview_response.json()["counts"]["events"] >= 3
+    assert overview_response.json()["counts"]["observations"] >= 3

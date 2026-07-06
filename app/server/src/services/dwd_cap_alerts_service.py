@@ -167,9 +167,22 @@ class DwdCapAlertsService:
         directory_html = directory_path.read_text(encoding="utf-8")
         zip_name = _discover_latest_zip_name(directory_html)
         if zip_name is None:
-            return []
+            return self._load_fixture_xml_alerts(directory_path.parent, source_url_prefix="fixture://inline-xml")
         zip_path = directory_path.parent / zip_name
+        if not zip_path.exists():
+            return self._load_fixture_xml_alerts(directory_path.parent, source_url_prefix="fixture://inline-xml")
         return self._parse_zip_bytes(zip_path.read_bytes(), source_url=f"fixture://{zip_path.name}")
+
+    def _load_fixture_xml_alerts(self, directory: Path, *, source_url_prefix: str) -> list[DwdCapAlertEvent]:
+        alerts: list[DwdCapAlertEvent] = []
+        for xml_path in sorted(directory.glob("dwd_cap_alert*.xml")):
+            alert = self._parse_cap_xml(
+                xml_text=xml_path.read_text(encoding="utf-8"),
+                source_url=f"{source_url_prefix}/{xml_path.name}",
+            )
+            if alert is not None:
+                alerts.append(alert)
+        return alerts
 
     def _parse_zip_bytes(self, zip_bytes: bytes, *, source_url: str) -> list[DwdCapAlertEvent]:
         alerts: list[DwdCapAlertEvent] = []
