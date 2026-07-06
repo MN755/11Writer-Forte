@@ -29,7 +29,9 @@ from .models import (
     IntelEntityResolution,
     IntelEvent,
     IntelGeofence,
+    IntelDatabaseStatus,
     IntelObservation,
+    IntelSpatialNearbyResponse,
     IntelSource,
     ObservationCreate,
     OverviewResponse,
@@ -57,6 +59,11 @@ def _http_400(exc: Exception) -> HTTPException:
 @router.get("/overview", response_model=OverviewResponse)
 def overview(service: IntelService = Depends(get_service)) -> OverviewResponse:
     return service.overview()
+
+
+@router.get("/runtime/database", response_model=IntelDatabaseStatus)
+def runtime_database_status(service: IntelService = Depends(get_service)) -> IntelDatabaseStatus:
+    return service.database_status()
 
 
 @router.post("/sources", response_model=IntelSource, status_code=201)
@@ -168,6 +175,17 @@ def get_observation(observation_id: str, service: IntelService = Depends(get_ser
     if observation is None:
         raise HTTPException(status_code=404, detail="Observation not found.")
     return observation
+
+
+@router.get("/spatial/nearby", response_model=IntelSpatialNearbyResponse)
+def spatial_nearby(
+    latitude: float = Query(ge=-90.0, le=90.0),
+    longitude: float = Query(ge=-180.0, le=180.0),
+    radius_m: float = Query(default=50_000.0, gt=0.0, le=5_000_000.0),
+    limit: int = Query(default=25, ge=1, le=250),
+    service: IntelService = Depends(get_service),
+) -> IntelSpatialNearbyResponse:
+    return service.spatial_nearby(latitude=latitude, longitude=longitude, radius_m=radius_m, limit=limit)
 
 
 @router.post("/geofences", response_model=IntelGeofence, status_code=201)

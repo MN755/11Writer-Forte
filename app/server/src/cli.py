@@ -44,7 +44,7 @@ def _build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--log-level", default="info", help="Uvicorn log level.")
 
     worker = subparsers.add_parser("worker", help="Run main runtime workers.")
-    worker.add_argument("--worker", choices=["source_discovery", "wave_monitor", "all"], default="all")
+    worker.add_argument("--worker", choices=["source_discovery", "wave_monitor", "intel_event_sync", "all"], default="all")
     worker.add_argument("--once", action="store_true", help="Run one bounded cycle and exit.")
     worker.add_argument("--loop", action="store_true", help="Run continuously until stopped.")
 
@@ -59,6 +59,9 @@ def _build_parser() -> argparse.ArgumentParser:
 
     intel_overview = subparsers.add_parser("intel-overview", help="Print unified backend storage counts.")
     intel_overview.add_argument("--json", action="store_true", help="Emit JSON instead of plain text.")
+
+    intel_db_status = subparsers.add_parser("intel-db", help="Print intel database and spatial backend status.")
+    intel_db_status.add_argument("--json", action="store_true", help="Emit JSON instead of plain text.")
 
     ingest = subparsers.add_parser("ingest-file", help="Ingest a JSON, text, or SQLite file into the intel core.")
     ingest.add_argument("path", help="Path to the input file.")
@@ -86,6 +89,13 @@ def _build_parser() -> argparse.ArgumentParser:
     sync_event_feeds.add_argument("--loop", action="store_true", help="Run continuously until stopped.")
     sync_event_feeds.add_argument("--interval-seconds", type=int, default=300, help="Loop interval in seconds.")
     sync_event_feeds.add_argument("--json", action="store_true", help="Emit JSON instead of plain text.")
+
+    spatial_nearby = subparsers.add_parser("spatial-nearby", help="Query nearby intel records around a point.")
+    spatial_nearby.add_argument("--latitude", type=float, required=True)
+    spatial_nearby.add_argument("--longitude", type=float, required=True)
+    spatial_nearby.add_argument("--radius-m", type=float, default=50000.0)
+    spatial_nearby.add_argument("--limit", type=int, default=25)
+    spatial_nearby.add_argument("--json", action="store_true", help="Emit JSON instead of plain text.")
 
     subparsers.add_parser("doctor", help="Run basic environment checks.")
     return parser
@@ -117,6 +127,8 @@ def _config_payload() -> dict[str, Any]:
         "reference_database_url": settings.reference_database_url,
         "source_discovery_database_url": settings.source_discovery_database_url,
         "wave_monitor_database_url": settings.wave_monitor_database_url,
+        "intel_event_sync_scheduler_enabled": settings.intel_event_sync_scheduler_enabled,
+        "intel_event_sync_scheduler_poll_seconds": settings.intel_event_sync_scheduler_poll_seconds,
         "api_token_configured": bool(settings.app_api_token),
     }
 
@@ -158,10 +170,12 @@ def _run_doctor() -> None:
     }
     intel_status = "ok"
     intel_counts: dict[str, int] | None = None
+    database_status: dict[str, Any] | None = None
     try:
         init_intel_db(intel_db)
-        overview = _with_intel_service(lambda service: service.overview())
+        overview, runtime_db_status = _with_intel_service(lambda service: (service.overview(), service.database_status()))
         intel_counts = overview.counts
+        database_status = runtime_db_status.model_dump(mode="json")
     except Exception as exc:  # noqa: BLE001
         intel_status = f"unavailable ({exc.__class__.__name__}: {exc})"
     print("runtime_mode:", settings.app_runtime_mode)
@@ -171,6 +185,11 @@ def _run_doctor() -> None:
     print("intel_status:", intel_status)
     if intel_counts is not None:
         print("intel_counts:", intel_counts)
+    if database_status is not None:
+        print("spatial_backend:", database_status["spatial_backend"])
+        print("postgis_available:", database_status["postgis_available"])
+        if database_status["postgis_version"]:
+            print("postgis_version:", database_status["postgis_version"])
     for name, version in checks.items():
         print(f"{name}: {version}")
 
@@ -179,6 +198,16 @@ def _print_intel_overview(as_json: bool) -> None:
     init_intel_db(intel_db)
     overview = _with_intel_service(lambda service: service.overview())
     payload = overview.model_dump()
+    if as_json:
+        print(json.dumps(payload, indent=2))
+        return
+    for key, value in payload.items():
+        print(f"{key}: {value}")
+
+
+def _print_intel_db_status(as_json: bool) -> None:
+    init_intel_db(intel_db)
+    payload = _with_intel_service(lambda service: service.database_status().model_dump(mode="json"))
     if as_json:
         print(json.dumps(payload, indent=2))
         return
@@ -284,6 +313,28 @@ def _sync_event_feeds(args: argparse.Namespace) -> None:
     asyncio.run(_loop())
 
 
+def _print_spatial_nearby(args: argparse.Namespace) -> None:
+    init_intel_db(intel_db)
+    payload = _with_intel_service(
+        lambda service: service.spatial_nearby(
+            latitude=args.latitude,
+            longitude=args.longitude,
+            radius_m=args.radius_m,
+            limit=args.limit,
+        ).model_dump(mode="json")
+    )
+    if args.json:
+        print(json.dumps(payload, indent=2))
+        return
+    print(f"spatial_backend: {payload['spatial_backend']}")
+    print(f"result_count: {len(payload['results'])}")
+    for item in payload["results"]:
+        print(
+            f"{item['subject_kind']} {item['subject_id']} distance_m={item['distance_m']:.1f} "
+            f"title={item['title']}"
+        )
+
+
 def _module_version(name: str) -> str:
     try:
         module = importlib.import_module(name)
@@ -340,6 +391,10 @@ def main() -> None:
         _print_intel_overview(as_json=args.json)
         return
 
+    if args.command == "intel-db":
+        _print_intel_db_status(as_json=args.json)
+        return
+
     if args.command == "ingest-file":
         _ingest_file(args)
         return
@@ -350,6 +405,10 @@ def main() -> None:
 
     if args.command == "sync-event-feeds":
         _sync_event_feeds(args)
+        return
+
+    if args.command == "spatial-nearby":
+        _print_spatial_nearby(args)
         return
 
     if args.command == "doctor":

@@ -321,3 +321,85 @@ def test_event_feed_sync_route_creates_intel_records(tmp_path: Path, monkeypatch
     assert overview_response.status_code == 200
     assert overview_response.json()["counts"]["events"] >= 3
     assert overview_response.json()["counts"]["observations"] >= 3
+
+
+def test_intel_database_status_and_spatial_nearby_route_use_sqlite_fallback(tmp_path: Path, monkeypatch) -> None:
+    _configure_sqlite(monkeypatch, tmp_path)
+
+    def _exercise(service: IntelService):
+        source = service.create_source(
+            SourceCreate(
+                source_id="source:spatial",
+                name="Spatial Source",
+                kind="integrity_source",
+                actor="pytest",
+            )
+        )
+        event = service.create_event(
+            EventCreate(
+                event_id="event:spatial",
+                event_type="incident",
+                title="Nearby Event",
+                summary="Event near the query point.",
+                latitude=29.95,
+                longitude=-90.05,
+                actor="pytest",
+            )
+        )
+        entity = service.create_entity(
+            EntityCreate(
+                entity_id="entity:spatial",
+                entity_type="vessel",
+                name="Nearby Entity",
+                latitude=29.951,
+                longitude=-90.051,
+                actor="pytest",
+            )
+        )
+        service.create_observation(
+            ObservationCreate(
+                observation_id="observation:spatial",
+                source_id=source.source_id,
+                event_id=event.event_id,
+                entity_id=entity.entity_id,
+                title="Nearby Observation",
+                summary="Observed near the same port.",
+                latitude=29.952,
+                longitude=-90.052,
+                actor="pytest",
+            )
+        )
+        service.create_geofence(
+            GeofenceCreate(
+                geofence_id="geofence:spatial",
+                name="Nearby Geofence",
+                min_latitude=29.90,
+                min_longitude=-90.10,
+                max_latitude=30.00,
+                max_longitude=-90.00,
+                actor="pytest",
+            )
+        )
+        return service.database_status()
+
+    status = _with_service(_exercise)
+
+    assert status.dialect == "sqlite"
+    assert status.postgis_available is False
+    assert status.spatial_backend == "sqlite-python-fallback"
+
+    with TestClient(create_application()) as client:
+        status_response = client.get("/api/intel/runtime/database")
+        nearby_response = client.get(
+            "/api/intel/spatial/nearby",
+            params={"latitude": 29.95, "longitude": -90.05, "radius_m": 5000, "limit": 10},
+        )
+
+    assert status_response.status_code == 200
+    assert status_response.json()["spatialBackend"] == "sqlite-python-fallback"
+    assert nearby_response.status_code == 200
+    payload = nearby_response.json()
+    assert payload["database"]["dialect"] == "sqlite"
+    assert payload["spatialBackend"] == "sqlite-python-fallback"
+    assert {item["subjectKind"] for item in payload["results"]} >= {"event", "entity", "observation", "geofence"}
+    assert payload["results"][0]["distanceM"] == 0.0
