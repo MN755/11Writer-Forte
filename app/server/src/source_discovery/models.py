@@ -359,6 +359,54 @@ class SourceEventArtifactORM(SourceDiscoveryBase):
     caveats_json: Mapped[str] = mapped_column(Text, default="[]")
 
 
+class GeofenceORM(SourceDiscoveryBase):
+    __tablename__ = "geofences"
+
+    geofence_id: Mapped[str] = mapped_column(String(180), primary_key=True)
+    name: Mapped[str] = mapped_column(String(300), index=True)
+    description: Mapped[str | None] = mapped_column(Text)
+    shape_kind: Mapped[str] = mapped_column(String(32), index=True)
+    redaction_level: Mapped[str] = mapped_column(String(32), default="public", index=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    min_lat: Mapped[float | None] = mapped_column(Float)
+    min_lon: Mapped[float | None] = mapped_column(Float)
+    max_lat: Mapped[float | None] = mapped_column(Float)
+    max_lon: Mapped[float | None] = mapped_column(Float)
+    center_lat: Mapped[float | None] = mapped_column(Float)
+    center_lon: Mapped[float | None] = mapped_column(Float)
+    radius_m: Mapped[float | None] = mapped_column(Float)
+    geometry_json: Mapped[str | None] = mapped_column(Text)
+    tags_json: Mapped[str] = mapped_column(Text, default="[]")
+    metadata_json: Mapped[str] = mapped_column(Text, default="{}")
+    created_by: Mapped[str] = mapped_column(String(160), index=True)
+    created_at: Mapped[str] = mapped_column(String(64), index=True)
+    updated_at: Mapped[str] = mapped_column(String(64), index=True)
+    caveats_json: Mapped[str] = mapped_column(Text, default="[]")
+
+
+class GeofenceEvaluationORM(SourceDiscoveryBase):
+    __tablename__ = "geofence_evaluations"
+
+    evaluation_id: Mapped[str] = mapped_column(String(180), primary_key=True)
+    geofence_id: Mapped[str] = mapped_column(String(180), index=True)
+    subject_type: Mapped[str] = mapped_column(String(64), index=True)
+    subject_id: Mapped[str | None] = mapped_column(String(255), index=True)
+    observation_label: Mapped[str | None] = mapped_column(String(300))
+    observed_lat: Mapped[float] = mapped_column(Float)
+    observed_lon: Mapped[float] = mapped_column(Float)
+    observed_at: Mapped[str] = mapped_column(String(64), index=True)
+    matched: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    match_method: Mapped[str] = mapped_column(String(32), index=True)
+    distance_to_center_m: Mapped[float | None] = mapped_column(Float)
+    reference_match_count: Mapped[int] = mapped_column(Integer, default=0)
+    matched_reference_ref_ids_json: Mapped[str] = mapped_column(Text, default="[]")
+    alert_id: Mapped[str | None] = mapped_column(String(180), index=True)
+    provenance_event_id: Mapped[str | None] = mapped_column(String(180), index=True)
+    metadata_json: Mapped[str] = mapped_column(Text, default="{}")
+    caveats_json: Mapped[str] = mapped_column(Text, default="[]")
+    created_at: Mapped[str] = mapped_column(String(64), index=True)
+
+
 class SourceMediaArtifactORM(SourceDiscoveryBase):
     __tablename__ = "source_media_artifacts"
 

@@ -10,12 +10,14 @@ from typing import Any
 import uvicorn
 
 from src.config.settings import Settings, get_settings
+from src.services.geofence_service import GeofenceService
 from src.services.ops_audit_service import list_alert_records, list_provenance_events
 from src.services.runtime_health_service import build_runtime_readiness_report
 from src.services.source_event_artifact_service import SourceEventArtifactService
 from src.reference.ingest import cli as reference_ingest_cli
 from src import runtime_worker
 from src.services.storage_profile_service import bootstrap_storage, build_storage_status
+from src.types.geofence import GeofenceCreateRequest, GeofenceEvaluationRequest
 from src.types.source_discovery import SourceDiscoveryEventArtifactGenerationRequest
 from src.webcam import worker as webcam_worker
 
@@ -201,6 +203,78 @@ def build_parser() -> argparse.ArgumentParser:
     provenance_parser.add_argument("--subject-id", default=None)
     provenance_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
     provenance_parser.set_defaults(handler=_handle_provenance)
+
+    geofences_parser = subparsers.add_parser(
+        "geofences",
+        help="List persisted geofences.",
+    )
+    geofences_parser.add_argument("--enabled-only", action="store_true")
+    geofences_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+    geofences_parser.set_defaults(handler=_handle_geofences)
+
+    geofence_show_parser = subparsers.add_parser(
+        "geofence-show",
+        help="Show one persisted geofence.",
+    )
+    geofence_show_parser.add_argument("geofence_id")
+    geofence_show_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+    geofence_show_parser.set_defaults(handler=_handle_geofence_show)
+
+    geofence_create_parser = subparsers.add_parser(
+        "geofence-create",
+        help="Create a persisted geofence.",
+    )
+    geofence_create_parser.add_argument("geofence_id")
+    geofence_create_parser.add_argument("name")
+    geofence_create_parser.add_argument("--shape-kind", choices=["bbox", "circle", "polygon"], required=True)
+    geofence_create_parser.add_argument("--description", default=None)
+    geofence_create_parser.add_argument("--redaction-level", choices=["public", "restricted", "confidential"], default="public")
+    geofence_create_parser.add_argument("--created-by", default="11writer-cli")
+    geofence_create_parser.add_argument("--disabled", action="store_true")
+    geofence_create_parser.add_argument("--min-lat", type=float, default=None)
+    geofence_create_parser.add_argument("--min-lon", type=float, default=None)
+    geofence_create_parser.add_argument("--max-lat", type=float, default=None)
+    geofence_create_parser.add_argument("--max-lon", type=float, default=None)
+    geofence_create_parser.add_argument("--center-lat", type=float, default=None)
+    geofence_create_parser.add_argument("--center-lon", type=float, default=None)
+    geofence_create_parser.add_argument("--radius-m", type=float, default=None)
+    geofence_create_parser.add_argument(
+        "--point",
+        action="append",
+        default=[],
+        help="Polygon vertex as lon,lat. Repeat for each point.",
+    )
+    geofence_create_parser.add_argument("--tag", action="append", default=[])
+    geofence_create_parser.add_argument("--metadata-json", default="{}")
+    geofence_create_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+    geofence_create_parser.set_defaults(handler=_handle_geofence_create)
+
+    geofence_check_parser = subparsers.add_parser(
+        "geofence-check",
+        help="Evaluate one point against a persisted geofence.",
+    )
+    geofence_check_parser.add_argument("geofence_id")
+    geofence_check_parser.add_argument("--lat", type=float, required=True)
+    geofence_check_parser.add_argument("--lon", type=float, required=True)
+    geofence_check_parser.add_argument("--observed-at", default=None)
+    geofence_check_parser.add_argument("--subject-type", default="observation")
+    geofence_check_parser.add_argument("--subject-id", default=None)
+    geofence_check_parser.add_argument("--observation-label", default=None)
+    geofence_check_parser.add_argument("--requested-by", default="11writer-cli")
+    geofence_check_parser.add_argument("--reference-object-type", action="append", default=[])
+    geofence_check_parser.add_argument("--reference-limit", type=int, default=10)
+    geofence_check_parser.add_argument("--metadata-json", default="{}")
+    geofence_check_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+    geofence_check_parser.set_defaults(handler=_handle_geofence_check)
+
+    geofence_history_parser = subparsers.add_parser(
+        "geofence-history",
+        help="List persisted evaluations for one geofence.",
+    )
+    geofence_history_parser.add_argument("geofence_id")
+    geofence_history_parser.add_argument("--limit", type=int, default=25)
+    geofence_history_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+    geofence_history_parser.set_defaults(handler=_handle_geofence_history)
 
     return parser
 
@@ -452,3 +526,153 @@ def _handle_provenance(args: argparse.Namespace) -> None:
         print(f"  occurred     : {event['occurredAt']}")
         print(f"  operation    : {event['operation']}")
         print(f"  summary      : {event['summary']}")
+
+
+def _handle_geofences(args: argparse.Namespace) -> None:
+    report = GeofenceService(get_settings()).list_geofences(enabled_only=args.enabled_only).model_dump(mode="json", by_alias=True)
+    if args.json:
+        print(json.dumps(report, indent=2, sort_keys=True))
+        return
+    print(ASCII_BANNER)
+    print()
+    print(f"geofence count : {report['count']}")
+    print()
+    for geofence in report["geofences"]:
+        print(f"[{geofence['shapeKind']}/{geofence['redactionLevel']}] {geofence['geofenceId']} :: {geofence['name']}")
+        print(f"  enabled      : {geofence['enabled']}")
+        print(f"  bounds       : {_format_geofence_bounds(geofence)}")
+        if geofence.get("description"):
+            print(f"  description  : {geofence['description']}")
+
+
+def _handle_geofence_show(args: argparse.Namespace) -> None:
+    report = GeofenceService(get_settings()).get_geofence(args.geofence_id).model_dump(mode="json", by_alias=True)
+    if args.json:
+        print(json.dumps(report, indent=2, sort_keys=True))
+        return
+    print(ASCII_BANNER)
+    print()
+    print(f"geofence id    : {report['geofenceId']}")
+    print(f"name           : {report['name']}")
+    print(f"shape          : {report['shapeKind']}")
+    print(f"redaction      : {report['redactionLevel']}")
+    print(f"enabled        : {report['enabled']}")
+    print(f"bounds         : {_format_geofence_bounds(report)}")
+    print(f"created by     : {report['createdBy']}")
+    print(f"updated at     : {report['updatedAt']}")
+    if report.get("description"):
+        print(f"description    : {report['description']}")
+
+
+def _handle_geofence_create(args: argparse.Namespace) -> None:
+    payload = GeofenceService(get_settings()).create_geofence(
+        GeofenceCreateRequest(
+            geofence_id=args.geofence_id,
+            name=args.name,
+            shape_kind=args.shape_kind,
+            redaction_level=args.redaction_level,
+            created_by=args.created_by,
+            enabled=not args.disabled,
+            description=args.description,
+            min_lat=args.min_lat,
+            min_lon=args.min_lon,
+            max_lat=args.max_lat,
+            max_lon=args.max_lon,
+            center_lat=args.center_lat,
+            center_lon=args.center_lon,
+            radius_m=args.radius_m,
+            polygon_points=[_parse_lon_lat(value) for value in args.point],
+            tags=args.tag,
+            metadata=_parse_json_object(args.metadata_json, flag_name="--metadata-json"),
+        )
+    ).model_dump(mode="json", by_alias=True)
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return
+    print(ASCII_BANNER)
+    print()
+    print(f"created        : {payload['geofenceId']}")
+    print(f"name           : {payload['name']}")
+    print(f"shape          : {payload['shapeKind']}")
+    print(f"bounds         : {_format_geofence_bounds(payload)}")
+
+
+def _handle_geofence_check(args: argparse.Namespace) -> None:
+    payload = GeofenceService(get_settings()).evaluate_point(
+        args.geofence_id,
+        GeofenceEvaluationRequest(
+            lat=args.lat,
+            lon=args.lon,
+            observed_at=args.observed_at,
+            subject_type=args.subject_type,
+            subject_id=args.subject_id,
+            observation_label=args.observation_label,
+            requested_by=args.requested_by,
+            reference_object_types=args.reference_object_type,
+            reference_limit=args.reference_limit,
+            metadata=_parse_json_object(args.metadata_json, flag_name="--metadata-json"),
+        ),
+    ).model_dump(mode="json", by_alias=True)
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return
+    evaluation = payload["evaluation"]
+    print(ASCII_BANNER)
+    print()
+    print(f"geofence id    : {payload['geofence']['geofenceId']}")
+    print(f"matched        : {evaluation['matched']}")
+    print(f"method         : {evaluation['matchMethod']}")
+    print(f"reference hits : {evaluation['referenceMatchCount']}")
+    if evaluation.get("distanceToCenterM") is not None:
+        print(f"distance m     : {evaluation['distanceToCenterM']:.1f}")
+    if evaluation.get("alertId"):
+        print(f"alert id       : {evaluation['alertId']}")
+    if evaluation.get("provenanceEventId"):
+        print(f"provenance id  : {evaluation['provenanceEventId']}")
+
+
+def _handle_geofence_history(args: argparse.Namespace) -> None:
+    report = GeofenceService(get_settings()).list_evaluations(args.geofence_id, limit=args.limit).model_dump(mode="json", by_alias=True)
+    if args.json:
+        print(json.dumps(report, indent=2, sort_keys=True))
+        return
+    print(ASCII_BANNER)
+    print()
+    print(f"evaluation cnt : {report['count']}")
+    print()
+    for evaluation in report["evaluations"]:
+        print(f"[{evaluation['matchMethod']}] {evaluation['evaluationId']}")
+        print(f"  matched      : {evaluation['matched']}")
+        print(f"  observed     : {evaluation['observedAt']} @ ({evaluation['observedLat']}, {evaluation['observedLon']})")
+        if evaluation.get("alertId"):
+            print(f"  alert id     : {evaluation['alertId']}")
+
+
+def _parse_lon_lat(value: str) -> list[float]:
+    parts = [part.strip() for part in value.split(",", maxsplit=1)]
+    if len(parts) != 2:
+        raise ValueError("--point must use lon,lat format.")
+    return [float(parts[0]), float(parts[1])]
+
+
+def _parse_json_object(value: str, *, flag_name: str) -> dict[str, Any]:
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{flag_name} must be valid JSON.") from exc
+    if not isinstance(parsed, dict):
+        raise ValueError(f"{flag_name} must decode to a JSON object.")
+    return parsed
+
+
+def _format_geofence_bounds(payload: dict[str, Any]) -> str:
+    shape_kind = payload["shapeKind"]
+    if shape_kind == "circle":
+        return (
+            f"center ({payload['centerLat']:.5f}, {payload['centerLon']:.5f}), "
+            f"radius {payload['radiusM']:.1f} m"
+        )
+    return (
+        f"lat {payload['minLat']:.5f}..{payload['maxLat']:.5f}, "
+        f"lon {payload['minLon']:.5f}..{payload['maxLon']:.5f}"
+    )

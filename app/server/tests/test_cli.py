@@ -324,3 +324,149 @@ def test_event_reports_json_output(monkeypatch, capsys) -> None:
     assert exit_code == 0
     assert payload["count"] == 1
     assert payload["artifacts"][0]["artifactKind"] == "cited_summary"
+
+
+def test_geofence_create_json_output(monkeypatch, capsys) -> None:
+    class _FakeDetail:
+        def model_dump(self, *, mode: str, by_alias: bool) -> dict[str, object]:
+            assert mode == "json"
+            assert by_alias is True
+            return {
+                "geofenceId": "geofence:test-circle",
+                "name": "Test Circle",
+                "shapeKind": "circle",
+                "redactionLevel": "public",
+                "enabled": True,
+                "createdBy": "11writer-cli",
+                "createdAt": "2026-07-06T00:00:00Z",
+                "updatedAt": "2026-07-06T00:00:00Z",
+                "description": None,
+                "minLat": 29.9,
+                "minLon": -98.1,
+                "maxLat": 30.1,
+                "maxLon": -97.9,
+                "centerLat": 30.0,
+                "centerLon": -98.0,
+                "radiusM": 1500.0,
+                "tags": ["fixture"],
+                "geometryJson": None,
+                "metadata": {},
+                "caveats": [],
+            }
+
+    class _FakeService:
+        def __init__(self, settings) -> None:
+            self.settings = settings
+
+        def create_geofence(self, request):
+            assert request.geofence_id == "geofence:test-circle"
+            assert request.shape_kind == "circle"
+            assert request.radius_m == 1500.0
+            return _FakeDetail()
+
+    monkeypatch.setattr(cli, "GeofenceService", _FakeService)
+    monkeypatch.setattr(cli, "get_settings", lambda: Settings(_env_file=None))
+
+    exit_code = cli.main(
+        [
+            "geofence-create",
+            "geofence:test-circle",
+            "Test Circle",
+            "--shape-kind",
+            "circle",
+            "--center-lat",
+            "30.0",
+            "--center-lon",
+            "-98.0",
+            "--radius-m",
+            "1500",
+            "--json",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["shapeKind"] == "circle"
+    assert payload["geofenceId"] == "geofence:test-circle"
+
+
+def test_geofence_check_json_output(monkeypatch, capsys) -> None:
+    class _FakeResponse:
+        def model_dump(self, *, mode: str, by_alias: bool) -> dict[str, object]:
+            assert mode == "json"
+            assert by_alias is True
+            return {
+                "geofence": {
+                    "geofenceId": "geofence:test-box",
+                    "name": "Test Box",
+                    "shapeKind": "bbox",
+                    "redactionLevel": "public",
+                    "enabled": True,
+                    "createdBy": "11writer-api",
+                    "createdAt": "2026-07-06T00:00:00Z",
+                    "updatedAt": "2026-07-06T00:00:00Z",
+                    "description": None,
+                    "minLat": 30.0,
+                    "minLon": -98.0,
+                    "maxLat": 30.5,
+                    "maxLon": -97.5,
+                    "centerLat": 30.25,
+                    "centerLon": -97.75,
+                    "radiusM": None,
+                    "tags": [],
+                },
+                "evaluation": {
+                    "evaluationId": "geofence-eval:test",
+                    "geofenceId": "geofence:test-box",
+                    "subjectType": "event",
+                    "subjectId": "event:test-1",
+                    "observationLabel": "Fixture observation",
+                    "observedLat": 30.2,
+                    "observedLon": -97.8,
+                    "observedAt": "2026-07-06T00:00:00Z",
+                    "matched": True,
+                    "matchMethod": "bbox",
+                    "distanceToCenterM": None,
+                    "referenceMatchCount": 1,
+                    "matchedReferenceObjects": [],
+                    "alertId": "alert:test",
+                    "provenanceEventId": "prov:test",
+                    "metadata": {},
+                    "caveats": [],
+                },
+                "caveats": [],
+            }
+
+    class _FakeService:
+        def __init__(self, settings) -> None:
+            self.settings = settings
+
+        def evaluate_point(self, geofence_id, request):
+            assert geofence_id == "geofence:test-box"
+            assert request.subject_type == "event"
+            assert request.lat == 30.2
+            return _FakeResponse()
+
+    monkeypatch.setattr(cli, "GeofenceService", _FakeService)
+    monkeypatch.setattr(cli, "get_settings", lambda: Settings(_env_file=None))
+
+    exit_code = cli.main(
+        [
+            "geofence-check",
+            "geofence:test-box",
+            "--lat",
+            "30.2",
+            "--lon",
+            "-97.8",
+            "--subject-type",
+            "event",
+            "--subject-id",
+            "event:test-1",
+            "--json",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["evaluation"]["matched"] is True
+    assert payload["evaluation"]["alertId"] == "alert:test"

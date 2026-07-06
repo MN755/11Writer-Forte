@@ -26,6 +26,7 @@ from src.routes.fire_weather_context import router as fire_weather_context_route
 from src.routes.feeds import router as feeds_router
 from src.routes.features import router as features_router
 from src.routes.geomagnetism import router as geomagnetism_router
+from src.routes.geofences import router as geofences_router
 from src.routes.gpsjam import router as gpsjam_router
 from src.routes.health import router as health_router
 from src.routes.internet_context import router as internet_context_router
@@ -139,6 +140,7 @@ def create_application() -> FastAPI:
     application.include_router(features_router)
     application.include_router(first_epss_router)
     application.include_router(geomagnetism_router)
+    application.include_router(geofences_router)
     application.include_router(status_router)
     application.include_router(source_discovery_router)
     application.include_router(reference_router)
