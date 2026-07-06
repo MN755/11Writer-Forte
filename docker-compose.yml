@@ -1,0 +1,27 @@
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    environment:
+      POSTGRES_DB: elevenwriter
+      POSTGRES_USER: elevenwriter
+      POSTGRES_PASSWORD: elevenwriter
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  api:
+    build:
+      context: ./app/server
+    environment:
+      ELEVENWRITER_DATABASE_URL: postgresql+psycopg://elevenwriter:elevenwriter@db:5432/elevenwriter
+      ELEVENWRITER_APP_ENV: docker
+    depends_on:
+      - db
+    ports:
+      - "8000:8000"
+    command: uvicorn src.main:app --host 0.0.0.0 --port 8000
+
+volumes:
+  postgres-data:
+
