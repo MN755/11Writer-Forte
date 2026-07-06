@@ -7,8 +7,16 @@ from sqlalchemy import select
 
 from src.config import get_settings
 from src.db import get_session_factory, init_db
-from src.models import LocalImportRunORM, SourceTrustProfileORM
+from src.models import (
+    AlertORM,
+    CustodyLogORM,
+    LocalImportRunORM,
+    ScheduledTaskORM,
+    SourceTrustProfileORM,
+)
+from src.schemas import ScheduledTaskCreate
 from src.services.import_service import import_local_path
+from src.services.scheduler_service import create_scheduled_task, run_due_tasks, run_task
 from src.services.trust_service import seed_default_integrity_sources
 
 app = typer.Typer(help="11Writer Forte backend operator CLI")
@@ -102,6 +110,129 @@ def list_imports() -> None:
         session.close()
 
 
+@app.command("list-alerts")
+def list_alerts() -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        alerts = list(session.scalars(select(AlertORM).order_by(AlertORM.created_at.desc())))
+        print_banner()
+        for alert in alerts:
+            typer.echo(
+                f"{alert.alert_id} | geofence={alert.geofence_id} | {alert.severity} | {alert.status} | {alert.message}"
+            )
+    finally:
+        session.close()
+
+
+@app.command("list-custody")
+def list_custody(limit: int = 20) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        statement = select(CustodyLogORM).order_by(CustodyLogORM.created_at.desc()).limit(limit)
+        rows = list(session.scalars(statement))
+        print_banner()
+        for row in rows:
+            typer.echo(f"{row.custody_log_id} | {row.object_type} | {row.action} | {row.actor}")
+    finally:
+        session.close()
+
+
+@app.command("add-local-import-schedule")
+def add_local_import_schedule(
+    name: str,
+    source_path: Path,
+    interval_seconds: int,
+    layer: str = "unassigned",
+    notes: str = "",
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        task = create_scheduled_task(
+            session,
+            ScheduledTaskCreate(
+                name=name,
+                task_type="local_import",
+                interval_seconds=interval_seconds,
+                target_path=str(source_path),
+                layer_key=layer,
+                notes=notes,
+            ),
+        )
+        print_banner()
+        typer.echo(f"scheduled task {task.task_id} created for local import")
+    finally:
+        session.close()
+
+
+@app.command("add-geofence-scan-schedule")
+def add_geofence_scan_schedule(
+    name: str,
+    interval_seconds: int,
+    geofence_id: int | None = None,
+    notes: str = "",
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        task = create_scheduled_task(
+            session,
+            ScheduledTaskCreate(
+                name=name,
+                task_type="geofence_scan",
+                interval_seconds=interval_seconds,
+                geofence_id=geofence_id,
+                notes=notes,
+            ),
+        )
+        print_banner()
+        typer.echo(f"scheduled task {task.task_id} created for geofence scan")
+    finally:
+        session.close()
+
+
+@app.command("list-schedules")
+def list_schedules() -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        rows = list(session.scalars(select(ScheduledTaskORM).order_by(ScheduledTaskORM.task_id.asc())))
+        print_banner()
+        for row in rows:
+            typer.echo(
+                f"{row.task_id} | {row.task_type} | every={row.interval_seconds}s | enabled={row.enabled} | next={row.next_run_at}"
+            )
+    finally:
+        session.close()
+
+
+@app.command("run-due-schedules")
+def run_due_schedules() -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        runs = run_due_tasks(session, actor="cli")
+        print_banner()
+        typer.echo(f"runs_created={len(runs)}")
+    finally:
+        session.close()
+
+
+@app.command("run-schedule")
+def run_schedule(task_id: int) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        task_run = run_task(session, task_id, actor="cli")
+        print_banner()
+        typer.echo(
+            f"task_run={task_run.task_run_id} status={task_run.status} records={task_run.records_affected}"
+        )
+    finally:
+        session.close()
+
+
 if __name__ == "__main__":
     app()
-

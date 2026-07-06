@@ -23,7 +23,13 @@ class ParsedObservation:
     location_geojson: dict[str, Any] | None
 
 
-def import_local_path(session: Session, source_path: str, layer_key: str, notes: str) -> LocalImportRunORM:
+def import_local_path(
+    session: Session,
+    source_path: str,
+    layer_key: str,
+    notes: str,
+    actor: str = "system",
+) -> LocalImportRunORM:
     path = Path(source_path).expanduser().resolve()
     if not path.exists():
         raise FileNotFoundError(f"Input path does not exist: {path}")
@@ -40,6 +46,7 @@ def import_local_path(session: Session, source_path: str, layer_key: str, notes:
                 "step": "queued",
                 "path": str(path),
                 "source_format": source_format,
+                "actor": actor,
             }
         ],
     )
@@ -60,6 +67,7 @@ def import_local_path(session: Session, source_path: str, layer_key: str, notes:
             "step": "parsed",
             "records_seen": run.records_seen,
             "records_imported": run.records_imported,
+            "actor": actor,
         }
     )
 
@@ -88,7 +96,7 @@ def import_local_path(session: Session, source_path: str, layer_key: str, notes:
             object_type="local_import_run",
             object_id=str(run.import_run_id),
             action="import_completed",
-            actor="system",
+            actor=actor,
             details_json={
                 "source_path": str(path),
                 "source_format": source_format,
