@@ -23,6 +23,7 @@ from src.intel.models import (
     SourceCreate,
 )
 from src.intel.service import IntelService
+from src.services.backend_database_service import backend_database_status, bootstrap_backend_databases
 
 
 def _configure_sqlite(monkeypatch, tmp_path: Path) -> str:
@@ -403,3 +404,39 @@ def test_intel_database_status_and_spatial_nearby_route_use_sqlite_fallback(tmp_
     assert payload["spatialBackend"] == "sqlite-python-fallback"
     assert {item["subjectKind"] for item in payload["results"]} >= {"event", "entity", "observation", "geofence"}
     assert payload["results"][0]["distanceM"] == 0.0
+
+
+def test_backend_database_status_reports_unified_component_health(tmp_path: Path, monkeypatch) -> None:
+    database_url = _configure_sqlite(monkeypatch, tmp_path)
+    settings = get_settings()
+
+    bootstrap_report = bootstrap_backend_databases(settings)
+    status_report = backend_database_status(settings)
+
+    assert bootstrap_report.component_count == 6
+    assert set(bootstrap_report.bootstrapped_components) >= {
+        "primary",
+        "source_discovery",
+        "wave_monitor",
+        "reference",
+        "webcam",
+        "marine",
+    }
+    assert status_report.reachable_component_count == status_report.component_count
+    assert status_report.distinct_database_count == 1
+    primary = next(component for component in status_report.components if component.component_key == "primary")
+    assert primary.database_url == database_url
+    assert primary.spatial_backend == "sqlite-python-fallback"
+    assert primary.postgis_available is False
+    reference = next(component for component in status_report.components if component.component_key == "reference")
+    assert reference.migration_version is not None
+    assert reference.missing_tables == []
+
+    with TestClient(create_application()) as client:
+        response = client.get("/api/status/databases")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["componentCount"] == 6
+    assert payload["reachableComponentCount"] == 6
+    assert any(component["componentKey"] == "webcam" for component in payload["components"])

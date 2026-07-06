@@ -104,6 +104,8 @@ python -m src.cli sync-event-feeds --feeds all --max-records-per-feed 50
 - `11writer config`
 - `11writer routes`
 - `11writer doctor`
+- `11writer db-status`
+- `11writer db-bootstrap`
 - `11writer intel-overview`
 - `11writer intel-db`
 - `11writer ingest-file`

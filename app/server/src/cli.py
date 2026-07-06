@@ -19,6 +19,7 @@ from src.intel.event_sync import EVENT_FEED_KEYS, EventFeedSyncService
 from src.intel.models import EventFeedSyncRequest, IngestFileRequest
 from src.intel.service import IntelService
 from src.runtime_worker import _run as run_runtime_workers
+from src.services.backend_database_service import backend_database_status, bootstrap_backend_databases
 
 
 BANNER = r"""
@@ -62,6 +63,12 @@ def _build_parser() -> argparse.ArgumentParser:
 
     intel_db_status = subparsers.add_parser("intel-db", help="Print intel database and spatial backend status.")
     intel_db_status.add_argument("--json", action="store_true", help="Emit JSON instead of plain text.")
+
+    db_status = subparsers.add_parser("db-status", help="Print backend database status across subsystems.")
+    db_status.add_argument("--json", action="store_true", help="Emit JSON instead of plain text.")
+
+    db_bootstrap = subparsers.add_parser("db-bootstrap", help="Bootstrap backend database schemas across subsystems.")
+    db_bootstrap.add_argument("--json", action="store_true", help="Emit JSON instead of plain text.")
 
     ingest = subparsers.add_parser("ingest-file", help="Ingest a JSON, text, or SQLite file into the intel core.")
     ingest.add_argument("path", help="Path to the input file.")
@@ -170,12 +177,13 @@ def _run_doctor() -> None:
     }
     intel_status = "ok"
     intel_counts: dict[str, int] | None = None
-    database_status: dict[str, Any] | None = None
+    intel_database_status: dict[str, Any] | None = None
+    backend_db_report: dict[str, Any] | None = None
     try:
-        init_intel_db(intel_db)
+        backend_db_report = bootstrap_backend_databases(settings).model_dump(mode="json")
         overview, runtime_db_status = _with_intel_service(lambda service: (service.overview(), service.database_status()))
         intel_counts = overview.counts
-        database_status = runtime_db_status.model_dump(mode="json")
+        intel_database_status = runtime_db_status.model_dump(mode="json")
     except Exception as exc:  # noqa: BLE001
         intel_status = f"unavailable ({exc.__class__.__name__}: {exc})"
     print("runtime_mode:", settings.app_runtime_mode)
@@ -185,11 +193,15 @@ def _run_doctor() -> None:
     print("intel_status:", intel_status)
     if intel_counts is not None:
         print("intel_counts:", intel_counts)
-    if database_status is not None:
-        print("spatial_backend:", database_status["spatial_backend"])
-        print("postgis_available:", database_status["postgis_available"])
-        if database_status["postgis_version"]:
-            print("postgis_version:", database_status["postgis_version"])
+    if intel_database_status is not None:
+        print("spatial_backend:", intel_database_status["spatial_backend"])
+        print("postgis_available:", intel_database_status["postgis_available"])
+        if intel_database_status["postgis_version"]:
+            print("postgis_version:", intel_database_status["postgis_version"])
+    if backend_db_report is not None:
+        print("database_components:", backend_db_report["component_count"])
+        print("database_reachable_components:", backend_db_report["reachable_component_count"])
+        print("database_distinct_identities:", backend_db_report["distinct_database_count"])
     for name, version in checks.items():
         print(f"{name}: {version}")
 
@@ -213,6 +225,30 @@ def _print_intel_db_status(as_json: bool) -> None:
         return
     for key, value in payload.items():
         print(f"{key}: {value}")
+
+
+def _print_backend_db_status(*, as_json: bool, bootstrap: bool) -> None:
+    settings = get_settings()
+    report = (
+        bootstrap_backend_databases(settings)
+        if bootstrap
+        else backend_database_status(settings)
+    ).model_dump(mode="json")
+    if as_json:
+        print(json.dumps(report, indent=2))
+        return
+    print(f"component_count: {report['component_count']}")
+    print(f"reachable_component_count: {report['reachable_component_count']}")
+    print(f"distinct_database_count: {report['distinct_database_count']}")
+    if report["bootstrapped_components"]:
+        print(f"bootstrapped_components: {', '.join(report['bootstrapped_components'])}")
+    for component in report["components"]:
+        print(
+            f"{component['component_key']}: reachable={component['reachable']} dialect={component['dialect']} "
+            f"tables={component['table_count']} strategy={component['bootstrap_strategy']}"
+        )
+        if component["missing_tables"]:
+            print(f"  missing_tables: {', '.join(component['missing_tables'])}")
 
 
 def _ingest_file(args: argparse.Namespace) -> None:
@@ -393,6 +429,14 @@ def main() -> None:
 
     if args.command == "intel-db":
         _print_intel_db_status(as_json=args.json)
+        return
+
+    if args.command == "db-status":
+        _print_backend_db_status(as_json=args.json, bootstrap=False)
+        return
+
+    if args.command == "db-bootstrap":
+        _print_backend_db_status(as_json=args.json, bootstrap=True)
         return
 
     if args.command == "ingest-file":
