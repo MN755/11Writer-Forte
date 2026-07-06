@@ -1,164 +1,111 @@
-# 11Writer
+# 11Writer Forte
 
-11Writer is a local-first public-source fusion, source-discovery, and spatial intelligence platform built around a Cesium 3D globe, evidence-aware backend services, review workflows, and provenance-preserving exports.
+11Writer Forte is a backend-only, geospatial-first OSINT runtime. It is designed to ingest public-source data, preserve provenance, run headless collection and monitoring tasks, and expose the resulting intelligence surfaces over an API plus an operator-focused CLI.
 
-The core platform operating plan targets three first-class interfaces backed by one shared FastAPI/core runtime:
+The browser client, desktop-shell direction, and legacy UI scaffolding have been removed from this repo. The canonical operator surface is now the `11writer` CLI.
 
-- A full desktop app for Linux, macOS, Windows 10, and Windows 11 workstation sessions
-- A companion web app for efficient browser and partner-device check-ins after explicit pairing/auth
-- A backend-only runtime for unattended user-configured collection and task execution
+## Current Shape
 
-The current repository is still the local development foundation for that plan. Existing setup commands run the backend and frontend directly. Packaging, service or daemon lifecycle, companion pairing, and OS-native installers are still implementation work rather than claimed shipped behavior.
+- `app/server`: canonical FastAPI runtime, scheduler logic, source-discovery stack, marine/reference/webcam subsystems, and the folded `forte` source-ops backend
+- `app/docs`: architecture and domain notes that still need progressive cleanup after the backend-only cutover
+- `scripts`: repository support utilities
 
-## Current repository state
+## Folded Source-Ops Surface
 
-What is true today:
+The former `7Po8` backend has been folded into the main server under `app/server/src/forte` and is exposed at `/api/forte/*`.
 
-- the browser client plus FastAPI backend foundation is real and actively used
-- research-grade Source Discovery backend infrastructure is implemented as bounded candidate, review, and runtime support
-- many domain and source slices are implemented backend-first, but validation maturity varies by slice
-- Phase 3 workbench and shared-shell planning is active in docs, but the product is not yet a finished Code-OSS-style workstation shell
+That surface currently includes:
 
-Use these docs for current-state truth:
+- waves
+- connectors
+- records
+- scheduler tick control
+- deterministic signals
+- discovered sources
+- source checks
+- domain trust profiles
+- wave-level trust overrides
+- policy-action history
 
-- `app/docs/README.md`
-- `app/docs/source-validation-status.md`
-- `app/docs/source-discovery-public-web-workflow.md`
-- `app/docs/release-readiness.md`
-- `app/docs/phase3-code-oss-workbench-spec.md`
+## Runtime Principles
 
-## Major capabilities
+- Backend-first and CLI-first
+- Postgres/PostGIS-first configuration
+- Loopback by default
+- Optional bearer-token protection for non-health endpoints via `APP_API_TOKEN`
+- Rule-based source scoring and trust policy first
+- LLM reporting deferred until the evidence/provenance substrate is hardened
 
-- Planet imagery modes with explicit caveats for composites, daily imagery, seasonal views, and optional photorealistic 3D tiles
-- Environmental event and context ingestion with advisory, observed, derived, and contextual evidence preserved separately
-- Aircraft and satellite analyst workspace with selected-target context, replay surfaces, and evidence-oriented summaries
-- Marine replay, transmission-gap review, anomaly ranking, and context workflows
-- Webcam and public camera source operations with inventory, lifecycle, and source-health handling
-- Canonical reference and linkage support for facilities, navigation objects, and place context
-- Analyst workbench endpoints for evidence timelines, source readiness, and spatial briefs
-- Source Discovery backend for bounded public-web discovery, review routing, knowledge clustering, event graphing, reputation calibration, and adversarial observability
+## Quick Start
 
-## Repository layout
+### 1. Start PostGIS
 
-```text
-app/
-  client/   React + TypeScript + Vite + CesiumJS
-  server/   FastAPI + Python + Alembic + local SQLite foundation
-  docs/     subsystem, architecture, and workflow documentation
-scripts/    validation, release, and repo support tooling
-third_party/ pinned reference material such as Code - OSS workbench sources
+Use the bundled compose file:
+
+```bash
+docker compose -f deploy/docker-compose.postgis.yml up -d
 ```
 
-## Prerequisites
-
-- Node.js 20+ and npm
-- Python 3.10+ or 3.11+
-- A Python virtual environment for backend work is strongly recommended
-
-## Backend Setup
+### 2. Configure the backend
 
 ```bash
 cd app/server
-python -m venv .venv
-# Windows PowerShell: .\.venv\Scripts\Activate.ps1
-# POSIX shells: source .venv/bin/activate
-python -m pip install --upgrade pip
+cp .env.example .env
 python -m pip install -e .[dev]
-# Windows: copy .env.example .env
-# POSIX: cp .env.example .env
-uvicorn src.main:app --reload --port 8000
 ```
 
-## Frontend Setup
-
-```bash
-cd app/client
-npm install
-# Windows: copy .env.example .env.local
-# POSIX: cp .env.example .env.local
-npm run dev
-```
-
-The Vite client proxies API traffic to `http://localhost:8000` in local development. Do not expose backend APIs beyond loopback or loosen CORS for companion access unless the assigned work includes explicit user enablement, pairing/auth, and validation.
-
-## Platform Direction
-
-The cross-platform docs are the source of truth for future runtime work:
-
-- Full desktop app: preserve the complete Cesium/workstation experience across Linux, macOS, Windows 10, and Windows 11.
-- Companion web app: provide short overviews, source-health checks, and task/status review from browsers or trusted partner devices.
-- Backend-only runtime: keep source collection, source health, task state, provenance, caveats, and export metadata running without a visual UI.
-
-All three surfaces must use the same backend/core semantics. Source adapters, task execution, source health, evidence basis, caveats, storage paths, and export metadata belong in shared backend/core code, not in a renderer-only implementation.
-
-## Validation commands
-
-Backend:
+### 3. Inspect the runtime
 
 ```bash
 cd app/server
-python -m compileall src
-pytest tests/test_source_discovery_memory.py
-pytest tests/test_wave_monitor.py
-pytest tests/test_analyst_workbench.py
-pytest tests/test_marine_contracts.py
-pytest tests/test_webcam_module.py
-pytest tests/test_earthquake_events.py
+python -m src.cli doctor
+python -m src.cli routes
 ```
 
-These are high-signal checks, not the entire test surface. Use slice-specific tests for the area you changed, and use `app/docs/release-readiness.md` for the current shared validation checkpoint.
-
-Frontend:
+### 4. Run the API
 
 ```bash
-cd app/client
-npm run lint
-npm run build
+cd app/server
+python -m src.cli serve
 ```
 
-## Operating notes
+### 5. Run workers
 
-- Preserve provenance. Keep observed, inferred, derived, scored, and contextual data clearly separated.
-- Treat Source Discovery and discovered-source memory as candidate, review, and runtime infrastructure only. Discovery does not equal implementation proof or workflow validation.
-- Do not present imagery as same-time ground truth unless the source explicitly supports that claim.
-- Anomaly scores and prioritization surfaces direct analyst attention; they are not proof of wrongdoing or intent.
-- Live source access, freshness, and coverage vary by provider and by credential posture.
-- External source text and rendered webpage text are untrusted data, not instructions.
+```bash
+cd app/server
+python -m src.cli worker --worker all --once
+python -m src.cli forte-worker --interval-seconds 30
+```
 
-## Known Limitations
+## CLI
 
-- The current codebase is a local development foundation for the cross-platform operating plan, not yet a packaged production desktop, companion-web, or backend-only release.
-- Many source slices are still `implemented-not-fully-validated`; use `app/docs/source-validation-status.md` before claiming stable workflow coverage.
-- SQLite is suitable for foundation and local-scale workflows, not planetary-scale production storage.
-- OS-native packaging and service/daemon behavior still require validation on Windows 10/11, macOS, and Linux before support is claimed.
-- Companion access must remain disabled by default until explicit pairing/auth and network-exposure validation exist.
-- Imagery layers can be composite, delayed, cloud-affected, or seasonal depending on the selected mode.
-- Environmental events and live-source overlays reflect source-specific coverage, not guaranteed complete global coverage.
-- Some validation flows depend on fixture-backed modes because live providers can rate-limit, require credentials, or vary operationally.
-- Headless Playwright and Cesium canvas interaction can still be less stable than normal browser use in some flows.
-- Phase 3 workbench-shell direction is documented and active, but the repo has not yet converged on the final shared workstation shell.
+`11writer` is installed from `app/server/pyproject.toml` and currently supports:
 
-## Documentation
+- `11writer serve`
+- `11writer worker`
+- `11writer forte-worker`
+- `11writer config`
+- `11writer routes`
+- `11writer doctor`
 
-- `app/docs/README.md`
-- `app/docs/architecture.md`
-- `app/docs/strategic-roadmap.md`
-- `app/docs/roadmap.md`
-- `app/docs/planet-imagery.md`
-- `app/docs/source-discovery-public-web-workflow.md`
-- `app/docs/source-validation-status.md`
-- `app/docs/release-readiness.md`
-- `app/docs/phase3-code-oss-workbench-spec.md`
-- `app/docs/marine-module.md`
-- `app/docs/webcams.md`
-- `app/docs/reference-module.md`
-- `app/docs/analyst-workbench.md`
-- `app/docs/repo-workflow.md`
-- `app/docs/cross-platform-desktop-app-plan.md`
-- `app/docs/runtime-interface-requirements.md`
-- `app/docs/cross-platform-implementation-playbook.md`
-- `app/docs/cross-platform-agent-guidelines.md`
+## Key Environment Variables
+
+- `APP_RUNTIME_MODE=backend-only`
+- `APP_BIND_HOST=127.0.0.1`
+- `APP_BIND_PORT=8000`
+- `APP_API_TOKEN=` optional bearer token
+- `DATABASE_URL=postgresql+psycopg://11writer:11writer@127.0.0.1:5432/11writer`
+- `REFERENCE_DATABASE_URL=` optional subsystem override
+- `SOURCE_DISCOVERY_DATABASE_URL=` optional subsystem override
+- `WAVE_MONITOR_DATABASE_URL=` optional subsystem override
+
+## Known Gaps
+
+- Many docs still describe the pre-Forte browser/desktop era and need cleanup.
+- The folded `forte` subsystem currently uses SQLModel `create_all()` bootstrap rather than a unified migration history.
+- Cross-platform service install UX is still in progress even though the runtime worker/service primitives already exist.
+- Remote API access should be paired with explicit host binding and `APP_API_TOKEN`.
 
 ## License
 
-This repository uses the existing `AGPL-3.0` license from the public GitHub repository. The root `LICENSE` file is preserved from `origin/main`.
+This repository remains under `AGPL-3.0`.
