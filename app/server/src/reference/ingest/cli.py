@@ -4,11 +4,13 @@ import argparse
 from collections.abc import Sequence
 from pathlib import Path
 
+from src.config.settings import get_settings
 from src.reference.db import session_scope
 from src.reference.ingest.dataset_manifest import DatasetManifest
 from src.reference.ingest.parsers import PARSERS
 from src.reference.ingest.staging import prepare_source
 from src.reference.repository import ReferenceRepository
+from src.services.ops_audit_service import init_ops_audit_db, record_provenance_event
 
 
 def run_cli(argv: Sequence[str] | None = None) -> None:
@@ -23,6 +25,7 @@ def run_cli(argv: Sequence[str] | None = None) -> None:
     parser.add_argument("--remote-url", default=None)
     parser.add_argument("--staging-root", default="./data/reference_staging")
     args = parser.parse_args(list(argv) if argv is not None else None)
+    runtime_settings = get_settings()
 
     manifest = DatasetManifest(
         name=args.dataset,
@@ -38,6 +41,25 @@ def run_cli(argv: Sequence[str] | None = None) -> None:
     )
     source_path = prepare_source(manifest, Path(args.staging_root))
     records = PARSERS[args.dataset](source_path, args.version)
+    provenance_kwargs = {
+        "subsystem": "reference",
+        "event_kind": "reference_dataset_ingest",
+        "operation": "upsert_records",
+        "status": "completed",
+        "actor": "11writer-cli",
+        "subject_type": "reference_dataset",
+        "subject_id": f"{args.dataset}:{args.version}",
+        "source_uri": args.remote_url if args.source_mode == "remote" else str(source_path),
+        "input_refs": [str(source_path)],
+        "output_refs": [f"reference_dataset_load:{args.dataset}:{args.version}"],
+        "chain_of_custody": [
+            f"source_mode={args.source_mode}",
+            f"staging_root={args.staging_root}",
+            f"reference_database_url={args.database_url}",
+        ],
+    }
+    if args.database_url == runtime_settings.source_discovery_database_url:
+        init_ops_audit_db(args.database_url)
     with session_scope(args.database_url) as session:
         repository = ReferenceRepository(session)
         count = repository.upsert_records(
@@ -48,6 +70,33 @@ def run_cli(argv: Sequence[str] | None = None) -> None:
             checksum=manifest.checksum,
             source_path=str(source_path),
             notes=f"Loaded via {args.dataset} CLI importer.",
+        )
+        if args.database_url == runtime_settings.source_discovery_database_url:
+            record_provenance_event(
+                runtime_settings,
+                summary=f"Ingested {count} records from {args.dataset}.",
+                metadata={
+                    "dataset": args.dataset,
+                    "version": args.version,
+                    "coverage": args.coverage,
+                    "checksum": args.checksum,
+                    "record_count": count,
+                },
+                session=session,
+                **provenance_kwargs,
+            )
+    if args.database_url != runtime_settings.source_discovery_database_url:
+        record_provenance_event(
+            runtime_settings,
+            summary=f"Ingested {count} records from {args.dataset}.",
+            metadata={
+                "dataset": args.dataset,
+                "version": args.version,
+                "coverage": args.coverage,
+                "checksum": args.checksum,
+                "record_count": count,
+            },
+            **provenance_kwargs,
         )
     print(f"Ingested {count} records from {args.dataset}.")
 

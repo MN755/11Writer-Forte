@@ -12,8 +12,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from src.config.settings import Settings
+from src.services.ops_audit_service import init_ops_audit_db, record_provenance_event, upsert_alert_record
 from src.services.storage_profile_service import resolve_runtime_storage_mode
 from src.services.source_discovery_service import SourceDiscoveryService
+from src.source_discovery.db import init_db as init_source_discovery_db
 from src.types.source_discovery import SourceDiscoveryCandidateSeed
 from src.wave_monitor.db import session_scope
 from src.wave_monitor.models import (
@@ -75,6 +77,7 @@ class WaveMonitorService:
         self._settings = settings
 
     async def overview(self) -> WaveMonitorOverviewResponse:
+        self._ensure_shared_runtime_schema()
         with session_scope(self._settings.wave_monitor_database_url) as session:
             _ensure_seed_data(session)
             self._sync_source_candidates_to_memory(session)
@@ -92,6 +95,7 @@ class WaveMonitorService:
             )
 
     async def run_monitor_now(self, monitor_id: str) -> WaveMonitorRunResponse:
+        self._ensure_shared_runtime_schema()
         with session_scope(self._settings.wave_monitor_database_url) as session:
             _ensure_seed_data(session)
             self._sync_source_candidates_to_memory(session)
@@ -112,6 +116,7 @@ class WaveMonitorService:
             return _run_response(monitor_id, results)
 
     async def scheduler_tick(self) -> WaveMonitorSchedulerTickResponse:
+        self._ensure_shared_runtime_schema()
         with session_scope(self._settings.wave_monitor_database_url) as session:
             _ensure_seed_data(session)
             self._sync_source_candidates_to_memory(session)
@@ -205,6 +210,73 @@ class WaveMonitorService:
             monitor.source_health = "loaded"
             monitor.updated_at = finished_at
             session.flush()
+            provenance = record_provenance_event(
+                self._settings,
+                subsystem="wave_monitor",
+                event_kind="connector_run",
+                operation="collect_records",
+                status="completed",
+                actor="wave_monitor_service",
+                subject_type="wave_connector",
+                subject_id=connector.connector_id,
+                summary=f"{connector.name} collected {len(created_records)} new records.",
+                correlation_id=run.run_id,
+                input_refs=[connector.feed_url or "fixture"],
+                output_refs=[f"wave_run:{run.run_id}"],
+                evidence_refs=[record.external_id for record in created_records],
+                chain_of_custody=[
+                    f"source_mode={connector.source_mode}",
+                    f"monitor_id={monitor.monitor_id}",
+                    f"created_records={len(created_records)}",
+                ],
+                metadata={
+                    "monitor_id": monitor.monitor_id,
+                    "connector_id": connector.connector_id,
+                    "records_created": len(created_records),
+                    "signals_created": signal_count,
+                },
+                session=_ops_audit_session(self._settings, session),
+            )
+            if created_records:
+                upsert_alert_record(
+                    self._settings,
+                    dedupe_key=f"wave-monitor-signal:{monitor.monitor_id}:matching_record:{connector.connector_id}",
+                    subsystem="wave_monitor",
+                    alert_type="wave_monitor_signal",
+                    severity="medium",
+                    status="open",
+                    title=f"Wave Monitor lead: {connector.name}",
+                    summary=f"{len(created_records)} new records were collected for {monitor.title}.",
+                    subject_type="wave_monitor",
+                    subject_id=monitor.monitor_id,
+                    source_event_id=provenance.provenance_event_id,
+                    evidence_refs=[record.external_id for record in created_records],
+                    metadata={"connector_id": connector.connector_id, "signal_type": "matching_record"},
+                    caveats=[
+                        "Collected records are review leads and do not by themselves prove relationship, attribution, or causation.",
+                    ],
+                    session=_ops_audit_session(self._settings, session),
+                )
+            else:
+                upsert_alert_record(
+                    self._settings,
+                    dedupe_key=f"wave-monitor-signal:{monitor.monitor_id}:source_silence:{connector.connector_id}",
+                    subsystem="wave_monitor",
+                    alert_type="wave_monitor_signal",
+                    severity="low",
+                    status="open",
+                    title=f"Wave Monitor silence: {connector.name}",
+                    summary="Connector ran successfully but did not collect new records.",
+                    subject_type="wave_monitor",
+                    subject_id=monitor.monitor_id,
+                    source_event_id=provenance.provenance_event_id,
+                    evidence_refs=[connector.connector_id],
+                    metadata={"connector_id": connector.connector_id, "signal_type": "source_silence"},
+                    caveats=[
+                        "No new records is an operational observation and does not prove source completeness or event absence.",
+                    ],
+                    session=_ops_audit_session(self._settings, session),
+                )
             return ConnectorRunResult(run=run, records_created=len(created_records), signals_created=signal_count)
         except Exception as exc:  # noqa: BLE001
             finished_at = _utc_now()
@@ -235,6 +307,50 @@ class WaveMonitorService:
                 ],
                 dedupe_key=f"connector_run_failed:{connector.connector_id}",
                 now=finished_at,
+            )
+            provenance = record_provenance_event(
+                self._settings,
+                subsystem="wave_monitor",
+                event_kind="connector_run",
+                operation="collect_records",
+                status="failed",
+                actor="wave_monitor_service",
+                subject_type="wave_connector",
+                subject_id=connector.connector_id,
+                summary=message,
+                correlation_id=run.run_id,
+                input_refs=[connector.feed_url or "fixture"],
+                output_refs=[f"wave_run:{run.run_id}"],
+                chain_of_custody=[
+                    f"source_mode={connector.source_mode}",
+                    f"monitor_id={monitor.monitor_id}",
+                    "connector raised an exception during collection",
+                ],
+                metadata={
+                    "monitor_id": monitor.monitor_id,
+                    "connector_id": connector.connector_id,
+                    "error_summary": message,
+                },
+                session=_ops_audit_session(self._settings, session),
+            )
+            upsert_alert_record(
+                self._settings,
+                dedupe_key=f"wave-monitor-failure:{monitor.monitor_id}:{connector.connector_id}",
+                subsystem="wave_monitor",
+                alert_type="wave_monitor_connector_failure",
+                severity="high",
+                status="open",
+                title=f"Wave Monitor connector failed: {connector.name}",
+                summary=message,
+                subject_type="wave_monitor",
+                subject_id=monitor.monitor_id,
+                source_event_id=provenance.provenance_event_id,
+                evidence_refs=[connector.connector_id],
+                metadata={"connector_id": connector.connector_id, "run_id": run.run_id},
+                caveats=[
+                    "Connector failure is backend source-health context, not evidence about the monitored topic.",
+                ],
+                session=_ops_audit_session(self._settings, session),
             )
             session.flush()
             return ConnectorRunResult(run=run, records_created=0, signals_created=1 if signal else 0)
@@ -297,7 +413,16 @@ class WaveMonitorService:
                     caveats=_loads_list(candidate.caveats_json),
                 )
             )
-        SourceDiscoveryService(self._settings).upsert_candidates(seeds)
+        discovery_service = SourceDiscoveryService(self._settings)
+        if self._settings.wave_monitor_database_url == self._settings.source_discovery_database_url:
+            discovery_service.upsert_candidates_with_session(session, seeds)
+            return
+        discovery_service.upsert_candidates(seeds)
+
+    def _ensure_shared_runtime_schema(self) -> None:
+        if self._settings.wave_monitor_database_url == self._settings.source_discovery_database_url:
+            init_source_discovery_db(self._settings.source_discovery_database_url)
+            init_ops_audit_db(self._settings.source_discovery_database_url)
 
 
 def _overview_response(
@@ -1023,3 +1148,9 @@ def _loads_list(raw: str | None) -> list[str]:
     if isinstance(value, list):
         return [str(item) for item in value]
     return []
+
+
+def _ops_audit_session(settings: Settings, session: Session) -> Session | None:
+    if settings.wave_monitor_database_url == settings.source_discovery_database_url:
+        return session
+    return None

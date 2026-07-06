@@ -724,3 +724,51 @@ class RuntimeServiceActionORM(SourceDiscoveryBase):
     stderr_excerpt: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[str] = mapped_column(String(64), index=True)
     finished_at: Mapped[str | None] = mapped_column(String(64), index=True)
+
+
+class BackendProvenanceEventORM(SourceDiscoveryBase):
+    __tablename__ = "backend_provenance_events"
+
+    provenance_event_id: Mapped[str] = mapped_column(String(180), primary_key=True)
+    subsystem: Mapped[str] = mapped_column(String(64), index=True)
+    event_kind: Mapped[str] = mapped_column(String(64), index=True)
+    operation: Mapped[str] = mapped_column(String(96), index=True)
+    status: Mapped[str] = mapped_column(String(32), index=True)
+    actor: Mapped[str] = mapped_column(String(160), index=True)
+    subject_type: Mapped[str] = mapped_column(String(64), index=True)
+    subject_id: Mapped[str] = mapped_column(String(255), index=True)
+    correlation_id: Mapped[str | None] = mapped_column(String(180), index=True)
+    parent_event_id: Mapped[str | None] = mapped_column(String(180), index=True)
+    source_uri: Mapped[str | None] = mapped_column(Text)
+    input_refs_json: Mapped[str] = mapped_column(Text, default="[]")
+    output_refs_json: Mapped[str] = mapped_column(Text, default="[]")
+    evidence_refs_json: Mapped[str] = mapped_column(Text, default="[]")
+    chain_of_custody_json: Mapped[str] = mapped_column(Text, default="[]")
+    metadata_json: Mapped[str] = mapped_column(Text, default="{}")
+    summary: Mapped[str] = mapped_column(Text, default="")
+    occurred_at: Mapped[str] = mapped_column(String(64), index=True)
+
+
+class BackendAlertRecordORM(SourceDiscoveryBase):
+    __tablename__ = "backend_alert_records"
+    __table_args__ = (
+        UniqueConstraint("dedupe_key", name="uq_backend_alert_record_dedupe_key"),
+    )
+
+    alert_id: Mapped[str] = mapped_column(String(180), primary_key=True)
+    dedupe_key: Mapped[str] = mapped_column(String(255), index=True)
+    subsystem: Mapped[str] = mapped_column(String(64), index=True)
+    alert_type: Mapped[str] = mapped_column(String(64), index=True)
+    severity: Mapped[str] = mapped_column(String(16), index=True)
+    status: Mapped[str] = mapped_column(String(32), index=True)
+    title: Mapped[str] = mapped_column(String(300))
+    summary: Mapped[str] = mapped_column(Text, default="")
+    subject_type: Mapped[str] = mapped_column(String(64), index=True)
+    subject_id: Mapped[str] = mapped_column(String(255), index=True)
+    source_event_id: Mapped[str | None] = mapped_column(String(180), index=True)
+    first_observed_at: Mapped[str] = mapped_column(String(64), index=True)
+    last_observed_at: Mapped[str] = mapped_column(String(64), index=True)
+    occurrence_count: Mapped[int] = mapped_column(Integer, default=1)
+    evidence_refs_json: Mapped[str] = mapped_column(Text, default="[]")
+    metadata_json: Mapped[str] = mapped_column(Text, default="{}")
+    caveats_json: Mapped[str] = mapped_column(Text, default="[]")

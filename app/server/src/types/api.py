@@ -228,6 +228,61 @@ class StorageStatusResponse(CamelModel):
     caveats: list[str] = Field(default_factory=list)
 
 
+BackendAlertSeverity = Literal["low", "medium", "high", "critical"]
+BackendAlertStatus = Literal["open", "acknowledged", "resolved"]
+
+
+class BackendProvenanceEvent(CamelModel):
+    provenance_event_id: str
+    subsystem: str
+    event_kind: str
+    operation: str
+    status: str
+    actor: str
+    subject_type: str
+    subject_id: str
+    correlation_id: str | None = None
+    parent_event_id: str | None = None
+    source_uri: str | None = None
+    input_refs: list[str] = Field(default_factory=list)
+    output_refs: list[str] = Field(default_factory=list)
+    evidence_refs: list[str] = Field(default_factory=list)
+    chain_of_custody: list[str] = Field(default_factory=list)
+    metadata: dict[str, object] = Field(default_factory=dict)
+    summary: str
+    occurred_at: str
+
+
+class BackendProvenanceResponse(CamelModel):
+    count: int
+    events: list[BackendProvenanceEvent] = Field(default_factory=list)
+
+
+class BackendAlertRecord(CamelModel):
+    alert_id: str
+    dedupe_key: str
+    subsystem: str
+    alert_type: str
+    severity: BackendAlertSeverity
+    status: BackendAlertStatus
+    title: str
+    summary: str
+    subject_type: str
+    subject_id: str
+    source_event_id: str | None = None
+    first_observed_at: str
+    last_observed_at: str
+    occurrence_count: int
+    evidence_refs: list[str] = Field(default_factory=list)
+    metadata: dict[str, object] = Field(default_factory=dict)
+    caveats: list[str] = Field(default_factory=list)
+
+
+class BackendAlertResponse(CamelModel):
+    count: int
+    alerts: list[BackendAlertRecord] = Field(default_factory=list)
+
+
 class AircraftQuery(CamelModel):
     lamin: float
     lamax: float

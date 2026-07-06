@@ -42,6 +42,7 @@ from src.source_discovery.models import (
     RuntimeSchedulerRunORM,
     RuntimeSchedulerWorkerORM,
     SourceArchiveHitORM,
+    SourceDiscoveryBase,
     SourceEventClusterORM,
     SourceEventMemberORM,
     SourceEventOpenQuestionORM,
@@ -870,6 +871,13 @@ class SourceDiscoveryService:
             session.flush()
             context = _build_discovery_priority_context(session)
             return [_serialize_memory(session, memory, context=context) for memory in memories]
+
+    def upsert_candidates_with_session(self, session: Session, seeds: list[SourceDiscoveryCandidateSeed]) -> list[SourceDiscoveryMemory]:
+        now = _utc_now()
+        memories = [_upsert_candidate_row(session, seed, now=now) for seed in seeds]
+        session.flush()
+        context = _build_discovery_priority_context(session)
+        return [_serialize_memory(session, memory, context=context) for memory in memories]
 
     def bulk_seed_candidates(
         self,

@@ -33,6 +33,7 @@ from src.routes.institutional_context import router as institutional_context_rou
 from src.routes.marine import router as marine_router
 from src.routes.ncei_space_weather_portal import router as ncei_space_weather_portal_router
 from src.routes.nvd_cve import router as nvd_cve_router
+from src.routes.ops import router as ops_router
 from src.routes.opensky_states import router as opensky_states_router
 from src.routes.ourairports_reference import router as ourairports_reference_router
 from src.routes.first_epss import router as first_epss_router
@@ -124,6 +125,7 @@ def create_application() -> FastAPI:
         )
 
     application.include_router(health_router)
+    application.include_router(ops_router)
     application.include_router(config_router)
     application.include_router(base_earth_context_router)
     application.include_router(catchments_context_router)

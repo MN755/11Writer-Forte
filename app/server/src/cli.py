@@ -10,6 +10,7 @@ from typing import Any
 import uvicorn
 
 from src.config.settings import Settings, get_settings
+from src.services.ops_audit_service import list_alert_records, list_provenance_events
 from src.reference.ingest import cli as reference_ingest_cli
 from src import runtime_worker
 from src.services.storage_profile_service import bootstrap_storage, build_storage_status
@@ -149,6 +150,28 @@ def build_parser() -> argparse.ArgumentParser:
     db_bootstrap_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
     db_bootstrap_parser.set_defaults(handler=_handle_db_bootstrap)
 
+    alerts_parser = subparsers.add_parser(
+        "alerts",
+        help="List persisted backend alert records.",
+    )
+    alerts_parser.add_argument("--limit", type=int, default=25)
+    alerts_parser.add_argument("--subsystem", default=None)
+    alerts_parser.add_argument("--status", default=None)
+    alerts_parser.add_argument("--severity", default=None)
+    alerts_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+    alerts_parser.set_defaults(handler=_handle_alerts)
+
+    provenance_parser = subparsers.add_parser(
+        "provenance",
+        help="List backend provenance events and chain-of-custody entries.",
+    )
+    provenance_parser.add_argument("--limit", type=int, default=25)
+    provenance_parser.add_argument("--subsystem", default=None)
+    provenance_parser.add_argument("--subject-type", default=None)
+    provenance_parser.add_argument("--subject-id", default=None)
+    provenance_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+    provenance_parser.set_defaults(handler=_handle_provenance)
+
     return parser
 
 
@@ -287,3 +310,47 @@ def _handle_db_bootstrap(args: argparse.Namespace) -> None:
             f"reachable={component['reachable']} "
             f"initialized={component['initialized']}"
         )
+
+
+def _handle_alerts(args: argparse.Namespace) -> None:
+    report = list_alert_records(
+        get_settings(),
+        limit=args.limit,
+        subsystem=args.subsystem,
+        status=args.status,
+        severity=args.severity,
+    ).model_dump(mode="json", by_alias=True)
+    if args.json:
+        print(json.dumps(report, indent=2, sort_keys=True))
+        return
+    print(ASCII_BANNER)
+    print()
+    print(f"alert count    : {report['count']}")
+    print()
+    for alert in report["alerts"]:
+        print(f"[{alert['severity']}/{alert['status']}] {alert['subsystem']} :: {alert['title']}")
+        print(f"  subject      : {alert['subjectType']}:{alert['subjectId']}")
+        print(f"  observed     : {alert['firstObservedAt']} -> {alert['lastObservedAt']} ({alert['occurrenceCount']}x)")
+        print(f"  summary      : {alert['summary']}")
+
+
+def _handle_provenance(args: argparse.Namespace) -> None:
+    report = list_provenance_events(
+        get_settings(),
+        limit=args.limit,
+        subsystem=args.subsystem,
+        subject_type=args.subject_type,
+        subject_id=args.subject_id,
+    ).model_dump(mode="json", by_alias=True)
+    if args.json:
+        print(json.dumps(report, indent=2, sort_keys=True))
+        return
+    print(ASCII_BANNER)
+    print()
+    print(f"event count    : {report['count']}")
+    print()
+    for event in report["events"]:
+        print(f"[{event['status']}] {event['subsystem']} :: {event['eventKind']} :: {event['subjectType']}:{event['subjectId']}")
+        print(f"  occurred     : {event['occurredAt']}")
+        print(f"  operation    : {event['operation']}")
+        print(f"  summary      : {event['summary']}")

@@ -129,3 +129,44 @@ def test_db_status_json_output(monkeypatch, capsys) -> None:
     assert exit_code == 0
     assert payload["storageMode"] == "persistent-postgis"
     assert payload["sharedStorage"] is True
+
+
+def test_alerts_json_output(monkeypatch, capsys) -> None:
+    class _FakeReport:
+        def model_dump(self, *, mode: str, by_alias: bool) -> dict[str, object]:
+            assert mode == "json"
+            assert by_alias is True
+            return {
+                "count": 1,
+                "alerts": [
+                    {
+                        "alertId": "alert:test",
+                        "dedupeKey": "runtime-worker-failure:wave_monitor",
+                        "subsystem": "runtime_scheduler",
+                        "alertType": "runtime_worker_failure",
+                        "severity": "high",
+                        "status": "open",
+                        "title": "Runtime worker failed: wave_monitor",
+                        "summary": "boom",
+                        "subjectType": "runtime_worker",
+                        "subjectId": "wave_monitor",
+                        "sourceEventId": "prov:test",
+                        "firstObservedAt": "2026-01-01T00:00:00Z",
+                        "lastObservedAt": "2026-01-01T00:00:00Z",
+                        "occurrenceCount": 1,
+                        "evidenceRefs": ["runtime_scheduler_run:test"],
+                        "metadata": {},
+                        "caveats": [],
+                    }
+                ],
+            }
+
+    monkeypatch.setattr(cli, "list_alert_records", lambda *args, **kwargs: _FakeReport())
+    monkeypatch.setattr(cli, "get_settings", lambda: Settings(_env_file=None))
+
+    exit_code = cli.main(["alerts", "--json"])
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["count"] == 1
+    assert payload["alerts"][0]["alertType"] == "runtime_worker_failure"

@@ -15,6 +15,7 @@ from uuid import uuid4
 from sqlalchemy import select
 
 from src.config.settings import Settings
+from src.services.ops_audit_service import init_ops_audit_db, record_provenance_event, upsert_alert_record
 from src.services.runtime_paths import ensure_runtime_service_artifact_dir, resolve_runtime_paths
 from src.services.source_discovery_service import SourceDiscoveryService
 from src.services.wave_monitor_service import WaveMonitorService
@@ -414,6 +415,7 @@ class RuntimeSchedulerCoordinator:
         now: str,
     ) -> SourceDiscoveryRuntimeRunSummary:
         _ensure_worker_rows(self._settings)
+        init_ops_audit_db(self._settings.source_discovery_database_url)
         with session_scope(self._settings.source_discovery_database_url) as session:
             worker = _get_or_create_worker_row(session, self._settings, worker_name)
             worker.last_tick_requested_at = now
@@ -433,6 +435,25 @@ class RuntimeSchedulerCoordinator:
                     summary=worker.last_summary,
                     error_summary=None,
                 )
+                record_provenance_event(
+                    self._settings,
+                    subsystem="runtime_scheduler",
+                    event_kind="runtime_worker_run",
+                    operation="poll_cycle",
+                    status="skipped",
+                    actor=requested_by,
+                    subject_type="runtime_worker",
+                    subject_id=worker_name,
+                    summary=worker.last_summary,
+                    correlation_id=row.run_id,
+                    output_refs=[f"runtime_scheduler_run:{row.run_id}"],
+                    chain_of_custody=[
+                        f"desired_state={worker.desired_state}",
+                        "worker run skipped before lease acquisition",
+                    ],
+                    metadata={"trigger_kind": trigger_kind},
+                    session=session,
+                )
                 session.flush()
                 return _serialize_runtime_run(row)
             if not _acquire_lease(worker, now, ttl_seconds=max(30, worker.poll_seconds * 2)):
@@ -451,6 +472,25 @@ class RuntimeSchedulerCoordinator:
                     summary=summary,
                     error_summary=None,
                 )
+                record_provenance_event(
+                    self._settings,
+                    subsystem="runtime_scheduler",
+                    event_kind="runtime_worker_run",
+                    operation="poll_cycle",
+                    status="skipped",
+                    actor=requested_by,
+                    subject_type="runtime_worker",
+                    subject_id=worker_name,
+                    summary=summary,
+                    correlation_id=row.run_id,
+                    output_refs=[f"runtime_scheduler_run:{row.run_id}"],
+                    chain_of_custody=[
+                        f"lease_owner={worker.lease_owner}",
+                        "worker run skipped because another lease was active",
+                    ],
+                    metadata={"trigger_kind": trigger_kind},
+                    session=session,
+                )
                 session.flush()
                 return _serialize_runtime_run(row)
             row = _create_runtime_run(
@@ -468,11 +508,31 @@ class RuntimeSchedulerCoordinator:
             worker.last_tick_started_at = now
             worker.last_status = "running"
             worker.last_error = None
+            record_provenance_event(
+                self._settings,
+                subsystem="runtime_scheduler",
+                event_kind="runtime_worker_run",
+                operation="poll_cycle",
+                status="started",
+                actor=requested_by,
+                subject_type="runtime_worker",
+                subject_id=worker_name,
+                summary=f"Started runtime worker cycle for {worker_name}.",
+                correlation_id=row.run_id,
+                output_refs=[f"runtime_scheduler_run:{row.run_id}"],
+                chain_of_custody=[
+                    f"trigger_kind={trigger_kind}",
+                    f"lease_owner={PROCESS_OWNER}",
+                ],
+                metadata={"trigger_kind": trigger_kind},
+                session=session,
+            )
             session.flush()
             return _serialize_runtime_run(row)
 
     def _complete_worker_run(self, worker_name: str, run_id: str, *, summary: str) -> SourceDiscoveryRuntimeRunSummary:
         finished_at = _utc_now()
+        init_ops_audit_db(self._settings.source_discovery_database_url)
         with session_scope(self._settings.source_discovery_database_url) as session:
             worker = _get_or_create_worker_row(session, self._settings, worker_name)
             row = session.get(RuntimeSchedulerRunORM, run_id)
@@ -486,6 +546,41 @@ class RuntimeSchedulerCoordinator:
                 row.finished_at = finished_at
                 row.summary = summary
                 row.error_summary = None
+                provenance = record_provenance_event(
+                    self._settings,
+                    subsystem="runtime_scheduler",
+                    event_kind="runtime_worker_run",
+                    operation="poll_cycle",
+                    status="completed",
+                    actor="runtime-loop",
+                    subject_type="runtime_worker",
+                    subject_id=worker_name,
+                    summary=summary,
+                    correlation_id=row.run_id,
+                    output_refs=[f"runtime_scheduler_run:{row.run_id}"],
+                    chain_of_custody=[
+                        "runtime worker completed and lease released",
+                    ],
+                    metadata={"run_id": row.run_id},
+                    session=session,
+                )
+                upsert_alert_record(
+                    self._settings,
+                    dedupe_key=f"runtime-worker-health:{worker_name}",
+                    subsystem="runtime_scheduler",
+                    alert_type="runtime_worker_health",
+                    severity="low",
+                    status="resolved",
+                    title=f"Runtime worker healthy: {worker_name}",
+                    summary=summary,
+                    subject_type="runtime_worker",
+                    subject_id=worker_name,
+                    source_event_id=provenance.provenance_event_id,
+                    evidence_refs=[f"runtime_scheduler_run:{row.run_id}"],
+                    metadata={"run_id": row.run_id, "status": "completed"},
+                    caveats=["Resolved health record confirms the latest observed successful runtime worker cycle."],
+                    session=session,
+                )
             session.flush()
             return _serialize_runtime_run(row) if row is not None else SourceDiscoveryRuntimeRunSummary(
                 run_id=run_id,
@@ -502,6 +597,7 @@ class RuntimeSchedulerCoordinator:
 
     def _fail_worker_run(self, worker_name: str, run_id: str, *, error_summary: str) -> SourceDiscoveryRuntimeRunSummary:
         finished_at = _utc_now()
+        init_ops_audit_db(self._settings.source_discovery_database_url)
         with session_scope(self._settings.source_discovery_database_url) as session:
             worker = _get_or_create_worker_row(session, self._settings, worker_name)
             row = session.get(RuntimeSchedulerRunORM, run_id)
@@ -515,6 +611,41 @@ class RuntimeSchedulerCoordinator:
                 row.finished_at = finished_at
                 row.summary = None
                 row.error_summary = error_summary
+                provenance = record_provenance_event(
+                    self._settings,
+                    subsystem="runtime_scheduler",
+                    event_kind="runtime_worker_run",
+                    operation="poll_cycle",
+                    status="failed",
+                    actor="runtime-loop",
+                    subject_type="runtime_worker",
+                    subject_id=worker_name,
+                    summary=error_summary,
+                    correlation_id=row.run_id,
+                    output_refs=[f"runtime_scheduler_run:{row.run_id}"],
+                    chain_of_custody=[
+                        "runtime worker failed and lease released",
+                    ],
+                    metadata={"run_id": row.run_id, "error_summary": error_summary},
+                    session=session,
+                )
+                upsert_alert_record(
+                    self._settings,
+                    dedupe_key=f"runtime-worker-failure:{worker_name}",
+                    subsystem="runtime_scheduler",
+                    alert_type="runtime_worker_failure",
+                    severity="high",
+                    status="open",
+                    title=f"Runtime worker failed: {worker_name}",
+                    summary=error_summary,
+                    subject_type="runtime_worker",
+                    subject_id=worker_name,
+                    source_event_id=provenance.provenance_event_id,
+                    evidence_refs=[f"runtime_scheduler_run:{row.run_id}"],
+                    metadata={"run_id": row.run_id, "status": "failed"},
+                    caveats=["Runtime worker failure is backend operations context, not evidence about the monitored subject matter."],
+                    session=session,
+                )
             session.flush()
             return _serialize_runtime_run(row) if row is not None else SourceDiscoveryRuntimeRunSummary(
                 run_id=run_id,

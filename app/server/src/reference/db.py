@@ -9,6 +9,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
+from src.reference.models import Base as ReferenceBase
+
 
 def _prepare_sqlite_path(database_url: str) -> None:
     if not database_url.startswith("sqlite:///"):
@@ -34,8 +36,32 @@ def get_session_factory(database_url: str) -> sessionmaker[Session]:
     return sessionmaker(bind=get_engine(database_url), autoflush=False, autocommit=False, future=True)
 
 
+def init_db(database_url: str) -> None:
+    engine = get_engine(database_url)
+    ReferenceBase.metadata.create_all(engine)
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS reference_spatial_index (
+                ref_rowid INTEGER PRIMARY KEY,
+                min_lat REAL NOT NULL,
+                max_lat REAL NOT NULL,
+                min_lon REAL NOT NULL,
+                max_lon REAL NOT NULL
+            )
+            """
+        )
+        connection.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS ix_reference_spatial_index_lat ON reference_spatial_index (min_lat, max_lat)"
+        )
+        connection.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS ix_reference_spatial_index_lon ON reference_spatial_index (min_lon, max_lon)"
+        )
+
+
 @contextmanager
 def session_scope(database_url: str) -> Iterator[Session]:
+    init_db(database_url)
     session = get_session_factory(database_url)()
     try:
         yield session
