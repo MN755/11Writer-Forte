@@ -75,6 +75,7 @@ from src.webcam.refresh import WebcamRefreshService, WebcamWorker
 from src.services.runtime_scheduler_service import (
     RuntimeSchedulerCoordinator,
     configure_runtime_scheduler_state,
+    should_start_intel_event_sync_scheduler,
     should_start_source_discovery_scheduler,
     should_start_wave_monitor_scheduler,
 )
@@ -94,6 +95,8 @@ async def _lifespan(_: FastAPI):
     source_discovery_task: asyncio.Task[None] | None = None
     wave_monitor_stop_event: asyncio.Event | None = None
     wave_monitor_task: asyncio.Task[None] | None = None
+    intel_event_sync_stop_event: asyncio.Event | None = None
+    intel_event_sync_task: asyncio.Task[None] | None = None
     coordinator = RuntimeSchedulerCoordinator(settings)
     if settings.webcam_worker_enabled and settings.webcam_worker_run_on_startup:
         stop_event = asyncio.Event()
@@ -112,6 +115,11 @@ async def _lifespan(_: FastAPI):
         wave_monitor_task = asyncio.create_task(
             coordinator.wave_monitor_loop(stop_event=wave_monitor_stop_event)
         )
+    if should_start_intel_event_sync_scheduler(settings):
+        intel_event_sync_stop_event = asyncio.Event()
+        intel_event_sync_task = asyncio.create_task(
+            coordinator.intel_event_sync_loop(stop_event=intel_event_sync_stop_event)
+        )
     try:
         yield
     finally:
@@ -121,12 +129,16 @@ async def _lifespan(_: FastAPI):
             source_discovery_stop_event.set()
         if wave_monitor_stop_event is not None:
             wave_monitor_stop_event.set()
+        if intel_event_sync_stop_event is not None:
+            intel_event_sync_stop_event.set()
         if worker_task is not None:
             await worker_task
         if source_discovery_task is not None:
             await source_discovery_task
         if wave_monitor_task is not None:
             await wave_monitor_task
+        if intel_event_sync_task is not None:
+            await intel_event_sync_task
 
 
 def create_application() -> FastAPI:

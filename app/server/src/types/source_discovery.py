@@ -1748,7 +1748,7 @@ class SourceDiscoveryClaimOutcomeResponse(CamelModel):
     caveats: list[str] = Field(default_factory=list)
 
 
-SourceDiscoveryRuntimeWorkerName = Literal["source_discovery", "wave_monitor"]
+SourceDiscoveryRuntimeWorkerName = Literal["source_discovery", "wave_monitor", "intel_event_sync"]
 SourceDiscoveryRuntimeWorkerDesiredState = Literal["running", "paused", "stopped"]
 SourceDiscoveryRuntimeControlAction = Literal["pause", "resume", "stop", "run_now"]
 SourceDiscoveryRuntimeServicePlatform = Literal["windows", "macos", "linux"]
@@ -1905,6 +1905,12 @@ class SourceDiscoveryRuntimeStatusResponse(CamelModel):
     wave_monitor_scheduler_last_tick_at: str | None = None
     wave_monitor_scheduler_last_error: str | None = None
     wave_monitor_scheduler_last_summary: str | None = None
+    intel_event_sync_scheduler_enabled: bool
+    intel_event_sync_scheduler_running: bool
+    intel_event_sync_scheduler_poll_seconds: int
+    intel_event_sync_scheduler_last_tick_at: str | None = None
+    intel_event_sync_scheduler_last_error: str | None = None
+    intel_event_sync_scheduler_last_summary: str | None = None
     workers: list[SourceDiscoveryRuntimeWorkerSummary] = Field(default_factory=list)
     service_installations: list[SourceDiscoveryRuntimeServiceInstallationSummary] = Field(default_factory=list)
     caveats: list[str] = Field(default_factory=list)

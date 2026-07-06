@@ -33,6 +33,8 @@ from src.wave_monitor.models import WaveLlmReviewORM, WaveLlmTaskORM
 def _settings(database_path: Path, wave_database_path: Path | None = None, **overrides) -> Settings:
     overrides = {
         "APP_USER_DATA_DIR": str(database_path.parent / "appdata"),
+        "DATABASE_URL": f"sqlite:///{database_path.as_posix()}",
+        "REFERENCE_DATABASE_URL": f"sqlite:///{database_path.as_posix()}",
         **overrides,
     }
     return Settings(
@@ -3107,6 +3109,8 @@ def test_runtime_status_reflects_scheduler_configuration(tmp_path: Path) -> None
         SOURCE_DISCOVERY_SCHEDULER_POLL_SECONDS=30,
         WAVE_MONITOR_SCHEDULER_ENABLED=True,
         WAVE_MONITOR_SCHEDULER_POLL_SECONDS=45,
+        INTEL_EVENT_SYNC_SCHEDULER_ENABLED=True,
+        INTEL_EVENT_SYNC_SCHEDULER_POLL_SECONDS=60,
     )
     client.post(
         "/api/source-discovery/memory/candidates",
@@ -3137,7 +3141,9 @@ def test_runtime_status_reflects_scheduler_configuration(tmp_path: Path) -> None
     assert payload["pendingStructureScanCount"] >= 1
     assert payload["waveMonitorSchedulerEnabled"] is True
     assert payload["waveMonitorSchedulerPollSeconds"] == 45
-    assert len(payload["workers"]) == 2
+    assert payload["intelEventSyncSchedulerEnabled"] is True
+    assert payload["intelEventSyncSchedulerPollSeconds"] == 60
+    assert len(payload["workers"]) == 3
 
 
 def test_discovery_runs_surface_latest_structure_and_followup_outcomes(tmp_path: Path) -> None:
@@ -3174,11 +3180,13 @@ def test_runtime_services_surface_generates_os_service_bundle(tmp_path: Path) ->
     assert response.status_code == 200
     assert payload["currentPlatform"] == "linux"
     assert payload["entrypointModule"] == "src.runtime_worker"
-    assert len(payload["services"]) == 2
+    assert len(payload["services"]) == 3
     source_worker = next(service for service in payload["services"] if service["workerName"] == "source_discovery")
+    intel_worker = next(service for service in payload["services"] if service["workerName"] == "intel_event_sync")
     assert source_worker["serviceManager"] == "systemd-user"
     assert "ExecStart" in source_worker["artifactText"]
     assert "--worker" in " ".join(source_worker["entryCommand"])
+    assert "intel_event_sync" in " ".join(intel_worker["entryCommand"])
     assert payload["runtimePaths"]["serviceArtifactDir"]
 
 
@@ -3379,6 +3387,29 @@ def test_runtime_controls_persist_worker_state_and_lease_skips_manual_run(tmp_pa
     assert run_payload["run"]["status"] == "skipped_lease"
     source_worker = next(worker for worker in status_payload["workers"] if worker["workerName"] == "source_discovery")
     assert source_worker["recentRuns"][0]["status"] == "skipped_lease"
+
+
+def test_runtime_controls_run_intel_event_sync_now(tmp_path: Path) -> None:
+    database_path = tmp_path / "source_discovery.db"
+    client = _client(
+        database_path,
+        INTEL_EVENT_SYNC_SCHEDULER_ENABLED=True,
+        INTEL_EVENT_SYNC_FEEDS="earthquakes,nws-alerts",
+        INTEL_EVENT_SYNC_MAX_RECORDS_PER_FEED=1,
+    )
+
+    run_response = client.post(
+        "/api/source-discovery/runtime/workers/intel_event_sync/control",
+        json={"action": "run_now", "requestedBy": "Atlas AI"},
+    )
+    status_payload = client.get("/api/source-discovery/runtime/status").json()
+
+    assert run_response.status_code == 200
+    assert run_response.json()["run"]["status"] == "completed"
+    assert "feeds=2/2" in (run_response.json()["run"]["summary"] or "")
+    intel_worker = next(worker for worker in status_payload["workers"] if worker["workerName"] == "intel_event_sync")
+    assert intel_worker["lastStatus"] == "completed"
+    assert "feeds=2/2" in (intel_worker["lastSummary"] or "")
 
 
 def test_review_claim_application_requires_reviewed_source_and_updates_reputation(tmp_path: Path) -> None:
