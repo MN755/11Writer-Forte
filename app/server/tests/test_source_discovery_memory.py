@@ -20,6 +20,7 @@ from src.source_discovery.models import (
     SourceArchiveHitORM,
     SourceClaimOutcomeORM,
     SourceContentSnapshotORM,
+    SourceEventArtifactORM,
     SourceEventClusterORM,
     SourceMemoryORM,
     SourceReviewClaimCandidateORM,
@@ -4861,6 +4862,83 @@ def test_event_graph_refresh_groups_contested_and_open_question_claims(tmp_path:
     assert len(detail["members"]) >= 2
     assert memory_detail["contestedEventCount"] >= 1
     assert memory_detail["eventClusters"]
+
+
+def test_event_artifact_generation_persists_report_with_citations_and_provenance(tmp_path: Path) -> None:
+    client = _client(tmp_path / "source_discovery.db")
+    for source_id in ["source:event-artifact-a", "source:event-artifact-b"]:
+        client.post(
+            "/api/source-discovery/memory/candidates",
+            json={
+                "sourceId": source_id,
+                "title": source_id,
+                "url": f"https://{source_id.replace(':', '-')}.example.invalid/story",
+                "parentDomain": "example.invalid",
+                "sourceType": "web",
+                "sourceClass": "article",
+                "lifecycleState": "candidate",
+                "intakeDisposition": "public_no_auth",
+                "authRequirement": "no_auth",
+                "captchaRequirement": "no_captcha",
+            },
+        )
+    client.post(
+        "/api/source-discovery/memory/claim-outcomes",
+        json={
+            "sourceId": "source:event-artifact-a",
+            "claimText": "Port operations were suspended after a fire.",
+            "claimType": "incident",
+            "outcome": "confirmed",
+            "evidenceBasis": "observed",
+            "observedAt": "2026-04-02T10:00:00Z",
+        },
+    )
+    client.post(
+        "/api/source-discovery/memory/claim-outcomes",
+        json={
+            "sourceId": "source:event-artifact-b",
+            "claimText": "Port operations were suspended after a fire.",
+            "claimType": "incident",
+            "outcome": "confirmed",
+            "evidenceBasis": "primary",
+            "observedAt": "2026-04-02T10:05:00Z",
+        },
+    )
+
+    overview = client.get("/api/source-discovery/events/overview").json()
+    event = next(item for item in overview["events"] if item["claimType"] == "incident")
+
+    create_response = client.post(
+        f"/api/source-discovery/events/{event['eventId']}/artifacts",
+        json={
+            "artifactKind": "report",
+            "redactionLevel": "public",
+            "generatedBy": "test-operator",
+        },
+    )
+    create_payload = create_response.json()
+    list_payload = client.get(f"/api/source-discovery/events/{event['eventId']}/artifacts").json()
+    detail_payload = client.get(
+        f"/api/source-discovery/events/artifacts/{create_payload['artifact']['artifactId']}"
+    ).json()
+    provenance_payload = client.get("/api/ops/provenance", params={"subsystem": "event_reports"}).json()
+
+    with source_session_scope(f"sqlite:///{(tmp_path / 'source_discovery.db').as_posix()}") as session:
+        row = session.get(SourceEventArtifactORM, create_payload["artifact"]["artifactId"])
+        persisted_provenance_event_id = row.provenance_event_id if row is not None else None
+
+    assert create_response.status_code == 200
+    assert create_payload["artifact"]["artifactKind"] == "report"
+    assert create_payload["artifact"]["redactionLevel"] == "public"
+    assert create_payload["artifact"]["citationCount"] >= 2
+    assert create_payload["artifact"]["confidenceScore"] >= 0.5
+    assert "# Event Report:" in create_payload["artifact"]["bodyText"]
+    assert list_payload["count"] >= 1
+    assert detail_payload["artifact"]["artifactId"] == create_payload["artifact"]["artifactId"]
+    assert provenance_payload["count"] >= 1
+    assert provenance_payload["events"][0]["eventKind"] == "event_artifact_generation"
+    assert row is not None
+    assert persisted_provenance_event_id is not None
 
 
 def test_reputation_recompute_apply_updates_policy_version_and_score(tmp_path: Path) -> None:

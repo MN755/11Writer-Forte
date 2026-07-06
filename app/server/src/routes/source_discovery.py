@@ -12,6 +12,7 @@ from src.services.media_evidence_service import (
     inspect_media_geolocation_models,
     prewarm_media_geolocation_model,
 )
+from src.services.source_event_artifact_service import SourceEventArtifactService
 from src.services.source_discovery_service import SourceDiscoveryService
 from src.services.runtime_scheduler_service import (
     build_runtime_service_bundle,
@@ -38,6 +39,9 @@ from src.types.source_discovery import (
     SourceDiscoveryDiscoveryRunsResponse,
     SourceDiscoveryDirectoryScanRequest,
     SourceDiscoveryDirectoryScanResponse,
+    SourceDiscoveryEventArtifactDetailResponse,
+    SourceDiscoveryEventArtifactGenerationRequest,
+    SourceDiscoveryEventArtifactListResponse,
     SourceDiscoveryEventClusterDetailResponse,
     SourceDiscoveryEventGraphRefreshRequest,
     SourceDiscoveryEventGraphRefreshResponse,
@@ -672,6 +676,40 @@ def source_discovery_event_detail(
     service = SourceDiscoveryService(settings)
     try:
         return service.event_detail(event_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/events/{event_id}/artifacts", response_model=SourceDiscoveryEventArtifactListResponse)
+def source_discovery_event_artifact_list(
+    event_id: str,
+    settings: Settings = Depends(get_settings),
+) -> SourceDiscoveryEventArtifactListResponse:
+    service = SourceEventArtifactService(settings)
+    return service.list_event_artifacts(event_id)
+
+
+@router.post("/events/{event_id}/artifacts", response_model=SourceDiscoveryEventArtifactDetailResponse)
+def source_discovery_generate_event_artifact(
+    event_id: str,
+    request: SourceDiscoveryEventArtifactGenerationRequest,
+    settings: Settings = Depends(get_settings),
+) -> SourceDiscoveryEventArtifactDetailResponse:
+    service = SourceEventArtifactService(settings)
+    try:
+        return service.generate_event_artifact(event_id, request)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/events/artifacts/{artifact_id}", response_model=SourceDiscoveryEventArtifactDetailResponse)
+def source_discovery_event_artifact_detail(
+    artifact_id: str,
+    settings: Settings = Depends(get_settings),
+) -> SourceDiscoveryEventArtifactDetailResponse:
+    service = SourceEventArtifactService(settings)
+    try:
+        return service.get_event_artifact(artifact_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 

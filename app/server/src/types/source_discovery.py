@@ -82,6 +82,9 @@ SourceDiscoveryReviewClaimCandidateStatus = Literal["pending", "applied"]
 SourceDiscoveryEventGraphRefreshMode = Literal["missing_only", "recompute_selected"]
 SourceDiscoveryEventMemberRole = Literal["supporting", "contradicting", "corrective", "open_question", "provisional"]
 SourceDiscoveryEventStatus = Literal["single_source", "corroborated", "contested", "corrected", "open_question"]
+SourceDiscoveryEventArtifactKind = Literal["cited_summary", "report"]
+SourceDiscoveryEventArtifactRedactionLevel = Literal["public", "restricted", "confidential"]
+SourceDiscoveryEventArtifactConfidenceLabel = Literal["low", "guarded", "medium", "high"]
 SourceDiscoveryReputationRecomputeMode = Literal["dry_run", "apply"]
 SourceDiscoveryRuntimeWorkItemStatus = Literal[
     "queued",
@@ -1632,6 +1635,63 @@ class SourceDiscoveryEventClusterDetailResponse(CamelModel):
     event: SourceDiscoveryEventClusterSummary
     members: list[SourceDiscoveryEventMemberSummary] = Field(default_factory=list)
     open_questions: list[SourceDiscoveryEventOpenQuestionSummary] = Field(default_factory=list)
+    caveats: list[str] = Field(default_factory=list)
+
+
+class SourceDiscoveryEventArtifactCitationSummary(CamelModel):
+    citation_id: str
+    source_id: str
+    title: str | None = None
+    url: str | None = None
+    snapshot_id: str | None = None
+    observed_at: str | None = None
+    evidence_basis: str
+    role: SourceDiscoveryEventMemberRole
+    claim_text: str
+
+
+class SourceDiscoveryEventArtifactSummary(CamelModel):
+    artifact_id: str
+    event_id: str
+    provenance_event_id: str | None = None
+    artifact_kind: SourceDiscoveryEventArtifactKind
+    redaction_level: SourceDiscoveryEventArtifactRedactionLevel
+    title: str
+    generated_by: str
+    generated_at: str
+    confidence_score: float
+    confidence_label: SourceDiscoveryEventArtifactConfidenceLabel
+    supporting_source_count: int = 0
+    contradiction_source_count: int = 0
+    corrective_source_count: int = 0
+    open_question_count: int = 0
+    citation_count: int = 0
+    summary_text: str
+
+
+class SourceDiscoveryEventArtifactDetail(SourceDiscoveryEventArtifactSummary):
+    body_text: str
+    citations: list[SourceDiscoveryEventArtifactCitationSummary] = Field(default_factory=list)
+    chain_of_custody: list[str] = Field(default_factory=list)
+    metadata: dict[str, object] = Field(default_factory=dict)
+    caveats: list[str] = Field(default_factory=list)
+
+
+class SourceDiscoveryEventArtifactGenerationRequest(CamelModel):
+    artifact_kind: SourceDiscoveryEventArtifactKind = "report"
+    redaction_level: SourceDiscoveryEventArtifactRedactionLevel = "public"
+    generated_by: str = "11writer-api"
+    title: str | None = None
+
+
+class SourceDiscoveryEventArtifactListResponse(CamelModel):
+    count: int
+    artifacts: list[SourceDiscoveryEventArtifactSummary] = Field(default_factory=list)
+    caveats: list[str] = Field(default_factory=list)
+
+
+class SourceDiscoveryEventArtifactDetailResponse(CamelModel):
+    artifact: SourceDiscoveryEventArtifactDetail
     caveats: list[str] = Field(default_factory=list)
 
 

@@ -333,6 +333,32 @@ class SourceEventOpenQuestionORM(SourceDiscoveryBase):
     caveats_json: Mapped[str] = mapped_column(Text, default="[]")
 
 
+class SourceEventArtifactORM(SourceDiscoveryBase):
+    __tablename__ = "source_event_artifacts"
+
+    artifact_id: Mapped[str] = mapped_column(String(180), primary_key=True)
+    event_id: Mapped[str] = mapped_column(String(180), index=True)
+    provenance_event_id: Mapped[str | None] = mapped_column(String(180), index=True)
+    artifact_kind: Mapped[str] = mapped_column(String(32), index=True)
+    redaction_level: Mapped[str] = mapped_column(String(32), index=True)
+    title: Mapped[str] = mapped_column(String(300))
+    generated_by: Mapped[str] = mapped_column(String(160), index=True)
+    confidence_score: Mapped[float] = mapped_column(Float, default=0.5)
+    confidence_label: Mapped[str] = mapped_column(String(32), default="medium", index=True)
+    supporting_source_count: Mapped[int] = mapped_column(Integer, default=0)
+    contradiction_source_count: Mapped[int] = mapped_column(Integer, default=0)
+    corrective_source_count: Mapped[int] = mapped_column(Integer, default=0)
+    open_question_count: Mapped[int] = mapped_column(Integer, default=0)
+    citation_count: Mapped[int] = mapped_column(Integer, default=0)
+    summary_text: Mapped[str] = mapped_column(Text, default="")
+    body_text: Mapped[str] = mapped_column(Text, default="")
+    citations_json: Mapped[str] = mapped_column(Text, default="[]")
+    chain_of_custody_json: Mapped[str] = mapped_column(Text, default="[]")
+    metadata_json: Mapped[str] = mapped_column(Text, default="{}")
+    generated_at: Mapped[str] = mapped_column(String(64), index=True)
+    caveats_json: Mapped[str] = mapped_column(Text, default="[]")
+
+
 class SourceMediaArtifactORM(SourceDiscoveryBase):
     __tablename__ = "source_media_artifacts"
 

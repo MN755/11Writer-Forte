@@ -223,3 +223,104 @@ def test_ready_command_returns_nonzero_when_not_ready(monkeypatch, capsys) -> No
 
     assert exit_code == 1
     assert payload["ready"] is False
+
+
+def test_event_report_json_output(monkeypatch, capsys) -> None:
+    class _FakeDetail:
+        def model_dump(self, *, mode: str, by_alias: bool) -> dict[str, object]:
+            assert mode == "json"
+            assert by_alias is True
+            return {
+                "artifact": {
+                    "artifactId": "event-artifact:test",
+                    "eventId": "source-event:test",
+                    "provenanceEventId": "prov:test",
+                    "artifactKind": "report",
+                    "redactionLevel": "public",
+                    "title": "Event Report :: Test",
+                    "generatedBy": "11writer-cli",
+                    "generatedAt": "2026-07-06T00:00:00Z",
+                    "confidenceScore": 0.72,
+                    "confidenceLabel": "medium",
+                    "supportingSourceCount": 2,
+                    "contradictionSourceCount": 1,
+                    "correctiveSourceCount": 0,
+                    "openQuestionCount": 0,
+                    "citationCount": 2,
+                    "summaryText": "Test summary",
+                    "bodyText": "# Event Report",
+                    "citations": [],
+                    "chainOfCustody": [],
+                    "metadata": {},
+                    "caveats": [],
+                },
+                "caveats": [],
+            }
+
+    class _FakeService:
+        def __init__(self, settings) -> None:
+            self.settings = settings
+
+        def generate_event_artifact(self, event_id, request):
+            assert event_id == "source-event:test"
+            assert request.artifact_kind == "report"
+            return _FakeDetail()
+
+    monkeypatch.setattr(cli, "SourceEventArtifactService", _FakeService)
+    monkeypatch.setattr(cli, "get_settings", lambda: Settings(_env_file=None))
+
+    exit_code = cli.main(["event-report", "source-event:test", "--json"])
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["artifact"]["artifactKind"] == "report"
+    assert payload["artifact"]["confidenceLabel"] == "medium"
+
+
+def test_event_reports_json_output(monkeypatch, capsys) -> None:
+    class _FakeList:
+        def model_dump(self, *, mode: str, by_alias: bool) -> dict[str, object]:
+            assert mode == "json"
+            assert by_alias is True
+            return {
+                "count": 1,
+                "artifacts": [
+                    {
+                        "artifactId": "event-artifact:test",
+                        "eventId": "source-event:test",
+                        "provenanceEventId": "prov:test",
+                        "artifactKind": "cited_summary",
+                        "redactionLevel": "restricted",
+                        "title": "Cited Summary :: Test",
+                        "generatedBy": "11writer-cli",
+                        "generatedAt": "2026-07-06T00:00:00Z",
+                        "confidenceScore": 0.61,
+                        "confidenceLabel": "medium",
+                        "supportingSourceCount": 2,
+                        "contradictionSourceCount": 0,
+                        "correctiveSourceCount": 0,
+                        "openQuestionCount": 1,
+                        "citationCount": 2,
+                        "summaryText": "Test cited summary",
+                    }
+                ],
+                "caveats": [],
+            }
+
+    class _FakeService:
+        def __init__(self, settings) -> None:
+            self.settings = settings
+
+        def list_event_artifacts(self, event_id):
+            assert event_id == "source-event:test"
+            return _FakeList()
+
+    monkeypatch.setattr(cli, "SourceEventArtifactService", _FakeService)
+    monkeypatch.setattr(cli, "get_settings", lambda: Settings(_env_file=None))
+
+    exit_code = cli.main(["event-reports", "source-event:test", "--json"])
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["count"] == 1
+    assert payload["artifacts"][0]["artifactKind"] == "cited_summary"
