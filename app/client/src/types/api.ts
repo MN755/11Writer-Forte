@@ -1,0 +1,3186 @@
+import type {
+  AircraftEntity,
+  CameraComplianceMetadata,
+  CameraEntity,
+  MarineVesselEntity,
+  SatelliteEntity
+} from "./entities";
+
+export interface TilesConfig {
+  provider: "google-photorealistic-3d" | "cesium-world-terrain";
+  googleTilesEnabled: boolean;
+  fallbackEnabled: boolean;
+  googleMapsApiKey?: string | null;
+}
+
+export interface PlanetImageryCategory {
+  id: string;
+  title: string;
+  description: string;
+  order: number;
+}
+
+export interface PlanetTerrainConfig {
+  defaultProvider: "ellipsoid";
+  optionalProvider: "google-photorealistic-3d" | "none";
+  notes: string;
+}
+
+export interface PlanetImageryMode {
+  id: string;
+  title: string;
+  category: string;
+  source: string;
+  sourceUrl: string;
+  shortDescription: string;
+  shortCaveat: string;
+  displayTags: string[];
+  modeRole: "default-basemap" | "optional-basemap" | "analysis-layer";
+  sensorFamily: "optical" | "radar" | "thematic";
+  historicalFidelity: "composite-reference" | "daily-approximate" | "multi-day-approximate";
+  replayShortNote: string;
+  temporalNature:
+    | "static-composite"
+    | "monthly-composite"
+    | "seasonal-composite"
+    | "multi-day"
+    | "daily"
+    | "near-real-time";
+  cloudBehavior: "cloud-free" | "cloud-minimized" | "weather-affected" | "cloud-insensitive";
+  resolutionNotes: string;
+  licenseAccessNotes: string;
+  defaultReady: boolean;
+  analysisReady: boolean;
+  description: string;
+  interpretationCaveats: string;
+  providerType: "single-tile" | "wmts" | "template";
+  providerUrl: string;
+  providerLayer?: string | null;
+  providerStyle?: string | null;
+  providerFormat?: string | null;
+  providerTileMatrixSetId?: string | null;
+  providerMaximumLevel?: number | null;
+  providerTimeStrategy: "none" | "fixed" | "daily-yesterday-utc";
+  providerTimeValue?: string | null;
+  providerDimensions: Record<string, string>;
+}
+
+export interface PlanetConfigResponse {
+  defaultImageryModeId: string;
+  categories: PlanetImageryCategory[];
+  imageryModes: PlanetImageryMode[];
+  terrain: PlanetTerrainConfig;
+}
+
+export interface FeatureFlags {
+  aircraft: boolean;
+  satellites: boolean;
+  cameras: boolean;
+  marine: boolean;
+  visualModes: boolean;
+}
+
+export interface PublicConfigResponse {
+  appName: string;
+  environment: string;
+  tiles: TilesConfig;
+  features: FeatureFlags;
+  planet: PlanetConfigResponse;
+}
+
+export interface SourceStatus {
+  name: string;
+  state:
+    | "never-fetched"
+    | "healthy"
+    | "stale"
+    | "rate-limited"
+    | "degraded"
+    | "disabled"
+    | "blocked"
+    | "credentials-missing"
+    | "needs-review";
+  enabled: boolean;
+  healthy: boolean;
+  freshnessSeconds?: number | null;
+  staleAfterSeconds?: number | null;
+  lastSuccessAt?: string | null;
+  degradedReason?: string | null;
+  rateLimited: boolean;
+  hiddenReason?: string | null;
+  detail: string;
+  credentialsConfigured: boolean;
+  blockedReason?: string | null;
+  reviewRequired: boolean;
+  lastAttemptAt?: string | null;
+  lastFailureAt?: string | null;
+  successCount?: number | null;
+  failureCount?: number | null;
+  warningCount?: number | null;
+  nextRefreshAt?: string | null;
+  backoffUntil?: string | null;
+  retryCount?: number | null;
+  lastHttpStatus?: number | null;
+  lastStartedAt?: string | null;
+  lastCompletedAt?: string | null;
+  cadenceSeconds?: number | null;
+  cadenceReason?: string | null;
+  lastRunMode?: string | null;
+  lastValidationAt?: string | null;
+  lastFrameProbeCount?: number | null;
+  lastFrameStatusSummary: Record<string, number>;
+  lastMetadataUncertaintyCount?: number | null;
+  lastCadenceObservation?: string | null;
+}
+
+export interface SourceStatusResponse {
+  sources: SourceStatus[];
+}
+
+export interface FilterSummary {
+  activeFilters: Record<string, string>;
+  totalCandidates?: number | null;
+  filteredCount: number;
+  stalenessWarning?: string | null;
+}
+
+export interface AircraftResponse {
+  fetchedAt: string;
+  source: string;
+  count: number;
+  summary: FilterSummary;
+  aircraft: AircraftEntity[];
+}
+
+export interface OrbitPoint {
+  latitude: number;
+  longitude: number;
+  altitude: number;
+  timestamp: string;
+}
+
+export interface PassWindowSummary {
+  riseAt?: string | null;
+  peakAt?: string | null;
+  setAt?: string | null;
+  detail?: string | null;
+}
+
+export interface AviationWeatherCloudLayer {
+  cover: string;
+  baseFtAgl?: number | null;
+  cloudType?: string | null;
+}
+
+export interface AviationWeatherMetar {
+  stationId: string;
+  stationName?: string | null;
+  receiptTime?: string | null;
+  observedAt?: string | null;
+  reportAt?: string | null;
+  rawText: string;
+  flightCategory?: string | null;
+  visibility?: string | null;
+  windDirection?: string | null;
+  windSpeedKt?: number | null;
+  temperatureC?: number | null;
+  dewpointC?: number | null;
+  altimeterHpa?: number | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  cloudLayers: AviationWeatherCloudLayer[];
+}
+
+export interface AviationWeatherTafPeriod {
+  validFrom?: string | null;
+  validTo?: string | null;
+  changeIndicator?: string | null;
+  probabilityPercent?: number | null;
+  windDirection?: string | null;
+  windSpeedKt?: number | null;
+  visibility?: string | null;
+  weather?: string | null;
+  cloudLayers: AviationWeatherCloudLayer[];
+}
+
+export interface AviationWeatherTaf {
+  stationId: string;
+  stationName?: string | null;
+  issueTime?: string | null;
+  bulletinTime?: string | null;
+  validFrom?: string | null;
+  validTo?: string | null;
+  rawText: string;
+  forecastPeriods: AviationWeatherTafPeriod[];
+}
+
+export interface AviationWeatherContextResponse {
+  fetchedAt: string;
+  source: string;
+  sourceDetail: string;
+  contextType: "nearest-airport" | "selected-airport";
+  airportCode: string;
+  airportName?: string | null;
+  airportRefId?: string | null;
+  metar?: AviationWeatherMetar | null;
+  taf?: AviationWeatherTaf | null;
+  caveats: string[];
+}
+
+export interface FaaNasAirportStatusSourceHealth {
+  sourceName: string;
+  sourceMode: "fixture" | "live" | "unknown";
+  health: "normal" | "degraded" | "unavailable" | "unknown";
+  detail: string;
+  sourceUrl: string;
+  lastUpdatedAt?: string | null;
+  state?: SourceStatus["state"] | null;
+  caveats: string[];
+}
+
+export interface FaaNasAirportStatusRecord {
+  airportCode: string;
+  airportName?: string | null;
+  statusType:
+    | "delay"
+    | "closure"
+    | "ground stop"
+    | "ground delay"
+    | "restriction"
+    | "advisory"
+    | "normal"
+    | "unknown";
+  reason?: string | null;
+  category?: string | null;
+  summary: string;
+  issuedAt?: string | null;
+  updatedAt?: string | null;
+  sourceUrl?: string | null;
+  sourceMode: "fixture" | "live" | "unknown";
+  health: "normal" | "degraded" | "unavailable" | "unknown";
+  caveats: string[];
+  evidenceBasis: "contextual" | "advisory";
+}
+
+export interface FaaNasAirportStatusResponse {
+  fetchedAt: string;
+  source: string;
+  airportCode: string;
+  airportName?: string | null;
+  record: FaaNasAirportStatusRecord;
+  sourceHealth: FaaNasAirportStatusSourceHealth;
+  caveats: string[];
+}
+
+export interface CneosSourceHealth {
+  sourceName: string;
+  sourceMode: "fixture" | "live" | "unknown";
+  health: "normal" | "degraded" | "unavailable" | "unknown";
+  detail: string;
+  closeApproachSourceUrl: string;
+  fireballSourceUrl: string;
+  lastUpdatedAt?: string | null;
+  state?: SourceStatus["state"] | null;
+  caveats: string[];
+}
+
+export interface CneosCloseApproachEvent {
+  objectDesignation: string;
+  objectName?: string | null;
+  closeApproachAt: string;
+  distanceLunar?: number | null;
+  distanceAu?: number | null;
+  distanceKm?: number | null;
+  velocityKmS?: number | null;
+  estimatedDiameterM?: number | null;
+  orbitingBody?: string | null;
+  sourceUrl?: string | null;
+  caveats: string[];
+  evidenceBasis: "source-reported" | "contextual";
+}
+
+export interface CneosFireballEvent {
+  eventTime: string;
+  latitude?: number | null;
+  longitude?: number | null;
+  altitudeKm?: number | null;
+  energyTenGigajoules?: number | null;
+  impactEnergyKt?: number | null;
+  velocityKmS?: number | null;
+  sourceUrl?: string | null;
+  caveats: string[];
+  evidenceBasis: "source-reported" | "contextual";
+}
+
+export interface CneosContextResponse {
+  fetchedAt: string;
+  source: string;
+  eventType: "close-approach" | "fireball" | "all";
+  closeApproaches: CneosCloseApproachEvent[];
+  fireballs: CneosFireballEvent[];
+  sourceHealth: CneosSourceHealth;
+  caveats: string[];
+}
+
+export interface SwpcSourceHealth {
+  sourceName: string;
+  sourceMode: "fixture" | "live" | "unknown";
+  health: "normal" | "degraded" | "unavailable" | "unknown";
+  detail: string;
+  summarySourceUrl: string;
+  alertsSourceUrl: string;
+  lastUpdatedAt?: string | null;
+  state?: SourceStatus["state"] | null;
+  caveats: string[];
+}
+
+export interface SwpcSpaceWeatherSummary {
+  productId: string;
+  productType: "scale-summary" | "outlook-summary" | "summary" | "unknown";
+  issuedAt?: string | null;
+  observedAt?: string | null;
+  updatedAt?: string | null;
+  scaleCategory?: string | null;
+  headline: string;
+  description: string;
+  affectedContext: ("radio" | "gps" | "satellite" | "geomagnetic" | "unknown")[];
+  sourceUrl?: string | null;
+  sourceMode: "fixture" | "live" | "unknown";
+  health: "normal" | "degraded" | "unavailable" | "unknown";
+  caveats: string[];
+  evidenceBasis: "advisory" | "contextual";
+}
+
+export interface SwpcSpaceWeatherAlert {
+  productId: string;
+  productType: "alert" | "watch" | "warning" | "advisory" | "unknown";
+  issuedAt?: string | null;
+  updatedAt?: string | null;
+  scaleCategory?: string | null;
+  headline: string;
+  description: string;
+  affectedContext: ("radio" | "gps" | "satellite" | "geomagnetic" | "unknown")[];
+  sourceUrl?: string | null;
+  sourceMode: "fixture" | "live" | "unknown";
+  health: "normal" | "degraded" | "unavailable" | "unknown";
+  caveats: string[];
+  evidenceBasis: "advisory" | "contextual";
+}
+
+export interface SwpcContextResponse {
+  fetchedAt: string;
+  source: string;
+  productType: "summary" | "alerts" | "all";
+  summaries: SwpcSpaceWeatherSummary[];
+  alerts: SwpcSpaceWeatherAlert[];
+  sourceHealth: SwpcSourceHealth;
+  caveats: string[];
+}
+
+export interface NceiSpaceWeatherPortalSourceHealth {
+  sourceName: string;
+  sourceMode: "fixture" | "live" | "unknown";
+  health: "normal" | "degraded" | "unavailable" | "unknown";
+  detail: string;
+  metadataSourceUrl: string;
+  landingPageUrl: string;
+  lastUpdatedAt?: string | null;
+  state?: SourceStatus["state"] | null;
+  caveats: string[];
+}
+
+export interface NceiSpaceWeatherPortalRecord {
+  collectionId: string;
+  datasetIdentifier?: string | null;
+  title: string;
+  summary?: string | null;
+  temporalStart?: string | null;
+  temporalEnd?: string | null;
+  metadataUpdatedAt?: string | null;
+  progressStatus?: string | null;
+  updateFrequency?: string | null;
+  sourceUrl: string;
+  landingPageUrl: string;
+  sourceMode: "fixture" | "live" | "unknown";
+  health: "normal" | "degraded" | "unavailable" | "unknown";
+  caveats: string[];
+  evidenceBasis: "archival" | "contextual";
+}
+
+export interface NceiSpaceWeatherPortalResponse {
+  fetchedAt: string;
+  source: string;
+  count: number;
+  records: NceiSpaceWeatherPortalRecord[];
+  sourceHealth: NceiSpaceWeatherPortalSourceHealth;
+  caveats: string[];
+}
+
+export interface GpsJamSourceHealth {
+  sourceName: string;
+  sourceMode: "fixture" | "live" | "unknown";
+  health: "normal" | "degraded" | "unavailable" | "unknown";
+  detail: string;
+  manifestSourceUrl: string;
+  dataSourceUrl: string;
+  lastUpdatedAt?: string | null;
+  state?: SourceStatus["state"] | null;
+  caveats: string[];
+}
+
+export interface GpsJamInterferenceSample {
+  hexId: string;
+  countGoodAircraft: number;
+  countBadAircraft: number;
+  percentBadAircraft: number;
+  interferenceLevel: "low" | "medium" | "high";
+  sourceUrl: string;
+  sourceMode: "fixture" | "live" | "unknown";
+  health: "normal" | "degraded" | "unavailable" | "unknown";
+  caveats: string[];
+  evidenceBasis: "contextual" | "source-reported";
+}
+
+export interface GpsJamContextResponse {
+  fetchedAt: string;
+  source: string;
+  date: string;
+  earliestAvailableDate?: string | null;
+  latestAvailableDate?: string | null;
+  suspect?: boolean | null;
+  dataVersion: number;
+  count: number;
+  totalHexCount?: number | null;
+  badHexCount?: number | null;
+  samples: GpsJamInterferenceSample[];
+  sourceHealth: GpsJamSourceHealth;
+  caveats: string[];
+}
+
+export interface NwsAlertEvent {
+  eventId: string;
+  title: string;
+  alertType: "warning" | "watch" | "advisory" | "statement" | "unknown";
+  event?: string | null;
+  headline?: string | null;
+  severity: "extreme" | "severe" | "moderate" | "minor" | "unknown";
+  urgency?: string | null;
+  certainty?: string | null;
+  status?: string | null;
+  messageType?: string | null;
+  category?: string | null;
+  senderName?: string | null;
+  areaDescription?: string | null;
+  areaCodes: string[];
+  zoneCodes: string[];
+  effectiveAt?: string | null;
+  onsetAt?: string | null;
+  expiresAt?: string | null;
+  sentAt?: string | null;
+  updatedAt?: string | null;
+  instruction?: string | null;
+  description?: string | null;
+  response?: string | null;
+  geometrySummary?: string | null;
+  longitude?: number | null;
+  latitude?: number | null;
+  sourceUrl: string;
+  sourceMode: "fixture" | "live" | "unknown";
+  caveat: string;
+  evidenceBasis: "advisory" | "contextual";
+}
+
+export interface NwsAlertsMetadata {
+  source: string;
+  feedName: string;
+  apiUrl: string;
+  sourceMode: "fixture" | "live" | "unknown";
+  fetchedAt: string;
+  generatedAt?: string | null;
+  count: number;
+  caveat: string;
+  userAgentRequired: boolean;
+  backendLiveModeOnly: boolean;
+}
+
+export interface NwsAlertsSourceHealth {
+  sourceId: string;
+  sourceLabel: string;
+  enabled: boolean;
+  sourceMode: "fixture" | "live" | "unknown";
+  health: "loaded" | "empty" | "stale" | "error" | "disabled" | "unknown";
+  loadedCount: number;
+  lastFetchedAt?: string | null;
+  sourceGeneratedAt?: string | null;
+  detail: string;
+  errorSummary?: string | null;
+  caveat?: string | null;
+}
+
+export interface NwsAlertsResponse {
+  metadata: NwsAlertsMetadata;
+  count: number;
+  sourceHealth: NwsAlertsSourceHealth;
+  alerts: NwsAlertEvent[];
+  caveats: string[];
+}
+
+export interface NoaaNowCoastLayerRecord {
+  layerId: string;
+  layerGroup: "hazards" | "imagery" | "observations" | "unknown";
+  serviceName: string;
+  title: string;
+  description?: string | null;
+  serviceUrl: string;
+  mapServerUrl?: string | null;
+  timeEnabled: boolean;
+  updateFrequencyMinutes?: number | null;
+  extentSummary?: string | null;
+  bboxMinLon?: number | null;
+  bboxMinLat?: number | null;
+  bboxMaxLon?: number | null;
+  bboxMaxLat?: number | null;
+  sourceMode: "fixture" | "live" | "unknown";
+  caveat: string;
+  evidenceBasis: "contextual" | "reference";
+}
+
+export interface NoaaNowCoastMetadata {
+  source: string;
+  sourceName: string;
+  documentationUrl: string;
+  warningsServiceUrl: string;
+  watchesServiceUrl: string;
+  radarServiceUrl: string;
+  sourceMode: "fixture" | "live" | "unknown";
+  fetchedAt: string;
+  generatedAt?: string | null;
+  count: number;
+  caveat: string;
+}
+
+export interface NoaaNowCoastSourceHealth {
+  sourceId: string;
+  sourceLabel: string;
+  enabled: boolean;
+  sourceMode: "fixture" | "live" | "unknown";
+  health: "loaded" | "empty" | "stale" | "error" | "disabled" | "unknown";
+  loadedCount: number;
+  lastFetchedAt?: string | null;
+  sourceGeneratedAt?: string | null;
+  detail: string;
+  errorSummary?: string | null;
+  caveat?: string | null;
+}
+
+export interface NoaaNowCoastResponse {
+  metadata: NoaaNowCoastMetadata;
+  count: number;
+  sourceHealth: NoaaNowCoastSourceHealth;
+  layers: NoaaNowCoastLayerRecord[];
+  caveats: string[];
+}
+
+export interface WashingtonVaacSourceHealth {
+  sourceName: string;
+  sourceMode: "fixture" | "live" | "unknown";
+  health: "normal" | "degraded" | "unavailable" | "unknown";
+  detail: string;
+  listingSourceUrl: string;
+  lastUpdatedAt?: string | null;
+  state?: SourceStatus["state"] | null;
+  caveats: string[];
+}
+
+export interface WashingtonVaacAdvisoryRecord {
+  advisoryId: string;
+  advisoryNumber?: string | null;
+  issueTime?: string | null;
+  observedAt?: string | null;
+  volcanoName: string;
+  volcanoNumber?: string | null;
+  stateOrRegion?: string | null;
+  summitElevationFt?: number | null;
+  informationSource?: string | null;
+  eruptionDetails?: string | null;
+  observationStatus?: string | null;
+  maxFlightLevel?: string | null;
+  sourceUrl?: string | null;
+  caveats: string[];
+  evidenceBasis: "contextual" | "advisory" | "source-reported";
+}
+
+export interface WashingtonVaacAdvisoriesResponse {
+  fetchedAt: string;
+  source: string;
+  volcano?: string | null;
+  count: number;
+  advisories: WashingtonVaacAdvisoryRecord[];
+  sourceHealth: WashingtonVaacSourceHealth;
+  caveats: string[];
+}
+
+export interface AnchorageVaacSourceHealth {
+  sourceName: string;
+  sourceMode: "fixture" | "live" | "unknown";
+  health: "normal" | "degraded" | "unavailable" | "unknown";
+  detail: string;
+  listingSourceUrl: string;
+  lastUpdatedAt?: string | null;
+  state?: SourceStatus["state"] | null;
+  caveats: string[];
+}
+
+export interface AnchorageVaacAdvisoryRecord {
+  advisoryId: string;
+  advisoryNumber?: string | null;
+  issueTime?: string | null;
+  observedAt?: string | null;
+  volcanoName: string;
+  volcanoNumber?: string | null;
+  area?: string | null;
+  sourceElevationText?: string | null;
+  sourceElevationFt?: number | null;
+  informationSource?: string | null;
+  aviationColorCode?: string | null;
+  eruptionDetails?: string | null;
+  sourceUrl?: string | null;
+  caveats: string[];
+  evidenceBasis: "contextual" | "advisory" | "source-reported";
+}
+
+export interface AnchorageVaacAdvisoriesResponse {
+  fetchedAt: string;
+  source: string;
+  volcano?: string | null;
+  count: number;
+  advisories: AnchorageVaacAdvisoryRecord[];
+  sourceHealth: AnchorageVaacSourceHealth;
+  caveats: string[];
+}
+
+export interface TokyoVaacSourceHealth {
+  sourceName: string;
+  sourceMode: "fixture" | "live" | "unknown";
+  health: "normal" | "degraded" | "unavailable" | "unknown";
+  detail: string;
+  listingSourceUrl: string;
+  lastUpdatedAt?: string | null;
+  state?: SourceStatus["state"] | null;
+  caveats: string[];
+}
+
+export interface TokyoVaacAdvisoryRecord {
+  advisoryId: string;
+  advisoryNumber?: string | null;
+  issueTime?: string | null;
+  observedAt?: string | null;
+  volcanoName: string;
+  volcanoNumber?: string | null;
+  area?: string | null;
+  sourceElevationText?: string | null;
+  sourceElevationFt?: number | null;
+  informationSource?: string | null;
+  aviationColorCode?: string | null;
+  eruptionDetails?: string | null;
+  sourceUrl?: string | null;
+  caveats: string[];
+  evidenceBasis: "contextual" | "advisory" | "source-reported";
+}
+
+export interface TokyoVaacAdvisoriesResponse {
+  fetchedAt: string;
+  source: string;
+  volcano?: string | null;
+  count: number;
+  advisories: TokyoVaacAdvisoryRecord[];
+  sourceHealth: TokyoVaacSourceHealth;
+  caveats: string[];
+}
+
+export interface OpenSkySourceHealth {
+  sourceName: string;
+  sourceMode: "fixture" | "live" | "unknown";
+  health: "normal" | "degraded" | "unavailable" | "unknown";
+  detail: string;
+  sourceUrl: string;
+  lastUpdatedAt?: string | null;
+  state?: SourceStatus["state"] | null;
+  caveats: string[];
+}
+
+export interface OpenSkyAircraftState {
+  icao24: string;
+  callsign?: string | null;
+  originCountry?: string | null;
+  timePosition?: string | null;
+  lastContact?: string | null;
+  longitude?: number | null;
+  latitude?: number | null;
+  baroAltitude?: number | null;
+  onGround?: boolean | null;
+  velocity?: number | null;
+  trueTrack?: number | null;
+  verticalRate?: number | null;
+  geoAltitude?: number | null;
+  squawk?: string | null;
+  spi?: boolean | null;
+  positionSource?: number | null;
+  sourceMode: "fixture" | "live" | "unknown";
+  caveats: string[];
+  evidenceBasis: "observed" | "source-reported";
+}
+
+export interface OpenSkyStatesResponse {
+  fetchedAt: string;
+  source: string;
+  count: number;
+  states: OpenSkyAircraftState[];
+  sourceHealth: OpenSkySourceHealth;
+  caveats: string[];
+}
+
+export interface OurAirportsReferenceSourceHealth {
+  sourceName: string;
+  sourceMode: "fixture" | "live" | "unknown";
+  health: "normal" | "degraded" | "unavailable" | "unknown";
+  detail: string;
+  airportsSourceUrl: string;
+  runwaysSourceUrl: string;
+  lastUpdatedAt?: string | null;
+  state?: SourceStatus["state"] | null;
+  caveats: string[];
+}
+
+export interface OurAirportsAirportReferenceRecord {
+  referenceId: string;
+  externalId: string;
+  airportCode?: string | null;
+  iataCode?: string | null;
+  localCode?: string | null;
+  name: string;
+  airportType?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  countryCode?: string | null;
+  regionCode?: string | null;
+  municipality?: string | null;
+  elevationFt?: number | null;
+  runwayCount: number;
+  longestRunwayFt?: number | null;
+  sourceUrl: string;
+  sourceMode: "fixture" | "live" | "unknown";
+  health: "normal" | "degraded" | "unavailable" | "unknown";
+  caveats: string[];
+  evidenceBasis: "reference" | "contextual";
+}
+
+export interface OurAirportsRunwayReferenceRecord {
+  referenceId: string;
+  externalId: string;
+  airportRefId: string;
+  airportCode?: string | null;
+  leIdent?: string | null;
+  heIdent?: string | null;
+  lengthFt?: number | null;
+  widthFt?: number | null;
+  surface?: string | null;
+  surfaceCategory?: string | null;
+  centerLatitude?: number | null;
+  centerLongitude?: number | null;
+  sourceUrl: string;
+  sourceMode: "fixture" | "live" | "unknown";
+  health: "normal" | "degraded" | "unavailable" | "unknown";
+  caveats: string[];
+  evidenceBasis: "reference" | "contextual";
+}
+
+export interface OurAirportsReferenceExportMetadata {
+  sourceId: string;
+  sourceMode: "fixture" | "live" | "unknown";
+  health: "normal" | "degraded" | "unavailable" | "unknown";
+  airportCount: number;
+  runwayCount: number;
+  includeRunways: boolean;
+  filters: Record<string, string>;
+  caveat: string;
+}
+
+export interface OurAirportsReferenceResponse {
+  fetchedAt: string;
+  source: string;
+  airportCount: number;
+  runwayCount: number;
+  airports: OurAirportsAirportReferenceRecord[];
+  runways: OurAirportsRunwayReferenceRecord[];
+  sourceHealth: OurAirportsReferenceSourceHealth;
+  exportMetadata: OurAirportsReferenceExportMetadata;
+  caveats: string[];
+}
+
+export interface UsgsGeomagnetismSample {
+  observedAt: string;
+  values: Record<string, number | null>;
+  evidenceBasis: "observed";
+}
+
+export interface UsgsGeomagnetismSourceHealth {
+  sourceId: string;
+  sourceLabel: string;
+  enabled: boolean;
+  sourceMode: "fixture" | "live" | "unknown";
+  health: "loaded" | "empty" | "stale" | "error" | "disabled" | "unknown";
+  loadedCount: number;
+  lastFetchedAt?: string | null;
+  sourceGeneratedAt?: string | null;
+  detail: string;
+  errorSummary?: string | null;
+  caveat?: string | null;
+}
+
+export interface UsgsGeomagnetismMetadata {
+  source: string;
+  sourceName: string;
+  sourceUrl: string;
+  requestUrl: string;
+  observatoryId: string;
+  observatoryName?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  elevationM?: number | null;
+  sourceMode: "fixture" | "live" | "unknown";
+  fetchedAt: string;
+  generatedAt?: string | null;
+  startTime?: string | null;
+  endTime?: string | null;
+  samplingPeriodSeconds?: number | null;
+  elements: string[];
+  count: number;
+  caveat: string;
+}
+
+export interface UsgsGeomagnetismResponse {
+  metadata: UsgsGeomagnetismMetadata;
+  count: number;
+  sourceHealth: UsgsGeomagnetismSourceHealth;
+  samples: UsgsGeomagnetismSample[];
+  caveats: string[];
+}
+
+export interface ReferenceObjectSummary {
+  refId: string;
+  objectType: "airport" | "runway" | "navaid" | "fix" | "region";
+  canonicalName: string;
+  primaryCode?: string | null;
+  sourceDataset: string;
+  status: string;
+  countryCode?: string | null;
+  admin1Code?: string | null;
+  centroidLat?: number | null;
+  centroidLon?: number | null;
+  bboxMinLat?: number | null;
+  bboxMinLon?: number | null;
+  bboxMaxLat?: number | null;
+  bboxMaxLon?: number | null;
+  coverageTier: "authoritative" | "curated" | "baseline";
+  objectDisplayLabel?: string | null;
+  codeContext?: string | null;
+  aliases: string[];
+}
+
+export interface ReferenceNearbyItem {
+  summary: ReferenceObjectSummary;
+  distanceM: number;
+  bearingDeg?: number | null;
+  geometryMethod?: "centroid" | "segment" | "containment" | null;
+}
+
+export interface ReferenceNearbyResponse {
+  latitude: number;
+  longitude: number;
+  radiusM: number;
+  count: number;
+  results: ReferenceNearbyItem[];
+}
+
+export interface ReferenceLinkCandidate {
+  summary: ReferenceObjectSummary;
+  confidence: number;
+  method: string;
+  reason: string;
+  score?: number | null;
+  confidenceBreakdown: Record<string, number>;
+}
+
+export interface ReferenceLinkContext {
+  containingRegions: ReferenceObjectSummary[];
+  nearestAirport?: ReferenceObjectSummary | null;
+  nearestPlace?: ReferenceObjectSummary | null;
+}
+
+export interface ReferenceResolveLinkResponse {
+  externalObjectType: string;
+  count: number;
+  primary?: ReferenceLinkCandidate | null;
+  alternatives: ReferenceLinkCandidate[];
+  context?: ReferenceLinkContext | null;
+  results: ReferenceLinkCandidate[];
+}
+
+export interface SatelliteResponse {
+  fetchedAt: string;
+  source: string;
+  count: number;
+  summary: FilterSummary;
+  satellites: SatelliteEntity[];
+  orbitPaths: Record<string, OrbitPoint[]>;
+  passWindows: Record<string, PassWindowSummary>;
+}
+
+export interface CameraSourceRegistryEntry {
+  key: string;
+  displayName: string;
+  owner: string;
+  sourceType: "official-dot" | "official-511" | "aggregator-api" | "public-webcam";
+  coverage: string;
+  priority: number;
+  enabled: boolean;
+  authentication: "none" | "api-key" | "access-code";
+  defaultRefreshIntervalSeconds: number;
+  notes: string[];
+  compliance: CameraComplianceMetadata;
+  status: SourceStatus["state"];
+  detail: string;
+  credentialsConfigured: boolean;
+  blockedReason?: string | null;
+  reviewRequired: boolean;
+  degradedReason?: string | null;
+  lastAttemptAt?: string | null;
+  lastSuccessAt?: string | null;
+  lastFailureAt?: string | null;
+  successCount: number;
+  failureCount: number;
+  warningCount: number;
+  lastCameraCount: number;
+  nextRefreshAt?: string | null;
+  backoffUntil?: string | null;
+  retryCount: number;
+  lastHttpStatus?: number | null;
+  lastStartedAt?: string | null;
+  lastCompletedAt?: string | null;
+  cadenceSeconds?: number | null;
+  cadenceReason?: string | null;
+  lastRunMode?: string | null;
+  lastValidationAt?: string | null;
+  lastFrameProbeCount?: number | null;
+  lastFrameStatusSummary: Record<string, number>;
+  lastMetadataUncertaintyCount?: number | null;
+  lastCadenceObservation?: string | null;
+  inventorySourceType?:
+    | "official-511-api"
+    | "official-dot-api"
+    | "public-webcam-api"
+    | "public-camera-page"
+    | "viewer-only-source"
+    | null;
+  accessMethod?: "json-api" | "xml-api" | "html-index" | "viewer-page" | "embed" | null;
+  onboardingState?: "candidate" | "approved" | "blocked" | "unsupported" | "active" | null;
+  coverageStates: string[];
+  coverageRegions: string[];
+  providesExactCoordinates?: boolean | null;
+  providesDirectionText?: boolean | null;
+  providesNumericHeading?: boolean | null;
+  providesDirectImage?: boolean | null;
+  providesViewerOnly?: boolean | null;
+  supportsEmbed?: boolean | null;
+  supportsStorage?: boolean | null;
+  approximateCameraCount?: number | null;
+  importReadiness?:
+    | "inventory-only"
+    | "approved-unvalidated"
+    | "actively-importing"
+    | "validated"
+    | "low-yield"
+    | "poor-quality"
+    | null;
+  discoveredCameraCount?: number | null;
+  usableCameraCount?: number | null;
+  directImageCameraCount?: number | null;
+  viewerOnlyCameraCount?: number | null;
+  missingCoordinateCameraCount?: number | null;
+  uncertainOrientationCameraCount?: number | null;
+  reviewQueueCount?: number | null;
+  lastImportOutcome?: string | null;
+  sourceQualityNotes: string[];
+  sourceStabilityNotes: string[];
+  pageStructure?:
+    | "unknown"
+    | "static-html"
+    | "interactive-map-html"
+    | "js-data-app"
+    | "viewer-catalog-html"
+    | null;
+  likelyCameraCount?: number | null;
+  complianceRisk?: "low" | "medium" | "high" | null;
+  extractionFeasibility?: "low" | "medium" | "high" | null;
+  endpointVerificationStatus?:
+    | "not-tested"
+    | "candidate-url-only"
+    | "machine-readable-confirmed"
+    | "html-only"
+    | "blocked"
+    | "captcha-or-login"
+    | "needs-review"
+    | null;
+  candidateEndpointUrl?: string | null;
+  machineReadableEndpointUrl?: string | null;
+  lastEndpointCheckAt?: string | null;
+  lastEndpointHttpStatus?: number | null;
+  lastEndpointContentType?: string | null;
+  lastEndpointResult?: string | null;
+  lastEndpointNotes: string[];
+  verificationCaveat?: string | null;
+  sandboxImportAvailable?: boolean;
+  sandboxImportMode?: "fixture" | "live" | null;
+  sandboxConnectorId?: string | null;
+  lastSandboxImportAt?: string | null;
+  lastSandboxImportOutcome?: string | null;
+  sandboxDiscoveredCount?: number | null;
+  sandboxUsableCount?: number | null;
+  sandboxReviewQueueCount?: number | null;
+  sandboxValidationCaveat?: string | null;
+}
+
+export interface CameraSourceRegistryResponse {
+  sources: CameraSourceRegistryEntry[];
+}
+
+export interface CameraSourceInventoryEntry {
+  key: string;
+  sourceName: string;
+  sourceFamily: string;
+  sourceType:
+    | "official-511-api"
+    | "official-dot-api"
+    | "public-webcam-api"
+    | "public-camera-page"
+    | "viewer-only-source";
+  accessMethod: "json-api" | "xml-api" | "html-index" | "viewer-page" | "embed";
+  onboardingState: "candidate" | "approved" | "blocked" | "unsupported" | "active";
+  owner: string;
+  authentication: "none" | "api-key" | "access-code";
+  credentialsConfigured: boolean;
+  rateLimitNotes: string[];
+  coverageGeography: string;
+  coverageStates: string[];
+  coverageRegions: string[];
+  providesExactCoordinates: boolean;
+  providesDirectionText: boolean;
+  providesNumericHeading: boolean;
+  providesDirectImage: boolean;
+  providesViewerOnly: boolean;
+  supportsEmbed: boolean;
+  supportsStorage: boolean;
+  compliance: CameraComplianceMetadata;
+  sourceQualityNotes: string[];
+  sourceStabilityNotes: string[];
+  blockedReason?: string | null;
+  approximateCameraCount?: number | null;
+  importReadiness?:
+    | "inventory-only"
+    | "approved-unvalidated"
+    | "actively-importing"
+    | "validated"
+    | "low-yield"
+    | "poor-quality"
+    | null;
+  discoveredCameraCount?: number | null;
+  usableCameraCount?: number | null;
+  directImageCameraCount?: number | null;
+  viewerOnlyCameraCount?: number | null;
+  missingCoordinateCameraCount?: number | null;
+  uncertainOrientationCameraCount?: number | null;
+  reviewQueueCount?: number | null;
+  lastCatalogImportAt?: string | null;
+  lastCatalogImportStatus?: string | null;
+  lastCatalogImportDetail?: string | null;
+  lastImportOutcome?: string | null;
+  pageStructure?:
+    | "unknown"
+    | "static-html"
+    | "interactive-map-html"
+    | "js-data-app"
+    | "viewer-catalog-html"
+    | null;
+  likelyCameraCount?: number | null;
+  complianceRisk?: "low" | "medium" | "high" | null;
+  extractionFeasibility?: "low" | "medium" | "high" | null;
+  endpointVerificationStatus?:
+    | "not-tested"
+    | "candidate-url-only"
+    | "machine-readable-confirmed"
+    | "html-only"
+    | "blocked"
+    | "captcha-or-login"
+    | "needs-review"
+    | null;
+  candidateEndpointUrl?: string | null;
+  machineReadableEndpointUrl?: string | null;
+  lastEndpointCheckAt?: string | null;
+  lastEndpointHttpStatus?: number | null;
+  lastEndpointContentType?: string | null;
+  lastEndpointResult?: string | null;
+  lastEndpointNotes: string[];
+  verificationCaveat?: string | null;
+  sandboxImportAvailable?: boolean;
+  sandboxImportMode?: "fixture" | "live" | null;
+  sandboxConnectorId?: string | null;
+  lastSandboxImportAt?: string | null;
+  lastSandboxImportOutcome?: string | null;
+  sandboxDiscoveredCount?: number | null;
+  sandboxUsableCount?: number | null;
+  sandboxReviewQueueCount?: number | null;
+  sandboxValidationCaveat?: string | null;
+}
+
+export interface CameraSourceInventorySummary {
+  totalSources: number;
+  activeSources: number;
+  credentialedSources: number;
+  credentiallessSources: number;
+  directImageSources: number;
+  viewerOnlySources: number;
+  validatedSources: number;
+  lowYieldSources: number;
+  poorQualitySources: number;
+  sourcesByType: Record<string, number>;
+}
+
+export interface CameraSourceInventoryResponse {
+  fetchedAt: string;
+  count: number;
+  summary: CameraSourceInventorySummary;
+  sources: CameraSourceInventoryEntry[];
+}
+
+export interface CameraResponse {
+  fetchedAt: string;
+  source: string;
+  count: number;
+  summary: FilterSummary;
+  cameras: CameraEntity[];
+  sources: CameraSourceRegistryEntry[];
+}
+
+export interface ReviewQueueIssue {
+  category: string;
+  reason: string;
+  requiredAction: string;
+}
+
+export interface ReviewQueueItem {
+  queueId: string;
+  priority: "high" | "medium" | "low";
+  sourceKey: string;
+  camera: CameraEntity;
+  issues: ReviewQueueIssue[];
+  context: Record<string, string>;
+}
+
+export interface ReviewQueueResponse {
+  fetchedAt: string;
+  count: number;
+  items: ReviewQueueItem[];
+}
+
+export interface MarineSourceStatus {
+  sourceKey: string;
+  displayName: string;
+  enabled: boolean;
+  state: SourceStatus["state"];
+  detail: string;
+  freshnessSeconds?: number | null;
+  staleAfterSeconds?: number | null;
+  lastSuccessAt?: string | null;
+  lastAttemptAt?: string | null;
+  lastFailureAt?: string | null;
+  degradedReason?: string | null;
+  blockedReason?: string | null;
+  successCount: number;
+  failureCount: number;
+  warningCount: number;
+  cadenceSeconds?: number | null;
+  providerKind: string;
+  coverageScope: string;
+  globalCoverageClaimed: boolean;
+  assumptions: string[];
+  limitations: string[];
+  sourceUrl?: string | null;
+}
+
+export interface MarineVesselsResponse {
+  fetchedAt: string;
+  source: string;
+  count: number;
+  summary: FilterSummary;
+  vessels: MarineVesselEntity[];
+  sources: MarineSourceStatus[];
+}
+
+export interface MarineReplayPathPoint {
+  latitude: number;
+  longitude: number;
+  course?: number | null;
+  heading?: number | null;
+  speed?: number | null;
+  observedAt: string;
+  fetchedAt: string;
+  source: string;
+  sourceDetail?: string | null;
+  observedVsDerived: "observed" | "derived";
+  geometryProvenance: "raw_observed" | "reconstructed" | "interpolated";
+  pathSegmentKind:
+    | "observed-position"
+    | "derived-reconstructed-position"
+    | "derived-interpolated-position";
+  confidence?: number | null;
+  metadata: Record<string, unknown>;
+}
+
+export interface MarineVesselHistoryResponse {
+  fetchedAt: string;
+  vesselId: string;
+  count: number;
+  points: MarineReplayPathPoint[];
+  nextCursor?: string | null;
+}
+
+export interface MarineGapEvent {
+  gapEventId: number;
+  vesselId: string;
+  source: string;
+  eventKind:
+    | "observed-signal-gap-start"
+    | "observed-signal-gap-end"
+    | "possible-transponder-silence-interval"
+    | "resumed-observation";
+  eventMarkerType: "gap-start" | "gap-end" | "resumed" | "possible-dark-interval";
+  gapStartObservedAt: string;
+  gapEndObservedAt?: string | null;
+  gapDurationSeconds?: number | null;
+  startLatitude?: number | null;
+  startLongitude?: number | null;
+  endLatitude?: number | null;
+  endLongitude?: number | null;
+  distanceMovedM?: number | null;
+  expectedIntervalSeconds?: number | null;
+  exceedsExpectedCadence: boolean;
+  confidenceClass: "low" | "medium" | "high";
+  confidenceDisplay: string;
+  confidenceScore?: number | null;
+  normalSparseReportingPlausible: boolean;
+  confidenceBreakdown: Record<string, number>;
+  derivationMethod: string;
+  inputEventIds: number[];
+  uncertaintyNotes: string[];
+  evidenceSummary?: string | null;
+  createdAt: string;
+}
+
+export interface MarineGapEventsResponse {
+  fetchedAt: string;
+  vesselId: string;
+  count: number;
+  events: MarineGapEvent[];
+  nextCursor?: string | null;
+}
+
+export interface MarineReplaySnapshotRef {
+  snapshotId: number;
+  snapshotAt: string;
+  scopeKind: "global" | "viewport";
+  vesselCount: number;
+  positionEventCount: number;
+  storageKey?: string | null;
+  chunkId?: string | null;
+}
+
+export interface MarineReplayTimelineSegment {
+  segmentStartAt: string;
+  segmentEndAt: string;
+  scopeKind: "global" | "viewport";
+  vesselCount: number;
+  positionEventCount: number;
+  gapEventCount: number;
+  snapshotId?: number | null;
+  chunkId?: string | null;
+  metadata: Record<string, unknown>;
+}
+
+export interface MarineReplayTimelineResponse {
+  fetchedAt: string;
+  startAt: string;
+  endAt: string;
+  count: number;
+  segments: MarineReplayTimelineSegment[];
+  nextCursor?: string | null;
+}
+
+export interface MarineReplaySnapshotResponse {
+  fetchedAt: string;
+  atOrBefore: string;
+  snapshot?: MarineReplaySnapshotRef | null;
+  count: number;
+  vessels: MarineVesselEntity[];
+}
+
+export interface MarineReplayViewportResponse {
+  fetchedAt: string;
+  atOrBefore: string;
+  count: number;
+  vessels: MarineVesselEntity[];
+}
+
+export interface MarineReplayPathResponse {
+  fetchedAt: string;
+  vesselId: string;
+  includeInterpolated: boolean;
+  count: number;
+  points: MarineReplayPathPoint[];
+  nextCursor?: string | null;
+}
+
+export interface MarineObservedWindowSummary {
+  startAt?: string | null;
+  endAt?: string | null;
+  observedPointCount: number;
+}
+
+export interface MarineVesselMovementSummary {
+  observedPointCount: number;
+  distanceMovedM: number;
+  averageSpeedKts?: number | null;
+  observedStartAt?: string | null;
+  observedEndAt?: string | null;
+}
+
+export interface MarineAnomalyScore {
+  score: number;
+  level: "low" | "medium" | "high";
+  priorityRank?: number | null;
+  displayLabel: string;
+  reasons: string[];
+  caveats: string[];
+  observedSignals: string[];
+  inferredSignals: string[];
+  scoredSignals: string[];
+}
+
+export interface MarineVesselAnalyticalSummaryResponse {
+  fetchedAt: string;
+  vesselId: string;
+  window: MarineObservedWindowSummary;
+  latestObserved?: MarineVesselEntity | null;
+  movement: MarineVesselMovementSummary;
+  observedGapEventCount: number;
+  suspiciousGapEventCount: number;
+  longestGapSeconds?: number | null;
+  mostRecentResumedObservation?: MarineGapEvent | null;
+  sourceStatus?: MarineSourceStatus | null;
+  anomaly: MarineAnomalyScore;
+  observedFields: string[];
+  inferredFields: string[];
+}
+
+export interface MarineViewportAnalyticalSummaryResponse {
+  fetchedAt: string;
+  atOrBefore: string;
+  window: MarineObservedWindowSummary;
+  vesselCount: number;
+  activeVesselCount: number;
+  observedGapEventCount: number;
+  suspiciousGapEventCount: number;
+  viewportEntryCount: number;
+  viewportExitCount: number;
+  anomaly: MarineAnomalyScore;
+  observedFields: string[];
+  inferredFields: string[];
+}
+
+export interface MarineChokepointSliceSummary {
+  sliceStartAt: string;
+  sliceEndAt: string;
+  vesselCount: number;
+  activeVesselCount: number;
+  observedGapEventCount: number;
+  suspiciousGapEventCount: number;
+  anomaly: MarineAnomalyScore;
+}
+
+export interface MarineChokepointAnalyticalSummaryResponse {
+  fetchedAt: string;
+  startAt: string;
+  endAt: string;
+  sliceMinutes: number;
+  sliceCount: number;
+  totalVesselObservations: number;
+  totalObservedGapEvents: number;
+  totalSuspiciousGapEvents: number;
+  anomaly: MarineAnomalyScore;
+  slices: MarineChokepointSliceSummary[];
+  observedFields: string[];
+  inferredFields: string[];
+}
+
+export interface MarineNoaaCoopsSourceHealth {
+  sourceId: string;
+  sourceLabel: string;
+  enabled: boolean;
+  sourceMode: "fixture" | "live" | "unknown";
+  health: "loaded" | "empty" | "stale" | "degraded" | "unavailable" | "error" | "disabled" | "unknown";
+  loadedCount: number;
+  lastFetchedAt?: string | null;
+  sourceGeneratedAt?: string | null;
+  detail: string;
+  errorSummary?: string | null;
+  caveat?: string | null;
+}
+
+export interface MarineNoaaCoopsWaterLevelObservation {
+  observedAt: string;
+  valueM: number;
+  units: "m";
+  datum: string;
+  trend?: string | null;
+  sourceDetail: string;
+  externalUrl?: string | null;
+  observedBasis: "observed";
+}
+
+export interface MarineNoaaCoopsCurrentObservation {
+  observedAt: string;
+  speedKts: number;
+  directionDeg?: number | null;
+  directionCardinal?: string | null;
+  binDepthM?: number | null;
+  units: "kts";
+  sourceDetail: string;
+  externalUrl?: string | null;
+  observedBasis: "observed";
+}
+
+export interface MarineNoaaCoopsStationContext {
+  stationId: string;
+  stationName: string;
+  stationType: "water-level" | "currents" | "mixed";
+  latitude: number;
+  longitude: number;
+  distanceKm: number;
+  productsAvailable: Array<"water_level" | "currents">;
+  statusLine: string;
+  externalUrl?: string | null;
+  latestWaterLevel?: MarineNoaaCoopsWaterLevelObservation | null;
+  latestCurrent?: MarineNoaaCoopsCurrentObservation | null;
+  caveats: string[];
+}
+
+export interface MarineNoaaCoopsContextResponse {
+  fetchedAt: string;
+  contextKind: "viewport" | "chokepoint";
+  centerLat: number;
+  centerLon: number;
+  radiusKm: number;
+  count: number;
+  sourceHealth: MarineNoaaCoopsSourceHealth;
+  stations: MarineNoaaCoopsStationContext[];
+  caveats: string[];
+}
+
+export interface MarineNdbcSourceHealth {
+  sourceId: string;
+  sourceLabel: string;
+  enabled: boolean;
+  sourceMode: "fixture" | "live" | "unknown";
+  health: "loaded" | "empty" | "stale" | "degraded" | "unavailable" | "error" | "disabled" | "unknown";
+  loadedCount: number;
+  lastFetchedAt?: string | null;
+  sourceGeneratedAt?: string | null;
+  detail: string;
+  errorSummary?: string | null;
+  caveat?: string | null;
+}
+
+export interface MarineNdbcObservation {
+  observedAt: string;
+  windDirectionDeg?: number | null;
+  windDirectionCardinal?: string | null;
+  windSpeedKts?: number | null;
+  windGustKts?: number | null;
+  waveHeightM?: number | null;
+  dominantPeriodS?: number | null;
+  pressureHpa?: number | null;
+  airTemperatureC?: number | null;
+  waterTemperatureC?: number | null;
+  sourceDetail: string;
+  externalUrl?: string | null;
+  observedBasis: "observed";
+}
+
+export interface MarineNdbcStation {
+  stationId: string;
+  stationName: string;
+  latitude: number;
+  longitude: number;
+  distanceKm: number;
+  stationType: "buoy" | "cman";
+  statusLine: string;
+  externalUrl?: string | null;
+  latestObservation?: MarineNdbcObservation | null;
+  caveats: string[];
+}
+
+export interface MarineNdbcContextResponse {
+  fetchedAt: string;
+  contextKind: "viewport" | "chokepoint";
+  centerLat: number;
+  centerLon: number;
+  radiusKm: number;
+  count: number;
+  sourceHealth: MarineNdbcSourceHealth;
+  stations: MarineNdbcStation[];
+  caveats: string[];
+}
+
+export interface MarineScottishWaterSourceHealth {
+  sourceId: string;
+  sourceLabel: string;
+  enabled: boolean;
+  sourceMode: "fixture" | "live" | "unknown";
+  health: "loaded" | "empty" | "stale" | "degraded" | "unavailable" | "error" | "disabled" | "unknown";
+  loadedCount: number;
+  lastFetchedAt?: string | null;
+  sourceGeneratedAt?: string | null;
+  detail: string;
+  errorSummary?: string | null;
+  caveat?: string | null;
+}
+
+export interface MarineScottishWaterOverflowEvent {
+  eventId: string;
+  monitorId?: string | null;
+  assetId?: string | null;
+  siteName: string;
+  waterBody?: string | null;
+  outfallLabel?: string | null;
+  locationLabel?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  distanceKm?: number | null;
+  status: "active" | "inactive" | "unknown";
+  startedAt?: string | null;
+  endedAt?: string | null;
+  lastUpdatedAt?: string | null;
+  durationMinutes?: number | null;
+  sourceUrl?: string | null;
+  sourceDetail: string;
+  evidenceBasis: "source-reported" | "contextual";
+  caveats: string[];
+}
+
+export interface MarineScottishWaterOverflowResponse {
+  fetchedAt: string;
+  centerLat: number;
+  centerLon: number;
+  radiusKm: number;
+  statusFilter: "all" | "active" | "inactive";
+  count: number;
+  activeCount: number;
+  sourceHealth: MarineScottishWaterSourceHealth;
+  events: MarineScottishWaterOverflowEvent[];
+  caveats: string[];
+}
+
+export interface MarineVigicruesHydrometrySourceHealth {
+  sourceId: string;
+  sourceLabel: string;
+  enabled: boolean;
+  sourceMode: "fixture" | "live" | "unknown";
+  health: "loaded" | "empty" | "stale" | "degraded" | "unavailable" | "error" | "disabled" | "unknown";
+  loadedCount: number;
+  lastFetchedAt?: string | null;
+  sourceGeneratedAt?: string | null;
+  detail: string;
+  errorSummary?: string | null;
+  caveat?: string | null;
+}
+
+export interface MarineVigicruesHydrometryObservation {
+  observedAt: string;
+  parameter: "water-height" | "flow";
+  value: number;
+  unit: string;
+  sourceDetail: string;
+  sourceUrl?: string | null;
+  observedBasis: "observed";
+}
+
+export interface MarineVigicruesHydrometryStation {
+  stationId: string;
+  stationName: string;
+  latitude: number;
+  longitude: number;
+  distanceKm: number;
+  riverBasin?: string | null;
+  statusLine: string;
+  stationSourceUrl?: string | null;
+  latestObservation?: MarineVigicruesHydrometryObservation | null;
+  caveats: string[];
+}
+
+export interface MarineVigicruesHydrometryContextResponse {
+  fetchedAt: string;
+  centerLat: number;
+  centerLon: number;
+  radiusKm: number;
+  parameterFilter: "all" | "water-height" | "flow";
+  count: number;
+  sourceHealth: MarineVigicruesHydrometrySourceHealth;
+  stations: MarineVigicruesHydrometryStation[];
+  caveats: string[];
+}
+
+export interface MarineIrelandOpwWaterLevelSourceHealth {
+  sourceId: string;
+  sourceLabel: string;
+  enabled: boolean;
+  sourceMode: "fixture" | "live" | "unknown";
+  health: "loaded" | "empty" | "stale" | "degraded" | "unavailable" | "error" | "disabled" | "unknown";
+  loadedCount: number;
+  lastFetchedAt?: string | null;
+  sourceGeneratedAt?: string | null;
+  detail: string;
+  errorSummary?: string | null;
+  caveat?: string | null;
+}
+
+export interface MarineIrelandOpwWaterLevelReading {
+  readingAt: string;
+  waterLevelM: number;
+  sourceDetail: string;
+  sourceUrl?: string | null;
+  observedBasis: "observed";
+}
+
+export interface MarineIrelandOpwWaterLevelStation {
+  stationId: string;
+  stationName: string;
+  latitude: number;
+  longitude: number;
+  distanceKm: number;
+  waterbody?: string | null;
+  hydrometricArea?: string | null;
+  statusLine: string;
+  stationSourceUrl?: string | null;
+  latestReading?: MarineIrelandOpwWaterLevelReading | null;
+  caveats: string[];
+}
+
+export interface MarineIrelandOpwWaterLevelContextResponse {
+  fetchedAt: string;
+  centerLat: number;
+  centerLon: number;
+  radiusKm: number;
+  count: number;
+  sourceHealth: MarineIrelandOpwWaterLevelSourceHealth;
+  stations: MarineIrelandOpwWaterLevelStation[];
+  caveats: string[];
+}
+
+export interface MarineNetherlandsRwsWaterinfoSourceHealth {
+  sourceId: string;
+  sourceLabel: string;
+  enabled: boolean;
+  sourceMode: "fixture" | "live" | "unknown";
+  health: "loaded" | "empty" | "stale" | "degraded" | "unavailable" | "error" | "disabled" | "unknown";
+  loadedCount: number;
+  lastFetchedAt?: string | null;
+  sourceGeneratedAt?: string | null;
+  detail: string;
+  errorSummary?: string | null;
+  caveat?: string | null;
+}
+
+export interface MarineNetherlandsRwsWaterinfoObservation {
+  observedAt: string;
+  parameterCode: string;
+  parameterLabel: string;
+  waterLevelValue: number;
+  unitCode?: string | null;
+  unitLabel?: string | null;
+  sourceDetail: string;
+  sourceUrl?: string | null;
+  observedBasis: "observed";
+}
+
+export interface MarineNetherlandsRwsWaterinfoStation {
+  stationId: string;
+  stationName: string;
+  latitude: number;
+  longitude: number;
+  distanceKm: number;
+  waterBody?: string | null;
+  statusLine: string;
+  stationSourceUrl?: string | null;
+  latestObservation?: MarineNetherlandsRwsWaterinfoObservation | null;
+  caveats: string[];
+}
+
+export interface MarineNetherlandsRwsWaterinfoContextResponse {
+  fetchedAt: string;
+  centerLat: number;
+  centerLon: number;
+  radiusKm: number;
+  count: number;
+  sourceHealth: MarineNetherlandsRwsWaterinfoSourceHealth;
+  stations: MarineNetherlandsRwsWaterinfoStation[];
+  caveats: string[];
+}
+
+export interface MarineNavtexSourceHealth {
+  sourceId: string;
+  sourceLabel: string;
+  enabled: boolean;
+  sourceMode: "fixture" | "live" | "unknown";
+  health: "loaded" | "empty" | "stale" | "degraded" | "unavailable" | "error" | "disabled" | "unknown";
+  loadedCount: number;
+  lastFetchedAt?: string | null;
+  sourceGeneratedAt?: string | null;
+  detail: string;
+  errorSummary?: string | null;
+  caveat?: string | null;
+}
+
+export interface MarineNavtexBroadcast {
+  messageId: string;
+  stationId: string;
+  stationName: string;
+  transmitterCharacter: string;
+  latitude: number;
+  longitude: number;
+  distanceKm: number;
+  coverageRadiusKm?: number | null;
+  subjectIndicator: string;
+  subjectLabel?: string | null;
+  issuedAt: string;
+  summary: string;
+  bodyExcerpt: string;
+  sourceUrl?: string | null;
+  sourceDetail: string;
+  evidenceBasis: "advisory" | "source-reported";
+  caveats: string[];
+}
+
+export interface MarineNavtexContextResponse {
+  fetchedAt: string;
+  centerLat: number;
+  centerLon: number;
+  radiusKm: number;
+  messageTypeFilter:
+    | "all"
+    | "navigational-warning"
+    | "meteorological-warning"
+    | "search-and-rescue"
+    | "forecast"
+    | "other";
+  count: number;
+  sourceHealth: MarineNavtexSourceHealth;
+  broadcasts: MarineNavtexBroadcast[];
+  caveats: string[];
+}
+
+export interface MarineGebcoBathymetrySourceHealth {
+  sourceId: string;
+  sourceLabel: string;
+  enabled: boolean;
+  sourceMode: "fixture" | "live" | "unknown";
+  health: "loaded" | "empty" | "stale" | "degraded" | "unavailable" | "error" | "disabled" | "unknown";
+  loadedCount: number;
+  lastFetchedAt?: string | null;
+  sourceGeneratedAt?: string | null;
+  detail: string;
+  errorSummary?: string | null;
+  caveat?: string | null;
+}
+
+export interface MarineGebcoBathymetrySample {
+  sampleId: string;
+  latitude: number;
+  longitude: number;
+  distanceKm: number;
+  elevationMeters: number;
+  depthMeters?: number | null;
+  sourceUrl?: string | null;
+  sourceDetail: string;
+  evidenceBasis: "contextual";
+  caveats: string[];
+}
+
+export interface MarineGebcoBathymetryAreaSummary {
+  centerElevationMeters?: number | null;
+  centerDepthMeters?: number | null;
+  minElevationMeters?: number | null;
+  maxElevationMeters?: number | null;
+  underseaSampleCount: number;
+  landSampleCount: number;
+}
+
+export interface MarineGebcoBathymetryContextResponse {
+  fetchedAt: string;
+  centerLat: number;
+  centerLon: number;
+  radiusKm: number;
+  count: number;
+  gridVersion: string;
+  gridResolutionArcSeconds: number;
+  tidGridAvailable: boolean;
+  docsUrl?: string | null;
+  downloadUrl?: string | null;
+  sourceHealth: MarineGebcoBathymetrySourceHealth;
+  areaSummary: MarineGebcoBathymetryAreaSummary;
+  samples: MarineGebcoBathymetrySample[];
+  caveats: string[];
+}
+
+export interface EarthquakeEvent {
+  eventId: string;
+  source: string;
+  sourceUrl: string;
+  title: string;
+  place?: string | null;
+  magnitude?: number | null;
+  magnitudeType?: string | null;
+  time: string;
+  updated?: string | null;
+  longitude: number;
+  latitude: number;
+  depthKm?: number | null;
+  status?: string | null;
+  tsunami?: number | null;
+  significance?: number | null;
+  alert?: string | null;
+  felt?: number | null;
+  cdi?: number | null;
+  mmi?: number | null;
+  eventType?: string | null;
+  rawProperties: Record<string, unknown>;
+}
+
+export interface EarthquakeEventsMetadata {
+  source: string;
+  feedName: string;
+  feedUrl: string;
+  sourceMode: "fixture" | "live" | "unknown";
+  generatedAt?: string | null;
+  fetchedAt: string;
+  count: number;
+  caveat: string;
+}
+
+export interface EarthquakeEventsResponse {
+  metadata: EarthquakeEventsMetadata;
+  count: number;
+  events: EarthquakeEvent[];
+}
+
+export interface EonetEvent {
+  eventId: string;
+  source: string;
+  sourceUrl: string;
+  title: string;
+  description?: string | null;
+  categories: string[];
+  categoryIds: string[];
+  categoryTitles: string[];
+  eventDate: string;
+  updated?: string | null;
+  isClosed?: boolean | null;
+  closed?: string | null;
+  status: "open" | "closed";
+  geometryType: string;
+  longitude: number;
+  latitude: number;
+  coordinatesSummary: string;
+  magnitudeValue?: number | null;
+  magnitudeUnit?: string | null;
+  rawGeometryCount: number;
+  caveat: string;
+}
+
+export interface EonetEventsMetadata {
+  source: string;
+  feedName: string;
+  feedUrl: string;
+  sourceMode: "fixture" | "live" | "unknown";
+  fetchedAt: string;
+  generatedAt?: string | null;
+  count: number;
+  caveat: string;
+}
+
+export interface EonetEventsResponse {
+  metadata: EonetEventsMetadata;
+  count: number;
+  events: EonetEvent[];
+}
+
+export interface VolcanoStatusEvent {
+  eventId: string;
+  source: string;
+  sourceUrl: string;
+  volcanoName: string;
+  title: string;
+  volcanoNumber: string;
+  volcanoCode?: string | null;
+  observatoryName: string;
+  observatoryAbbr?: string | null;
+  region?: string | null;
+  latitude: number;
+  longitude: number;
+  elevationMeters?: number | null;
+  alertLevel: string;
+  aviationColorCode: string;
+  noticeTypeCode?: string | null;
+  noticeTypeLabel?: string | null;
+  noticeIdentifier: string;
+  issuedAt: string;
+  statusScope: "elevated" | "monitored";
+  volcanoUrl?: string | null;
+  nvewsThreat?: string | null;
+  caveat: string;
+}
+
+export interface VolcanoStatusMetadata {
+  source: string;
+  feedName: string;
+  feedUrl: string;
+  sourceMode: "fixture" | "live" | "unknown";
+  fetchedAt: string;
+  generatedAt?: string | null;
+  count: number;
+  caveat: string;
+}
+
+export interface VolcanoStatusResponse {
+  metadata: VolcanoStatusMetadata;
+  count: number;
+  events: VolcanoStatusEvent[];
+}
+
+export interface TsunamiAlertEvent {
+  eventId: string;
+  title: string;
+  alertType: "warning" | "watch" | "advisory" | "information" | "cancellation" | "unknown";
+  sourceCenter: "NTWC" | "PTWC" | "unknown";
+  issuedAt: string;
+  updatedAt?: string | null;
+  effectiveAt?: string | null;
+  expiresAt?: string | null;
+  affectedRegions: string[];
+  basin?: string | null;
+  region?: string | null;
+  longitude?: number | null;
+  latitude?: number | null;
+  sourceUrl: string;
+  summary?: string | null;
+  sourceMode: "fixture" | "live" | "unknown";
+  caveat: string;
+  evidenceBasis: "advisory" | "contextual";
+}
+
+export interface TsunamiAlertMetadata {
+  source: string;
+  feedName: string;
+  feedUrl: string;
+  sourceMode: "fixture" | "live" | "unknown";
+  fetchedAt: string;
+  generatedAt?: string | null;
+  count: number;
+  caveat: string;
+}
+
+export interface TsunamiAlertResponse {
+  metadata: TsunamiAlertMetadata;
+  count: number;
+  events: TsunamiAlertEvent[];
+}
+
+export interface UkEaFloodEvent {
+  eventId: string;
+  title: string;
+  severity: "severe-warning" | "warning" | "alert" | "inactive" | "unknown";
+  severityLevel?: number | null;
+  message?: string | null;
+  description?: string | null;
+  areaName?: string | null;
+  floodAreaId?: string | null;
+  riverOrSea?: string | null;
+  county?: string | null;
+  region?: string | null;
+  issuedAt?: string | null;
+  updatedAt?: string | null;
+  longitude?: number | null;
+  latitude?: number | null;
+  sourceUrl: string;
+  sourceMode: "fixture" | "live" | "unknown";
+  caveat: string;
+  evidenceBasis: "advisory" | "contextual";
+}
+
+export interface UkEaFloodStation {
+  stationId: string;
+  stationLabel: string;
+  riverName?: string | null;
+  catchment?: string | null;
+  areaName?: string | null;
+  county?: string | null;
+  longitude?: number | null;
+  latitude?: number | null;
+  parameter: "level" | "flow" | "rainfall" | "unknown";
+  value?: number | null;
+  unit?: string | null;
+  observedAt?: string | null;
+  qualifier?: string | null;
+  status?: string | null;
+  sourceUrl: string;
+  sourceMode: "fixture" | "live" | "unknown";
+  caveat: string;
+  evidenceBasis: "observed";
+}
+
+export interface UkEaFloodMetadata {
+  source: string;
+  feedName: string;
+  feedUrl: string;
+  sourceMode: "fixture" | "live" | "unknown";
+  fetchedAt: string;
+  generatedAt?: string | null;
+  count: number;
+  eventCount: number;
+  stationCount: number;
+  caveat: string;
+}
+
+export interface UkEaFloodResponse {
+  metadata: UkEaFloodMetadata;
+  count: number;
+  events: UkEaFloodEvent[];
+  stations: UkEaFloodStation[];
+}
+
+export interface GeoNetQuakeEvent {
+  eventId: string;
+  publicId: string;
+  title: string;
+  magnitude?: number | null;
+  depthKm?: number | null;
+  eventTime: string;
+  updatedAt?: string | null;
+  longitude?: number | null;
+  latitude?: number | null;
+  locality?: string | null;
+  region?: string | null;
+  quality?: string | null;
+  status?: string | null;
+  sourceUrl: string;
+  sourceMode: "fixture" | "live" | "unknown";
+  caveat: string;
+  evidenceBasis: "observed" | "source-reported";
+}
+
+export interface GeoNetVolcanoAlert {
+  volcanoId: string;
+  volcanoName: string;
+  title: string;
+  alertLevel?: number | null;
+  aviationColorCode?: string | null;
+  activity?: string | null;
+  hazards?: string | null;
+  issuedAt?: string | null;
+  updatedAt?: string | null;
+  longitude?: number | null;
+  latitude?: number | null;
+  source?: string | null;
+  sourceUrl: string;
+  sourceMode: "fixture" | "live" | "unknown";
+  caveat: string;
+  evidenceBasis: "advisory" | "contextual";
+}
+
+export interface GeoNetMetadata {
+  source: string;
+  feedName: string;
+  feedUrl: string;
+  sourceMode: "fixture" | "live" | "unknown";
+  fetchedAt: string;
+  generatedAt?: string | null;
+  count: number;
+  quakeCount: number;
+  volcanoCount: number;
+  caveat: string;
+}
+
+export interface GeoNetHazardsResponse {
+  metadata: GeoNetMetadata;
+  count: number;
+  quakes: GeoNetQuakeEvent[];
+  volcanoAlerts: GeoNetVolcanoAlert[];
+}
+
+export interface HkoWeatherWarningEvent {
+  eventId: string;
+  warningType: string;
+  warningLevel?: string | null;
+  title: string;
+  summary?: string | null;
+  issuedAt?: string | null;
+  updatedAt?: string | null;
+  expiresAt?: string | null;
+  affectedArea?: string | null;
+  sourceUrl: string;
+  sourceMode: "fixture" | "live" | "unknown";
+  caveat: string;
+  evidenceBasis: "advisory" | "contextual";
+}
+
+export interface HkoTropicalCycloneContext {
+  eventId: string;
+  title: string;
+  summary?: string | null;
+  issuedAt?: string | null;
+  updatedAt?: string | null;
+  signal?: string | null;
+  sourceUrl: string;
+  sourceMode: "fixture" | "live" | "unknown";
+  caveat: string;
+  evidenceBasis: "advisory" | "contextual";
+}
+
+export interface HkoWeatherMetadata {
+  source: string;
+  feedName: string;
+  feedUrl: string;
+  sourceMode: "fixture" | "live" | "unknown";
+  fetchedAt: string;
+  generatedAt?: string | null;
+  count: number;
+  warningCount: number;
+  hasTropicalCycloneContext: boolean;
+  caveat: string;
+}
+
+export interface HkoWeatherResponse {
+  metadata: HkoWeatherMetadata;
+  count: number;
+  warnings: HkoWeatherWarningEvent[];
+  tropicalCyclone?: HkoTropicalCycloneContext | null;
+}
+
+export interface CanadaCapAlertEvent {
+  eventId: string;
+  title: string;
+  alertType: "warning" | "watch" | "advisory" | "statement" | "unknown";
+  severity: "extreme" | "severe" | "moderate" | "minor" | "unknown";
+  urgency?: string | null;
+  certainty?: string | null;
+  areaDescription?: string | null;
+  provinceOrRegion?: string | null;
+  effectiveAt?: string | null;
+  onsetAt?: string | null;
+  expiresAt?: string | null;
+  sentAt: string;
+  updatedAt?: string | null;
+  sourceUrl: string;
+  sourceMode: "fixture" | "live" | "unknown";
+  caveat: string;
+  evidenceBasis: "advisory" | "contextual";
+  geometrySummary?: string | null;
+  longitude?: number | null;
+  latitude?: number | null;
+}
+
+export interface CanadaCapMetadata {
+  source: string;
+  feedName: string;
+  feedUrl: string;
+  sourceMode: "fixture" | "live" | "unknown";
+  fetchedAt: string;
+  generatedAt?: string | null;
+  count: number;
+  caveat: string;
+}
+
+export interface CanadaCapAlertResponse {
+  metadata: CanadaCapMetadata;
+  count: number;
+  alerts: CanadaCapAlertEvent[];
+}
+
+export interface MetEireannWarningEvent {
+  eventId: string;
+  capId?: string | null;
+  title: string;
+  warningType?: string | null;
+  level: "green" | "yellow" | "orange" | "red" | "unknown";
+  severity: "minor" | "moderate" | "severe" | "extreme" | "unknown";
+  certainty?: string | null;
+  urgency?: string | null;
+  issuedAt?: string | null;
+  onsetAt?: string | null;
+  expiresAt?: string | null;
+  updatedAt?: string | null;
+  affectedArea?: string | null;
+  affectedCodes: string[];
+  description?: string | null;
+  sourceUrl: string;
+  sourceMode: "fixture" | "live" | "unknown";
+  caveat: string;
+  evidenceBasis: "advisory" | "contextual";
+}
+
+export interface MetEireannWarningsSourceHealth {
+  sourceId: string;
+  sourceLabel: string;
+  enabled: boolean;
+  sourceMode: "fixture" | "live" | "unknown";
+  health: "loaded" | "empty" | "stale" | "error" | "disabled" | "unknown";
+  loadedCount: number;
+  lastFetchedAt?: string | null;
+  sourceGeneratedAt?: string | null;
+  detail: string;
+  errorSummary?: string | null;
+  caveat?: string | null;
+}
+
+export interface MetEireannWarningsMetadata {
+  source: string;
+  feedName: string;
+  feedUrl: string;
+  sourceMode: "fixture" | "live" | "unknown";
+  fetchedAt: string;
+  generatedAt?: string | null;
+  count: number;
+  caveat: string;
+}
+
+export interface MetEireannWarningsResponse {
+  metadata: MetEireannWarningsMetadata;
+  count: number;
+  sourceHealth: MetEireannWarningsSourceHealth;
+  warnings: MetEireannWarningEvent[];
+  caveats: string[];
+}
+
+export interface MetEireannForecastSample {
+  forecastTime: string;
+  airTemperatureC?: number | null;
+  precipitationMm?: number | null;
+  windSpeedMps?: number | null;
+  windDirectionDeg?: number | null;
+  symbolCode?: string | null;
+  evidenceBasis: "forecast" | "contextual";
+}
+
+export interface MetEireannForecastSourceHealth {
+  sourceId: string;
+  sourceLabel: string;
+  enabled: boolean;
+  sourceMode: "fixture" | "live" | "unknown";
+  health: "loaded" | "empty" | "stale" | "error" | "disabled" | "unknown";
+  loadedCount: number;
+  lastFetchedAt?: string | null;
+  sourceGeneratedAt?: string | null;
+  detail: string;
+  errorSummary?: string | null;
+  caveat?: string | null;
+}
+
+export interface MetEireannForecastMetadata {
+  source: string;
+  sourceName: string;
+  sourceUrl: string;
+  requestUrl: string;
+  latitude: number;
+  longitude: number;
+  sourceMode: "fixture" | "live" | "unknown";
+  fetchedAt: string;
+  generatedAt?: string | null;
+  firstForecastTime?: string | null;
+  lastForecastTime?: string | null;
+  count: number;
+  caveat: string;
+}
+
+export interface MetEireannForecastResponse {
+  metadata: MetEireannForecastMetadata;
+  count: number;
+  sourceHealth: MetEireannForecastSourceHealth;
+  samples: MetEireannForecastSample[];
+  caveats: string[];
+}
+
+export interface BmkgEarthquakeEvent {
+  eventId: string;
+  source: string;
+  sourceUrl: string;
+  title: string;
+  eventTime: string;
+  localTime?: string | null;
+  magnitude?: number | null;
+  depthKm?: number | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  region?: string | null;
+  feltSummary?: string | null;
+  tsunamiFlag?: boolean | null;
+  potentialText?: string | null;
+  shakemapUrl?: string | null;
+  sourceMode: "fixture" | "live" | "unknown";
+  caveat: string;
+  evidenceBasis: "source-reported" | "observed";
+}
+
+export interface BmkgEarthquakesMetadata {
+  source: string;
+  latestFeedUrl: string;
+  recentFeedUrl: string;
+  sourceMode: "fixture" | "live" | "unknown";
+  fetchedAt: string;
+  generatedAt?: string | null;
+  count: number;
+  latestAvailableAt?: string | null;
+  caveat: string;
+}
+
+export interface BmkgEarthquakesResponse {
+  metadata: BmkgEarthquakesMetadata;
+  latestEvent?: BmkgEarthquakeEvent | null;
+  count: number;
+  events: BmkgEarthquakeEvent[];
+}
+
+export interface MetNoMetAlertEvent {
+  eventId: string;
+  title: string;
+  alertType: string;
+  severity: "red" | "orange" | "yellow" | "green" | "unknown";
+  certainty?: string | null;
+  urgency?: string | null;
+  areaDescription?: string | null;
+  effectiveAt?: string | null;
+  onsetAt?: string | null;
+  expiresAt?: string | null;
+  sentAt?: string | null;
+  updatedAt?: string | null;
+  status: "Actual" | "Test" | "Unknown";
+  msgType: "Alert" | "Update" | "Cancel" | "Unknown";
+  geometrySummary?: string | null;
+  bboxMinLon?: number | null;
+  bboxMinLat?: number | null;
+  bboxMaxLon?: number | null;
+  bboxMaxLat?: number | null;
+  sourceUrl: string;
+  sourceMode: "fixture" | "live" | "unknown";
+  caveat: string;
+  evidenceBasis: "advisory" | "contextual";
+}
+
+export interface MetNoMetAlertsMetadata {
+  source: string;
+  feedName: string;
+  feedUrl: string;
+  sourceMode: "fixture" | "live" | "unknown";
+  fetchedAt: string;
+  generatedAt?: string | null;
+  count: number;
+  severityCounts: Record<string, number>;
+  caveat: string;
+  userAgentRequired: boolean;
+  backendLiveModeOnly: boolean;
+}
+
+export interface MetNoMetAlertsResponse {
+  metadata: MetNoMetAlertsMetadata;
+  count: number;
+  alerts: MetNoMetAlertEvent[];
+}
+
+export type DataAiFeedSourceMode = "fixture" | "live" | "mixed" | "unknown";
+
+export type DataAiFeedFamilyHealth =
+  | "loaded"
+  | "mixed"
+  | "empty"
+  | "degraded"
+  | "unknown";
+
+export type DataAiFeedFamilySourceHealth =
+  | "loaded"
+  | "empty"
+  | "stale"
+  | "error"
+  | "disabled"
+  | "unknown";
+
+export type DataAiFeedFamilyReviewQueueSourceHealth =
+  | "loaded"
+  | "mixed"
+  | "empty"
+  | "degraded"
+  | "stale"
+  | "error"
+  | "disabled"
+  | "unknown";
+
+export interface DataAiFeedSourceHealth {
+  sourceId: string;
+  sourceName: string;
+  sourceCategory: string;
+  feedUrl: string;
+  finalUrl?: string | null;
+  enabled: boolean;
+  sourceMode: "fixture" | "live" | "unknown";
+  health: "loaded" | "empty" | "stale" | "error" | "disabled" | "unknown";
+  loadedCount: number;
+  lastFetchedAt?: string | null;
+  sourceGeneratedAt?: string | null;
+  detail: string;
+  errorSummary?: string | null;
+  evidenceBasis: "advisory" | "contextual" | "source-reported";
+  caveat: string;
+}
+
+export interface DataAiFeedItem {
+  recordId: string;
+  sourceId: string;
+  sourceName: string;
+  sourceCategory: string;
+  feedUrl: string;
+  finalUrl?: string | null;
+  guid?: string | null;
+  link?: string | null;
+  title: string;
+  summary?: string | null;
+  publishedAt?: string | null;
+  updatedAt?: string | null;
+  fetchedAt: string;
+  evidenceBasis: "advisory" | "contextual" | "source-reported";
+  sourceMode: "fixture" | "live" | "unknown";
+  sourceHealth: "loaded" | "empty" | "stale" | "error" | "disabled" | "unknown";
+  caveats: string[];
+  tags: string[];
+}
+
+export interface DataAiMultiFeedMetadata {
+  source: string;
+  sourceMode: "fixture" | "live" | "unknown";
+  fetchedAt: string;
+  count: number;
+  rawCount: number;
+  dedupedCount: number;
+  configuredSourceIds: string[];
+  selectedSourceIds: string[];
+  caveat: string;
+}
+
+export interface DataAiMultiFeedResponse {
+  metadata: DataAiMultiFeedMetadata;
+  count: number;
+  sourceHealth: DataAiFeedSourceHealth[];
+  items: DataAiFeedItem[];
+  caveats: string[];
+}
+
+export interface DataAiFeedFamilySourceMember {
+  familyId: string;
+  familyLabel: string;
+  sourceId: string;
+  sourceName: string;
+  sourceCategory: string;
+  feedUrl: string;
+  finalUrl?: string | null;
+  sourceMode: DataAiFeedSourceMode;
+  sourceHealth: DataAiFeedFamilySourceHealth;
+  evidenceBasis: "advisory" | "contextual" | "source-reported";
+  rawCount: number;
+  itemCount: number;
+  dedupePosture: string;
+  tags: string[];
+  lastFetchedAt?: string | null;
+  sourceGeneratedAt?: string | null;
+  caveat: string;
+  summaryLine: string;
+  exportLines: string[];
+}
+
+export interface DataAiFeedFamilySummary {
+  familyId: string;
+  familyLabel: string;
+  familyHealth: DataAiFeedFamilyHealth;
+  familyMode: DataAiFeedSourceMode;
+  sourceIds: string[];
+  sourceLabels: string[];
+  sourceCategories: string[];
+  feedUrls: string[];
+  evidenceBases: string[];
+  sourceCount: number;
+  loadedSourceCount: number;
+  fixtureSourceCount: number;
+  rawCount: number;
+  itemCount: number;
+  dedupePosture: string;
+  tags: string[];
+  lastFetchedAt?: string | null;
+  sourceGeneratedAt?: string | null;
+  caveats: string[];
+  exportLines: string[];
+  sources: DataAiFeedFamilySourceMember[];
+}
+
+export interface DataAiFeedFamilyReadinessSnapshotMetadata {
+  source: string;
+  sourceName: string;
+  sourceMode: DataAiFeedSourceMode;
+  fetchedAt: string;
+  familyCount: number;
+  sourceCount: number;
+  rawCount: number;
+  itemCount: number;
+  selectedFamilyIds: string[];
+  selectedSourceIds: string[];
+  dedupePosture: string;
+  guardrailLine: string;
+  caveat: string;
+}
+
+export interface DataAiFeedFamilyReadinessSnapshotResponse {
+  metadata: DataAiFeedFamilyReadinessSnapshotMetadata;
+  familyCount: number;
+  sourceCount: number;
+  rawCount: number;
+  itemCount: number;
+  families: DataAiFeedFamilySummary[];
+  guardrailLine: string;
+  exportLines: string[];
+  caveats: string[];
+}
+
+export interface DataAiFeedFamilyReviewCard {
+  familyId: string;
+  familyLabel: string;
+  familyHealth: DataAiFeedFamilyHealth;
+  familyMode: DataAiFeedSourceMode;
+  sourceCount: number;
+  loadedSourceCount: number;
+  rawCount: number;
+  itemCount: number;
+  sourceIds: string[];
+  sourceCategories: string[];
+  evidenceBases: string[];
+  caveatClasses: string[];
+  promptInjectionTestPosture: string;
+  dedupePosture: string;
+  exportReadiness: string;
+  reviewLines: string[];
+}
+
+export interface DataAiFeedFamilyReviewMetadata {
+  source: string;
+  sourceName: string;
+  sourceMode: DataAiFeedSourceMode;
+  fetchedAt: string;
+  familyCount: number;
+  sourceCount: number;
+  rawCount: number;
+  itemCount: number;
+  selectedFamilyIds: string[];
+  selectedSourceIds: string[];
+  dedupePosture: string;
+  promptInjectionTestPosture: string;
+  guardrailLine: string;
+  caveat: string;
+}
+
+export interface DataAiFeedFamilyReviewResponse {
+  metadata: DataAiFeedFamilyReviewMetadata;
+  familyCount: number;
+  sourceCount: number;
+  rawCount: number;
+  itemCount: number;
+  promptInjectionTestPosture: string;
+  families: DataAiFeedFamilyReviewCard[];
+  reviewLines: string[];
+  guardrailLine: string;
+  caveats: string[];
+}
+
+export type DataAiFeedFamilyReviewQueueCategory = "family" | "source";
+
+export type DataAiFeedFamilyReviewQueueIssueKind =
+  | "fixture-local-source"
+  | "empty-family"
+  | "empty-source"
+  | "degraded-source"
+  | "high-caveat-density"
+  | "duplicate-heavy-feed"
+  | "prompt-injection-coverage-present"
+  | "prompt-injection-coverage-missing"
+  | "export-readiness-gap"
+  | "contextual-only-caveat-reminder"
+  | "advisory-only-caveat-reminder";
+
+export interface DataAiFeedFamilyReviewQueueIssue {
+  queueId: string;
+  category: DataAiFeedFamilyReviewQueueCategory;
+  issueKind: DataAiFeedFamilyReviewQueueIssueKind;
+  familyId: string;
+  familyLabel: string;
+  sourceId?: string | null;
+  sourceName?: string | null;
+  sourceCategory?: string | null;
+  sourceMode: DataAiFeedSourceMode;
+  sourceHealth: DataAiFeedFamilyReviewQueueSourceHealth;
+  evidenceBases: string[];
+  caveatClasses: string[];
+  rawCount: number;
+  itemCount: number;
+  lastFetchedAt?: string | null;
+  sourceGeneratedAt?: string | null;
+  detail: string;
+  reviewLines: string[];
+  exportLines: string[];
+}
+
+export interface DataAiFeedFamilyReviewQueueMetadata {
+  source: string;
+  sourceName: string;
+  sourceMode: DataAiFeedSourceMode;
+  fetchedAt: string;
+  familyCount: number;
+  sourceCount: number;
+  issueCount: number;
+  selectedFamilyIds: string[];
+  selectedSourceIds: string[];
+  selectedCategories: string[];
+  selectedIssueKinds: string[];
+  dedupePosture: string;
+  promptInjectionTestPosture: string;
+  guardrailLine: string;
+  caveat: string;
+}
+
+export interface DataAiFeedFamilyReviewQueueResponse {
+  metadata: DataAiFeedFamilyReviewQueueMetadata;
+  familyCount: number;
+  sourceCount: number;
+  issueCount: number;
+  promptInjectionTestPosture: string;
+  categoryCounts: Record<string, number>;
+  issueKindCounts: Record<string, number>;
+  issues: DataAiFeedFamilyReviewQueueIssue[];
+  reviewLines: string[];
+  exportLines: string[];
+  guardrailLine: string;
+  caveats: string[];
+}
+
+export type SourceDiscoveryRuntimeWorkerName = "source_discovery" | "wave_monitor";
+export type SourceDiscoveryRuntimeServicePlatform = "windows" | "macos" | "linux";
+export type SourceDiscoveryRuntimeServiceAction =
+  | "materialize"
+  | "install"
+  | "start"
+  | "stop"
+  | "restart"
+  | "uninstall"
+  | "status";
+export type SourceDiscoveryReviewAction =
+  | "mark_reviewed"
+  | "approve_candidate"
+  | "sandbox_check"
+  | "reject"
+  | "archive"
+  | "assign_owner";
+
+export interface SourceDiscoveryMemory {
+  sourceId: string;
+  title: string;
+  url: string;
+  canonicalUrl: string;
+  parentDomain: string;
+  domainScope: string;
+  ownerLane?: string | null;
+  sourceType: string;
+  sourceClass: string;
+  lifecycleState: string;
+  sourceHealth: string;
+  policyState: string;
+  accessResult: string;
+  machineReadableResult: string;
+  globalReputationScore: number;
+  domainReputationScore: number;
+  sourceHealthScore: number;
+  timelinessScore: number;
+  correctionScore: number;
+  confidenceLevel: string;
+  claimOutcomes: Record<string, number>;
+  caveats: string[];
+  reputationBasis: string[];
+  knownAliases: string[];
+  firstSeenAt: string;
+  lastSeenAt: string;
+  lastReputationEventAt?: string | null;
+  nextCheckAt?: string | null;
+  healthCheckFailCount: number;
+}
+
+export interface SourceDiscoveryWaveFit {
+  sourceId: string;
+  waveId: string;
+  waveTitle: string;
+  fitScore: number;
+  fitState: string;
+  relevanceBasis: string[];
+  lastSeenAt: string;
+}
+
+export interface SourceDiscoveryContentSnapshotSummary {
+  snapshotId: string;
+  sourceId: string;
+  url: string;
+  title?: string | null;
+  contentType?: string | null;
+  extractionMethod: string;
+  textHash: string;
+  textLength: number;
+  author?: string | null;
+  publishedAt?: string | null;
+  fetchedAt: string;
+  requestBudget: number;
+  usedRequests: number;
+  extractionConfidence: number;
+  caveats: string[];
+}
+
+export interface SourceDiscoveryHealthCheckSummary {
+  checkId: string;
+  sourceId: string;
+  url: string;
+  status: string;
+  httpStatus?: number | null;
+  contentType?: string | null;
+  accessResult: string;
+  machineReadableResult: string;
+  sourceHealth: string;
+  sourceHealthScore: number;
+  requestBudget: number;
+  usedRequests: number;
+  checkedAt: string;
+  nextCheckAfter?: string | null;
+  errorSummary?: string | null;
+  caveats: string[];
+}
+
+export interface SourceDiscoveryReviewActionSummary {
+  reviewActionId: number;
+  sourceId: string;
+  action: SourceDiscoveryReviewAction;
+  reviewedBy: string;
+  reason: string;
+  ownerLane?: string | null;
+  previousLifecycleState: string;
+  newLifecycleState: string;
+  previousPolicyState: string;
+  newPolicyState: string;
+  createdAt: string;
+}
+
+export interface SourceDiscoveryReputationEventSummary {
+  eventId: number;
+  sourceId: string;
+  waveId?: string | null;
+  eventType: string;
+  outcome?: string | null;
+  scoreBefore: number;
+  scoreAfter: number;
+  reason: string;
+  createdAt: string;
+  reversedAt?: string | null;
+  reversalReason?: string | null;
+}
+
+export interface SourceDiscoveryClaimOutcomeSummary {
+  outcomeId: number;
+  sourceId: string;
+  waveId?: string | null;
+  claimText: string;
+  claimType: string;
+  outcome: string;
+  evidenceBasis: string;
+  observedAt: string;
+  assessedAt: string;
+  corroboratingSourceIds: string[];
+  contradictionSourceIds: string[];
+  caveats: string[];
+}
+
+export interface SourceDiscoveryMemoryDetailResponse {
+  memory: SourceDiscoveryMemory;
+  waveFits: SourceDiscoveryWaveFit[];
+  snapshots: SourceDiscoveryContentSnapshotSummary[];
+  healthChecks: SourceDiscoveryHealthCheckSummary[];
+  reviewActions: SourceDiscoveryReviewActionSummary[];
+  reputationEvents: SourceDiscoveryReputationEventSummary[];
+  claimOutcomes: SourceDiscoveryClaimOutcomeSummary[];
+  caveats: string[];
+}
+
+export interface SourceDiscoveryReviewQueueItem {
+  sourceId: string;
+  title: string;
+  url: string;
+  sourceClass: string;
+  lifecycleState: string;
+  policyState: string;
+  sourceHealth: string;
+  ownerLane?: string | null;
+  priority: "high" | "medium" | "low";
+  reviewReasons: string[];
+  recommendedActions: string[];
+  globalReputationScore: number;
+  domainReputationScore: number;
+  sourceHealthScore: number;
+  timelinessScore: number;
+  confidenceLevel: string;
+  bestWaveId?: string | null;
+  bestWaveTitle?: string | null;
+  bestWaveFitScore?: number | null;
+  nextCheckAt?: string | null;
+}
+
+export interface SourceDiscoveryReviewQueueResponse {
+  metadata: Record<string, unknown>;
+  items: SourceDiscoveryReviewQueueItem[];
+  caveats: string[];
+}
+
+export interface SourceDiscoveryRuntimeRunSummary {
+  runId: string;
+  workerName: SourceDiscoveryRuntimeWorkerName;
+  triggerKind: string;
+  status: string;
+  requestedBy?: string | null;
+  leaseOwner?: string | null;
+  startedAt: string;
+  finishedAt?: string | null;
+  summary?: string | null;
+  errorSummary?: string | null;
+}
+
+export interface SourceDiscoveryRuntimeWorkerSummary {
+  workerName: SourceDiscoveryRuntimeWorkerName;
+  desiredState: "running" | "paused" | "stopped";
+  enabledByConfig: boolean;
+  pollSeconds: number;
+  loopActiveInProcess: boolean;
+  leaseOwner?: string | null;
+  leaseExpiresAt?: string | null;
+  lastTickRequestedAt?: string | null;
+  lastTickStartedAt?: string | null;
+  lastTickFinishedAt?: string | null;
+  lastStatus?: string | null;
+  lastError?: string | null;
+  lastSummary?: string | null;
+  recentRuns: SourceDiscoveryRuntimeRunSummary[];
+}
+
+export interface SourceDiscoveryRuntimePathSummary {
+  resourceDir: string;
+  userDataDir: string;
+  logDir: string;
+  cacheDir: string;
+  serviceArtifactDir: string;
+}
+
+export interface SourceDiscoveryRuntimeServiceInstallationSummary {
+  installationId: string;
+  workerName: SourceDiscoveryRuntimeWorkerName;
+  platform: SourceDiscoveryRuntimeServicePlatform;
+  serviceManager: string;
+  serviceName: string;
+  artifactFileName: string;
+  artifactPath?: string | null;
+  targetPath?: string | null;
+  installState: string;
+  lastAction?: string | null;
+  lastActionStatus?: string | null;
+  lastActionAt?: string | null;
+  lastSummary?: string | null;
+}
+
+export interface SourceDiscoveryRuntimeServiceSpec {
+  workerName: SourceDiscoveryRuntimeWorkerName;
+  platform: SourceDiscoveryRuntimeServicePlatform;
+  serviceManager: string;
+  serviceName: string;
+  workingDirectory: string;
+  artifactFileName: string;
+  artifactText: string;
+  artifactPath?: string | null;
+  targetPath?: string | null;
+  entryCommand: string[];
+  installCommand: string[];
+  startCommand: string[];
+  stopCommand: string[];
+  statusCommand: string[];
+  uninstallCommand: string[];
+  caveats: string[];
+}
+
+export interface SourceDiscoveryRuntimeStatusResponse {
+  runtimeMode: string;
+  recommendedRuntimeDeployment: string;
+  serviceWorkerEntrypoint: string;
+  runtimePaths: SourceDiscoveryRuntimePathSummary;
+  supportedServiceManagers: string[];
+  sourceDiscoverySchedulerEnabled: boolean;
+  sourceDiscoverySchedulerRunning: boolean;
+  sourceDiscoverySchedulerPollSeconds: number;
+  sourceDiscoverySchedulerLastTickAt?: string | null;
+  sourceDiscoverySchedulerLastError?: string | null;
+  sourceDiscoverySchedulerLastSummary?: string | null;
+  waveMonitorSchedulerEnabled: boolean;
+  waveMonitorSchedulerRunning: boolean;
+  waveMonitorSchedulerPollSeconds: number;
+  waveMonitorSchedulerLastTickAt?: string | null;
+  waveMonitorSchedulerLastError?: string | null;
+  waveMonitorSchedulerLastSummary?: string | null;
+  workers: SourceDiscoveryRuntimeWorkerSummary[];
+  serviceInstallations: SourceDiscoveryRuntimeServiceInstallationSummary[];
+  caveats: string[];
+}
+
+export interface SourceDiscoveryRuntimeServiceBundleResponse {
+  runtimeMode: string;
+  currentPlatform: SourceDiscoveryRuntimeServicePlatform;
+  entrypointModule: string;
+  runtimePaths: SourceDiscoveryRuntimePathSummary;
+  services: SourceDiscoveryRuntimeServiceSpec[];
+  installations: SourceDiscoveryRuntimeServiceInstallationSummary[];
+  caveats: string[];
+}
+
+export interface SourceDiscoveryRuntimeControlResponse {
+  worker: SourceDiscoveryRuntimeWorkerSummary;
+  run?: SourceDiscoveryRuntimeRunSummary | null;
+  caveats: string[];
+}
+
+export interface SourceDiscoveryRuntimeServiceActionResponse {
+  installation: SourceDiscoveryRuntimeServiceInstallationSummary;
+  action: {
+    actionId: number;
+    installationId: string;
+    workerName: SourceDiscoveryRuntimeWorkerName;
+    platform: SourceDiscoveryRuntimeServicePlatform;
+    action: SourceDiscoveryRuntimeServiceAction;
+    requestedBy: string;
+    dryRun: boolean;
+    status: string;
+    command: string[];
+    artifactPath?: string | null;
+    targetPath?: string | null;
+    stdoutExcerpt?: string | null;
+    stderrExcerpt?: string | null;
+    createdAt: string;
+    finishedAt?: string | null;
+  };
+  caveats: string[];
+}
+
+export interface SourceDiscoveryReviewActionResponse {
+  action: SourceDiscoveryReviewActionSummary;
+  memory: SourceDiscoveryMemory;
+  caveats: string[];
+}
+
+export interface SourceDiscoveryReviewClaimApplicationResponse {
+  memory: SourceDiscoveryMemory;
+  applications: Array<{
+    applicationId: number;
+    reviewId: string;
+    taskId: string;
+    sourceId: string;
+    waveId?: string | null;
+    claimIndex: number;
+    claimText: string;
+    outcome: string;
+    appliedBy: string;
+    approvalReason: string;
+    createdAt: string;
+  }>;
+  waveFits: SourceDiscoveryWaveFit[];
+  caveats: string[];
+}
+
+export interface WaveLlmValidatedClaim {
+  claimText: string;
+  claimType: string;
+  evidenceBasis: string;
+  confidence: number;
+  status: "accepted_for_review" | "rejected";
+  rejectionReason?: string | null;
+}
+
+export interface WaveLlmTaskSummary {
+  taskId: string;
+  monitorId: string;
+  taskType: string;
+  provider: string;
+  model: string;
+  status: string;
+  inputSummary: string;
+  sourceIds: string[];
+  recordIds: string[];
+  createdAt: string;
+  completedAt?: string | null;
+  caveats: string[];
+}
+
+export interface WaveLlmReviewSummary {
+  reviewId: string;
+  taskId: string;
+  monitorId: string;
+  provider: string;
+  model: string;
+  validationState: string;
+  claims: WaveLlmValidatedClaim[];
+  proposedActions: string[];
+  riskFlags: string[];
+  acceptedClaimCount: number;
+  rejectedClaimCount: number;
+  requiresHumanReview: boolean;
+  createdAt: string;
+  caveats: string[];
+}
+
+export interface WaveLlmReviewQueueItem {
+  task: WaveLlmTaskSummary;
+  review: WaveLlmReviewSummary;
+  sourceIds: string[];
+  recordIds: string[];
+  primarySourceId?: string | null;
+}
+
+export interface WaveLlmReviewQueueResponse {
+  metadata: Record<string, unknown>;
+  items: WaveLlmReviewQueueItem[];
+  guardrails: string[];
+}
+
+export type WaveLlmProvider =
+  | "fixture"
+  | "openai"
+  | "anthropic"
+  | "xai"
+  | "google"
+  | "openrouter"
+  | "ollama"
+  | "openclaw"
+  | "custom";
+
+export interface WaveLlmDefaultsSummary {
+  defaultProvider: WaveLlmProvider;
+  defaultModel: string;
+  allowNetworkDefault: boolean;
+  requestBudgetDefault: number;
+  maxRetriesDefault: number;
+  timeoutSecondsDefault: number;
+}
+
+export interface WaveLlmProviderConfigSummary {
+  provider: WaveLlmProvider;
+  configured: boolean;
+  keySource: string;
+  local: boolean;
+  adapterMode: string;
+  supportsApiKey: boolean;
+  supportsBaseUrl: boolean;
+  envFallbackConfigured: boolean;
+  maskedSecret?: string | null;
+  baseUrl?: string | null;
+  defaultModel?: string | null;
+  allowNetworkDefault?: boolean | null;
+  requestBudgetDefault?: number | null;
+  maxRetriesDefault?: number | null;
+  timeoutSecondsDefault?: number | null;
+  caveats: string[];
+}
+
+export interface WaveLlmMonitorPreferenceSummary {
+  monitorId: string;
+  monitorTitle: string;
+  provider?: WaveLlmProvider | null;
+  model?: string | null;
+  allowNetwork?: boolean | null;
+  requestBudget?: number | null;
+  maxRetries?: number | null;
+  timeoutSeconds?: number | null;
+  updatedAt: string;
+}
+
+export interface WaveLlmConfigResponse {
+  enabled: boolean;
+  configPath: string;
+  defaults: WaveLlmDefaultsSummary;
+  providers: WaveLlmProviderConfigSummary[];
+  monitorPreferences: WaveLlmMonitorPreferenceSummary[];
+  guardrails: string[];
+  caveats: string[];
+}
+
+export interface WaveLlmExecutionHistoryItem {
+  executionId: string;
+  taskId: string;
+  monitorId: string;
+  taskType: string;
+  provider: string;
+  model: string;
+  status: string;
+  adapterStatus: string;
+  allowNetwork: boolean;
+  requestBudget: number;
+  usedRequests: number;
+  retryCount: number;
+  timeoutSeconds: number;
+  createdAt: string;
+  reviewId?: string | null;
+  reviewValidationState?: string | null;
+  errorSummary?: string | null;
+  inputSummary: string;
+  caveats: string[];
+}
+
+export interface WaveLlmExecutionHistoryResponse {
+  metadata: Record<string, unknown>;
+  items: WaveLlmExecutionHistoryItem[];
+  guardrails: string[];
+}
+
+export interface WaveMonitorOverviewMonitorSummary {
+  monitorId: string;
+  title: string;
+}
+
+export interface WaveMonitorOverviewResponse {
+  monitors: WaveMonitorOverviewMonitorSummary[];
+}

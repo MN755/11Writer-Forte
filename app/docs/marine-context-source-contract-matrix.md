@@ -1,0 +1,211 @@
+# Marine Context Source Contract Matrix
+
+Marine subsystem only. This matrix records the backend contract expectations for currently implemented marine context sources.
+
+Interpretation rules:
+- These sources provide marine review context only.
+- They do not change marine anomaly scoring.
+- They must not be presented as proof of vessel behavior, intent, pollution impact, or health risk.
+
+| Source | Route | Source Category | Evidence Basis | Source Health Fields | Source Mode Field | Empty Behavior | Primary Observations / Events | Export Metadata Key | UI Card Exists? | Smoke Coverage Status | Caveats | Do-Not-Infer Rules |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| NOAA CO-OPS | `GET /api/marine/context/noaa-coops` | oceanographic / coastal observations | `observed` on `latestWaterLevel` and `latestCurrent` | `sourceHealth.sourceId`, `sourceLabel`, `enabled`, `health`, `loadedCount`, `lastFetchedAt`, `sourceGeneratedAt`, `detail`, `errorSummary`, `caveat` | `sourceHealth.sourceMode` | `count=0`, `stations=[]`, `sourceHealth.health=empty` | station metadata, latest water level, latest current | `marineAnomalySummary.noaaCoopsContext` | yes | contract-covered; marine-smoke-covered when shared frontend build is green | coastal context only; fixture/local explicit; emitted states: `loaded`, `empty`, `stale`, `disabled`, `unavailable` | do not infer vessel intent, AIS disablement, or route choice from tides/currents |
+| NOAA NDBC | `GET /api/marine/context/ndbc` | meteorological / wave observations | `observed` on `latestObservation` | `sourceHealth.sourceId`, `sourceLabel`, `enabled`, `health`, `loadedCount`, `lastFetchedAt`, `sourceGeneratedAt`, `detail`, `errorSummary`, `caveat` | `sourceHealth.sourceMode` | `count=0`, `stations=[]`, `sourceHealth.health=empty` | station metadata, latest wind/wave/pressure/temp observation | `marineAnomalySummary.ndbcContext` | yes | contract-covered; marine-smoke-covered when shared frontend build is green | environmental context only; fixture/local explicit; emitted states: `loaded`, `empty`, `stale`, `disabled`, `unavailable` | do not infer vessel intent, AIS disablement, or route choice from weather/wave conditions |
+| Scottish Water Overflows | `GET /api/marine/context/scottish-water-overflows` | coastal infrastructure status | `source-reported` on overflow events | `sourceHealth.sourceId`, `sourceLabel`, `enabled`, `health`, `loadedCount`, `lastFetchedAt`, `sourceGeneratedAt`, `detail`, `errorSummary`, `caveat` | `sourceHealth.sourceMode` | `count=0`, `activeCount=0`, `events=[]`, `sourceHealth.health=empty` | nearby overflow monitor activation/inactive/unknown status records | `marineAnomalySummary.scottishWaterOverflowContext` | yes | contract-covered; marine-smoke-covered when shared frontend build is green | source-reported infrastructure context only; fixture/local explicit; emitted states: `loaded`, `empty`, `stale`, `degraded`, `disabled`, `unavailable` | do not infer pollution impact, health risk, vessel behavior, or anomaly cause from overflow status |
+| USCG NAVTEX Broadcast Notices | `GET /api/marine/context/navtex` | maritime warning / advisory broadcast context | `advisory` on broadcast records | `sourceHealth.sourceId`, `sourceLabel`, `enabled`, `health`, `loadedCount`, `lastFetchedAt`, `sourceGeneratedAt`, `detail`, `errorSummary`, `caveat` | `sourceHealth.sourceMode` | `count=0`, `broadcasts=[]`, `sourceHealth.health=empty` | nearby NAVTEX-style broadcast notices by message family and approximate transmitter coverage | `marineAnomalySummary.navtexContext` | yes | backend-contract-covered; marine-smoke-covered | advisory warning context only; fixture/local explicit; emitted states: `loaded`, `empty`, `stale`, `degraded`, `disabled`, `unavailable` | do not infer closure certainty, legal status, required action, threat, vessel behavior, or vessel intent from NAVTEX text alone |
+| GEBCO Gridded Bathymetry | `GET /api/marine/context/gebco-bathymetry` | static seafloor / bathymetry context | `contextual` on bounded depth/elevation samples | `sourceHealth.sourceId`, `sourceLabel`, `enabled`, `health`, `loadedCount`, `lastFetchedAt`, `sourceGeneratedAt`, `detail`, `errorSummary`, `caveat` | `sourceHealth.sourceMode` | `count=0`, `samples=[]`, `sourceHealth.health=empty` | bounded sample-point bathymetry rows plus compact area summary from a pinned GEBCO grid version | `marineAnomalySummary.gebcoBathymetryContext` | yes | backend-contract-covered; marine-smoke-covered | static bathymetry context only; fixture/local explicit; emitted states: `loaded`, `empty`, `stale`, `disabled`, `unavailable` | do not infer route safety, closure truth, grounding risk, incident truth, vessel behavior, or action need from GEBCO depth/elevation samples alone |
+| France Vigicrues Hydrometry | `GET /api/marine/context/vigicrues-hydrometry` | hydrology / river conditions | `observed` on `latestObservation` | `sourceHealth.sourceId`, `sourceLabel`, `enabled`, `health`, `loadedCount`, `lastFetchedAt`, `sourceGeneratedAt`, `detail`, `errorSummary`, `caveat` | `sourceHealth.sourceMode` | `count=0`, `stations=[]`, `sourceHealth.health=empty` | bounded station metadata, latest realtime water-height or flow observation | `marineAnomalySummary.vigicruesHydrometryContext` | yes | backend-contract-covered; marine-smoke-covered | hydrology context only; fixture/local explicit; height and flow remain separate; emitted states: `loaded`, `empty`, `stale`, `degraded`, `disabled`, `unavailable` | do not infer flood impact, inundation, damage, pollution impact, or vessel behavior from station values alone |
+| Ireland OPW Water Level | `GET /api/marine/context/ireland-opw-waterlevel` | hydrology / river conditions | `observed` on `latestReading` | `sourceHealth.sourceId`, `sourceLabel`, `enabled`, `health`, `loadedCount`, `lastFetchedAt`, `sourceGeneratedAt`, `detail`, `errorSummary`, `caveat` | `sourceHealth.sourceMode` | `count=0`, `stations=[]`, `sourceHealth.health=empty` | station metadata, latest published water-level reading | `marineAnomalySummary.irelandOpwWaterLevelContext` | yes | backend-contract-covered; marine-smoke-covered | provisional hydrology context only; fixture/local explicit; emitted states: `loaded`, `empty`, `stale`, `degraded`, `disabled`, `unavailable` | do not infer flooding, inundation, damage, contamination, or vessel behavior from station values alone |
+| Netherlands RWS Waterinfo | `GET /api/marine/context/netherlands-rws-waterinfo` | hydrology / water-level conditions | `observed` on `latestObservation` | `sourceHealth.sourceId`, `sourceLabel`, `enabled`, `health`, `loadedCount`, `lastFetchedAt`, `sourceGeneratedAt`, `detail`, `errorSummary`, `caveat` | `sourceHealth.sourceMode` | `count=0`, `stations=[]`, `sourceHealth.health=empty` | bounded station metadata plus latest water-level observation from the official WaterWebservices POST family | `marineAnomalySummary.netherlandsRwsWaterinfoContext` | yes | backend-contract-covered; export-metadata-covered; helper-regression-covered | bounded WaterWebservices slice only; fixture/local explicit; emitted states: `loaded`, `empty`, `stale`, `degraded`, `disabled`, `unavailable` | do not infer flood impact, navigation safety, operational failure, or vessel behavior from station values alone |
+
+## Required Backend Contract Guarantees
+
+- Fixture/local mode must be explicit for all eight sources when running in fixture mode.
+- Disabled/non-fixture mode must return a disabled health state rather than fabricating live behavior.
+- Empty nearby results must return `health=empty`, not `error`.
+- Source-level caveats must remain present for all eight sources.
+- Event/observation-level caveats must remain present where fixture records include them.
+- CO-OPS and NDBC observations must keep `observed` evidence basis semantics.
+- GEBCO bounded bathymetry samples must keep `contextual` evidence basis semantics.
+- Ireland OPW, Vigicrues, and Netherlands RWS Waterinfo hydrology observations must keep `observed` evidence basis semantics.
+- Scottish Water overflow events must keep `source-reported` / contextual infrastructure semantics.
+- NAVTEX broadcast notices must keep `advisory` warning-context semantics.
+
+## Current Source-Health State Boundary
+
+The source-health models allow broader states such as `stale`, `error`, and `unknown`, but the current deterministic marine context services do not honestly synthesize those states in fixture mode.
+
+Current backend truth:
+- fixture mode can emit:
+  - `loaded`
+  - `empty`
+  - `stale`
+- non-fixture / unimplemented mode emits:
+  - `disabled`
+- `degraded` is currently emitted only for:
+  - Scottish Water Overflows
+  - USCG NAVTEX Broadcast Notices
+  - France Vigicrues Hydrometry
+  - Ireland OPW Water Level
+  - Netherlands RWS Waterinfo
+- `unavailable` is currently emitted for all eight sources when source retrieval fails
+
+This is intentional in the current slice:
+- stale is based on returned observation/update timestamps, not fetch-time theater
+- unavailable is based on actual source retrieval failure within the backend service path
+- degraded is only emitted where returned records carry real partial-metadata evidence at the source-health layer
+- CO-OPS and NDBC still do not emit `degraded` because their current fixture slices do not have an honest partial-ingest/source-quality degradation signal
+
+## Downstream Export / Reporting Consumers
+
+- `marineAnomalySummary.sourceHealthExportCoherence` remains the source-row timestamp/mode/health export substrate for marine-local reporting packages.
+- `marineAnomalySummary.hydrologySourceHealthReport` preserves the hydrology/ocean-met review posture, including explicit Vigicrues status carry-through.
+- `marineAnomalySummary.corridorReviewPackage` preserves corridor/chokepoint review posture and bounded replay/context counts.
+- `marineAnomalySummary.fusionSnapshotInput` composes those existing surfaces into one export-only reporting input without merging source families into anomaly severity or intent evidence.
+- `marineAnomalySummary.reportBriefPackage` converts the fusion snapshot input into stable `observe / orient / prioritize / explain` report sections while keeping Vigicrues and Waterinfo workflow-evidence wording bounded to source-health/export-path confirmation only.
+- `marineAnomalySummary.corridorSituationPackage` converts the current reporting stack into a corridor-focused situation artifact while keeping corridor/chokepoint, hydrology, ocean/met, and infrastructure context bounded to source-health-aware review/reporting evidence only.
+- `marineAnomalySummary.hydrologyRegionalComparisonPackage` converts the current hydrology/reporting stack into a bounded regional comparison artifact while keeping Vigicrues, Waterinfo, OPW, and related hydrology context bounded to source-health/workflow-evidence comparison only.
+- `marineAnomalySummary.currentAwarenessDigest` converts the existing marine reporting stack into one bounded open-ended digest while keeping corridor/chokepoint, hydrology, source-health, and workflow-evidence posture bounded to review/reporting context only.
+- `marineAnomalySummary.sourceRowWorkflowClosurePacket` converts the existing marine reporting stack into one bounded source-row/export-coherence packet while keeping source rows, corridor/chokepoint posture, hydrology posture, and workflow-evidence posture bounded to review/reporting context only.
+- `marineAnomalySummary.questionBriefingPacket` converts the existing marine reporting stack into one bounded question-driven briefing packet while keeping question posture, source rows, corridor/chokepoint posture, hydrology posture, workflow-evidence posture, and export-coherence posture bounded to review/reporting context only.
+
+## Fixture Completeness Notes
+
+### NOAA CO-OPS
+
+- fixture includes:
+  - water-level-only station
+  - current-only station
+  - mixed station
+  - coastal station with limited scope caveat
+- empty/no-match behavior is exercised by distant coordinate queries
+- disabled behavior is exercised by non-fixture source mode
+
+### NOAA NDBC
+
+- fixture includes:
+  - offshore buoy records
+  - coastal marine station record
+  - wind/wave/pressure/temp sample observations
+- empty/no-match behavior is exercised by distant coordinate queries
+- disabled behavior is exercised by non-fixture source mode
+
+### Scottish Water Overflows
+
+- fixture includes:
+  - one active monitor
+  - one inactive / recently ended monitor
+  - one partial-metadata record with missing coordinates
+- empty/no-match behavior is exercised by distant coordinate queries
+- disabled behavior is exercised by non-fixture source mode
+
+### France Vigicrues Hydrometry
+
+- fixture includes:
+  - one latest water-height station record
+  - one latest flow station record
+  - one partial-metadata station with missing `river_basin`
+- empty/no-match behavior is exercised by distant coordinate queries
+- disabled behavior is exercised by non-fixture source mode
+- parameter-family filtering is exercised so water height and flow are not conflated
+
+### Ireland OPW Water Level
+
+- fixture includes:
+  - one latest water-level station on River Feale
+  - one latest water-level station on River Blackwater
+  - one partial-metadata station with missing `waterbody`
+- empty/no-match behavior is exercised by distant coordinate queries
+- disabled behavior is exercised by non-fixture source mode
+- reading timestamp and fetch time remain separate so provisional publication timing is preserved
+
+### Netherlands RWS Waterinfo
+
+- fixture includes:
+  - one Hoek van Holland water-level station
+  - one IJmuiden station with prompt-like source text preserved as inert metadata
+  - one Dordrecht partial-metadata station with missing `water_body` and `unit_label`
+- empty/no-match behavior is exercised by distant coordinate queries
+- disabled behavior is exercised by non-fixture source mode
+- latest observation provenance remains pinned to the official WaterWebservices POST endpoint family only
+
+### USCG NAVTEX Broadcast Notices
+
+- fixture includes:
+  - one Miami meteorological-warning broadcast
+  - one Portsmouth navigational-warning broadcast
+  - one Honolulu partial-metadata broadcast with missing `subjectLabel`
+- empty/no-match behavior is exercised by distant coordinate queries
+- disabled behavior is exercised by non-fixture source mode
+- message-family filtering is exercised so navigational, meteorological, SAR, forecast, and other subjects are not conflated
+- official live URL family remains bounded to NAVCEN-published GovDelivery RSS feeds only
+
+### GEBCO Gridded Bathymetry
+
+- fixture includes:
+  - one Galveston shelf sample around `-14.0 m`
+  - one deeper Galveston shelf sample around `-28.0 m`
+  - one deeper offshore shelf sample around `-41.0 m`
+- empty/no-match behavior is exercised by distant coordinate queries
+- disabled behavior is exercised by non-fixture source mode
+- area-summary behavior is exercised so center/min/max elevation and undersea counts stay export-visible
+- pinned provenance remains bounded to:
+  - `https://www.gebco.net/data-products/gridded-bathymetry-data`
+  - `https://download.gebco.net/downloads`
+
+## Validation Boundary
+
+Backend contract coverage can be validated independently with:
+
+```bash
+python -m pytest app/server/tests/test_marine_contracts.py -q
+python -m compileall app/server/src
+```
+
+Frontend smoke/build confirmation remains a separate layer and may depend on Connect AI clearing repo-wide frontend blockers.
+
+Current deterministic marine smoke fixture posture:
+- `Scottish Water Overflows` is surfaced as a degraded workflow example so marine export/source-summary paths visibly preserve partial-metadata limitations
+- `France Vigicrues Hydrometry` is surfaced as an unavailable workflow example so marine export/source-summary paths visibly preserve missing-context semantics
+- `Ireland OPW Water Level` is surfaced as an additional degraded workflow example so review/report helpers see a source mix where degraded/unavailable context dominates loaded context
+- `USCG NAVTEX Broadcast Notices` is surfaced through marine-local card, source-summary, fusion, and export metadata assertions as advisory warning context only
+- `GEBCO Gridded Bathymetry` is surfaced through a dedicated marine-local card and export metadata assertions as static seafloor context only
+- these smoke examples do not change the backend contract truth for the source families; they only ensure degraded/unavailable states stay visible in marine-owned workflow surfaces
+- Netherlands RWS Waterinfo, NAVTEX, and GEBCO all now have marine-local cards plus dedicated export metadata assertions in the current smoke slice
+
+## Downstream Fusion / Review Consumers
+
+These frontend-local marine helpers do not define new backend routes, but they depend on the source contracts above remaining stable:
+
+- `app/client/src/features/marine/marineContextFusionSummary.ts`
+  - consumes combined environmental context, hydrology context, Scottish Water context, source-summary rows, and issue-queue output
+  - exports `marineAnomalySummary.contextFusionSummary`
+- `app/client/src/features/marine/marineContextReviewReport.ts`
+  - consumes context-fusion summary plus issue-queue output
+  - exports `marineAnomalySummary.contextReviewReport`
+  - when degraded/unavailable source-health dominates the current source mix, review phrasing must remain `partial context` / `review caveat` only and must not imply event severity, impact, anomaly cause, vessel behavior, or wrongdoing
+- `app/client/src/features/marine/marineContextIssueExportBundle.ts`
+  - consumes source-summary rows plus issue-queue output
+  - exports `marineAnomalySummary.contextIssueExportBundle`
+  - must preserve source family distinctions, allowed review actions, and `does not prove` guardrails without turning source-health limitations into severity or impact language
+- `app/client/src/features/marine/marineSourceHealthExportCoherence.ts`
+  - consumes CO-OPS, NDBC, Vigicrues, Ireland OPW, and Netherlands RWS Waterinfo summary metadata
+  - exports `marineAnomalySummary.sourceHealthExportCoherence`
+  - must stay bounded to current export-safe metadata such as source mode, source health, evidence basis, nearby counts, latest timestamp posture, and caveats
+- `app/client/src/features/marine/marineHydrologySourceHealthWorkflow.ts`
+  - consumes `marineSourceHealthExportCoherence` output
+  - exports `marineAnomalySummary.hydrologySourceHealthWorkflow`
+  - must keep hydrology rows distinct from CO-OPS/NDBC comparison rows and must not imply flood impact, anomaly cause, navigation safety, vessel behavior, or vessel intent
+- `app/client/src/features/marine/marineHydrologySourceHealthReport.ts`
+  - consumes `marineHydrologySourceHealthWorkflow` output
+  - exports `marineAnomalySummary.hydrologySourceHealthReport`
+  - must preserve source mode, source health, evidence basis, latest timestamp posture, station/observation counts, family grouping, and explicit Vigicrues row/status-line coherence without adding behavioral, impact, or severity claims
+- `app/client/src/features/marine/marineCorridorReviewPackage.ts`
+  - consumes `marineChokepointReviewPackage`, source-summary rows, environmental context, hydrology context, and hydrology/source-health report output
+  - exports `marineAnomalySummary.corridorReviewPackage`
+  - must preserve corridor label, bounded-area label, replay/gap review counts, source ids/modes/health/evidence basis/caveats, explicit Vigicrues row/status-line coherence, and review-only export lines without adding geopolitical, behavioral, impact, or action-need claims
+
+Contract implication:
+- if any source above loses required source health, source mode, caveat, or evidence-basis semantics, the fusion/review package becomes less trustworthy even if the frontend still renders
+- if any source above loses category, evidence-basis, or caveat truth, the issue export bundle becomes less trustworthy even if the frontend still renders
+- shared frontend smoke should re-confirm these downstream helpers only after Connect AI clears repo-wide build blockers
