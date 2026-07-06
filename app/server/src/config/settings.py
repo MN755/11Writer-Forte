@@ -8,13 +8,13 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
     app_env: str = Field(default="development", alias="APP_ENV")
-    app_runtime_mode: str = Field(default="desktop-sidecar", alias="APP_RUNTIME_MODE")
+    app_runtime_mode: str = Field(default="backend-only", alias="APP_RUNTIME_MODE")
     app_resource_dir: str | None = Field(default=None, alias="APP_RESOURCE_DIR")
     app_user_data_dir: str | None = Field(default=None, alias="APP_USER_DATA_DIR")
     app_log_dir: str | None = Field(default=None, alias="APP_LOG_DIR")
     app_cache_dir: str | None = Field(default=None, alias="APP_CACHE_DIR")
     app_runtime_service_dir: str | None = Field(default=None, alias="APP_RUNTIME_SERVICE_DIR")
-    app_cors_origins: str = Field(default="http://localhost:5173", alias="APP_CORS_ORIGINS")
+    app_cors_origins: str = Field(default="", alias="APP_CORS_ORIGINS")
     google_maps_api_key: str | None = Field(default=None, alias="GOOGLE_MAPS_API_KEY")
     cache_ttl_seconds: int = Field(default=60, alias="CACHE_TTL_SECONDS")
     opensky_base_url: str = Field(

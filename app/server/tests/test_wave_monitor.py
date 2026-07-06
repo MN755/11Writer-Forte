@@ -67,7 +67,7 @@ def test_wave_monitor_overview_exposes_7po8_as_11writer_tool_not_runtime(tmp_pat
     assert payload["runtime"]["standaloneRuntimeEnabled"] is False
     assert payload["runtime"]["routePrefix"] == "/api/tools/waves"
     assert payload["runtime"]["storageMode"] == "persistent-sqlite"
-    assert payload["runtime"]["schedulerMode"] == "manual"
+    assert payload["runtime"]["schedulerMode"] == "backend-only-ready"
     assert "not mounted" in " ".join(payload["runtime"]["caveats"]).lower()
     assert payload["summary"]["totalMonitors"] == 2
     assert payload["summary"]["activeMonitors"] == 1

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import signal
+from collections.abc import Sequence
 
 from src.config.settings import get_settings
 from src.services.runtime_scheduler_service import (
@@ -80,9 +81,13 @@ def _install_signal_handlers(stop_event: asyncio.Event) -> None:
             continue
 
 
-def main() -> None:
-    args = build_parser().parse_args()
+def run_cli(argv: Sequence[str] | None = None) -> None:
+    args = build_parser().parse_args(list(argv) if argv is not None else None)
     asyncio.run(_run(args.worker, once=args.once, loop=args.loop))
+
+
+def main() -> None:
+    run_cli()
 
 
 if __name__ == "__main__":

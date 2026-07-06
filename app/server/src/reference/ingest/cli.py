@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Sequence
 from pathlib import Path
 
 from src.reference.db import session_scope
@@ -10,7 +11,7 @@ from src.reference.ingest.staging import prepare_source
 from src.reference.repository import ReferenceRepository
 
 
-def main() -> None:
+def run_cli(argv: Sequence[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Ingest canonical geospatial reference datasets.")
     parser.add_argument("dataset", choices=sorted(PARSERS.keys()))
     parser.add_argument("source_path", help="Directory containing dataset files.")
@@ -21,7 +22,7 @@ def main() -> None:
     parser.add_argument("--source-mode", choices=["local", "remote"], default="local")
     parser.add_argument("--remote-url", default=None)
     parser.add_argument("--staging-root", default="./data/reference_staging")
-    args = parser.parse_args()
+    args = parser.parse_args(list(argv) if argv is not None else None)
 
     manifest = DatasetManifest(
         name=args.dataset,
@@ -49,6 +50,10 @@ def main() -> None:
             notes=f"Loaded via {args.dataset} CLI importer.",
         )
     print(f"Ingested {count} records from {args.dataset}.")
+
+
+def main() -> None:
+    run_cli()
 
 
 if __name__ == "__main__":

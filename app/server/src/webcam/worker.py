@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from collections.abc import Sequence
 
 from src.config.settings import get_settings
 from src.webcam.refresh import WebcamRefreshService, WebcamWorker
@@ -46,9 +47,13 @@ async def _run(once: bool, loop: bool, validate_live: bool, source: list[str], i
     await worker.run_loop()
 
 
-def main() -> None:
-    args = build_parser().parse_args()
+def run_cli(argv: Sequence[str] | None = None) -> None:
+    args = build_parser().parse_args(list(argv) if argv is not None else None)
     asyncio.run(_run(args.once, args.loop, args.validate_live, args.source, args.include_blocked))
+
+
+def main() -> None:
+    run_cli()
 
 
 if __name__ == "__main__":

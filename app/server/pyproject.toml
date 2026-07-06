@@ -3,9 +3,9 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "worldview-simulator-server"
+name = "elevenwriter-forte-backend"
 version = "0.1.0"
-description = "FastAPI foundation for the spatial intelligence simulator"
+description = "Backend-only 11Writer Forte runtime and CLI"
 requires-python = ">=3.10"
 dependencies = [
   "alembic>=1.13.2",
@@ -18,6 +18,9 @@ dependencies = [
   "sgp4>=2.23",
   "uvicorn>=0.30.1"
 ]
+
+[project.scripts]
+11writer = "src.cli:main"
 
 [project.optional-dependencies]
 dev = [

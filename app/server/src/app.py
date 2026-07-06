@@ -109,18 +109,19 @@ def create_application() -> FastAPI:
     settings = get_settings()
     configure_runtime_scheduler_state(settings)
     application = FastAPI(
-        title="WorldView Spatial Intelligence Simulator API",
+        title="11Writer Forte Backend API",
         version="0.1.0",
         lifespan=_lifespan,
     )
 
-    application.add_middleware(
-        CORSMiddleware,
-        allow_origins=settings.cors_origins,
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+    if settings.cors_origins:
+        application.add_middleware(
+            CORSMiddleware,
+            allow_origins=settings.cors_origins,
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
 
     application.include_router(health_router)
     application.include_router(config_router)
