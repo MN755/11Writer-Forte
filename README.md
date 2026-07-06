@@ -27,6 +27,19 @@ That surface currently includes:
 - wave-level trust overrides
 - policy-action history
 
+## Unified Intel Core
+
+The backend now also exposes a unified intelligence substrate at `/api/intel/*` for:
+
+- sources and trust metadata
+- entities and entity-resolution records
+- events and observations
+- geofences and alert records
+- chain-of-custody records
+- rule-based confidence assessments
+- cited summaries and report artifacts
+- local file intake for JSON, text-like files, and SQLite datasets
+
 ## Runtime Principles
 
 - Backend-first and CLI-first
@@ -87,6 +100,9 @@ python -m src.cli forte-worker --interval-seconds 30
 - `11writer config`
 - `11writer routes`
 - `11writer doctor`
+- `11writer intel-overview`
+- `11writer ingest-file`
+- `11writer evaluate-alerts`
 
 ## Key Environment Variables
 
@@ -94,7 +110,7 @@ python -m src.cli forte-worker --interval-seconds 30
 - `APP_BIND_HOST=127.0.0.1`
 - `APP_BIND_PORT=8000`
 - `APP_API_TOKEN=` optional bearer token
-- `DATABASE_URL=postgresql+psycopg://11writer:11writer@127.0.0.1:5432/11writer`
+- `DATABASE_URL=postgresql+psycopg://11writer:11writer@127.0.0.1:5432/11writer?connect_timeout=3`
 - `REFERENCE_DATABASE_URL=` optional subsystem override
 - `SOURCE_DISCOVERY_DATABASE_URL=` optional subsystem override
 - `WAVE_MONITOR_DATABASE_URL=` optional subsystem override

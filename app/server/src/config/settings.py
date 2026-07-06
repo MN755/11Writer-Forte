@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     app_runtime_service_dir: str | None = Field(default=None, alias="APP_RUNTIME_SERVICE_DIR")
     app_cors_origins: str = Field(default="", alias="APP_CORS_ORIGINS")
     database_url: str = Field(
-        default="postgresql+psycopg://11writer:11writer@127.0.0.1:5432/11writer",
+        default="postgresql+psycopg://11writer:11writer@127.0.0.1:5432/11writer?connect_timeout=3",
         alias="DATABASE_URL",
     )
     google_maps_api_key: str | None = Field(default=None, alias="GOOGLE_MAPS_API_KEY")
@@ -185,7 +185,7 @@ class Settings(BaseSettings):
     windy_webcams_api_key: str | None = Field(default=None, alias="WINDY_WEBCAMS_API_KEY")
     windy_webcams_base_url: str = Field(default="https://api.windy.com/api/webcams/v2", alias="WINDY_WEBCAMS_BASE_URL")
     reference_database_url: str = Field(
-        default="postgresql+psycopg://11writer:11writer@127.0.0.1:5432/11writer",
+        default="postgresql+psycopg://11writer:11writer@127.0.0.1:5432/11writer?connect_timeout=3",
         alias="REFERENCE_DATABASE_URL",
     )
     ourairports_reference_source_mode: str = Field(
@@ -1269,7 +1269,7 @@ class Settings(BaseSettings):
         alias="USASPENDING_HTTP_TIMEOUT_SECONDS",
     )
     wave_monitor_database_url: str = Field(
-        default="postgresql+psycopg://11writer:11writer@127.0.0.1:5432/11writer",
+        default="postgresql+psycopg://11writer:11writer@127.0.0.1:5432/11writer?connect_timeout=3",
         alias="WAVE_MONITOR_DATABASE_URL",
     )
     wave_monitor_http_timeout_seconds: int = Field(
@@ -1277,7 +1277,7 @@ class Settings(BaseSettings):
         alias="WAVE_MONITOR_HTTP_TIMEOUT_SECONDS",
     )
     source_discovery_database_url: str = Field(
-        default="postgresql+psycopg://11writer:11writer@127.0.0.1:5432/11writer",
+        default="postgresql+psycopg://11writer:11writer@127.0.0.1:5432/11writer?connect_timeout=3",
         alias="SOURCE_DISCOVERY_DATABASE_URL",
     )
     source_discovery_scheduler_enabled: bool = Field(default=False, alias="SOURCE_DISCOVERY_SCHEDULER_ENABLED")
