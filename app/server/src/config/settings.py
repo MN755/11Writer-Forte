@@ -8,13 +8,20 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
     app_env: str = Field(default="development", alias="APP_ENV")
-    app_runtime_mode: str = Field(default="desktop-sidecar", alias="APP_RUNTIME_MODE")
+    app_runtime_mode: str = Field(default="backend-only", alias="APP_RUNTIME_MODE")
+    app_bind_host: str = Field(default="127.0.0.1", alias="APP_BIND_HOST")
+    app_bind_port: int = Field(default=8000, alias="APP_BIND_PORT")
+    app_api_token: str | None = Field(default=None, alias="APP_API_TOKEN")
     app_resource_dir: str | None = Field(default=None, alias="APP_RESOURCE_DIR")
     app_user_data_dir: str | None = Field(default=None, alias="APP_USER_DATA_DIR")
     app_log_dir: str | None = Field(default=None, alias="APP_LOG_DIR")
     app_cache_dir: str | None = Field(default=None, alias="APP_CACHE_DIR")
     app_runtime_service_dir: str | None = Field(default=None, alias="APP_RUNTIME_SERVICE_DIR")
-    app_cors_origins: str = Field(default="http://localhost:5173", alias="APP_CORS_ORIGINS")
+    app_cors_origins: str = Field(default="", alias="APP_CORS_ORIGINS")
+    database_url: str = Field(
+        default="postgresql+psycopg://11writer:11writer@127.0.0.1:5432/11writer",
+        alias="DATABASE_URL",
+    )
     google_maps_api_key: str | None = Field(default=None, alias="GOOGLE_MAPS_API_KEY")
     cache_ttl_seconds: int = Field(default=60, alias="CACHE_TTL_SECONDS")
     opensky_base_url: str = Field(
@@ -177,7 +184,10 @@ class Settings(BaseSettings):
     )
     windy_webcams_api_key: str | None = Field(default=None, alias="WINDY_WEBCAMS_API_KEY")
     windy_webcams_base_url: str = Field(default="https://api.windy.com/api/webcams/v2", alias="WINDY_WEBCAMS_BASE_URL")
-    reference_database_url: str = Field(default="sqlite:///./data/reference.db", alias="REFERENCE_DATABASE_URL")
+    reference_database_url: str = Field(
+        default="postgresql+psycopg://11writer:11writer@127.0.0.1:5432/11writer",
+        alias="REFERENCE_DATABASE_URL",
+    )
     ourairports_reference_source_mode: str = Field(
         default="fixture",
         alias="OURAIRPORTS_REFERENCE_SOURCE_MODE",
@@ -1259,7 +1269,7 @@ class Settings(BaseSettings):
         alias="USASPENDING_HTTP_TIMEOUT_SECONDS",
     )
     wave_monitor_database_url: str = Field(
-        default="sqlite:///./data/wave_monitor.db",
+        default="postgresql+psycopg://11writer:11writer@127.0.0.1:5432/11writer",
         alias="WAVE_MONITOR_DATABASE_URL",
     )
     wave_monitor_http_timeout_seconds: int = Field(
@@ -1267,7 +1277,7 @@ class Settings(BaseSettings):
         alias="WAVE_MONITOR_HTTP_TIMEOUT_SECONDS",
     )
     source_discovery_database_url: str = Field(
-        default="sqlite:///./data/source_discovery.db",
+        default="postgresql+psycopg://11writer:11writer@127.0.0.1:5432/11writer",
         alias="SOURCE_DISCOVERY_DATABASE_URL",
     )
     source_discovery_scheduler_enabled: bool = Field(default=False, alias="SOURCE_DISCOVERY_SCHEDULER_ENABLED")

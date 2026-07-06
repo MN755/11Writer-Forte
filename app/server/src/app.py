@@ -2,11 +2,33 @@ import asyncio
 import warnings
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic.warnings import UnsupportedFieldAttributeWarning
 
 from src.config.settings import get_settings
+from src.forte.api.connectors import root_router as forte_connector_root_router
+from src.forte.api.connectors import router as forte_connector_router
+from src.forte.api.discovery import root_router as forte_discovery_root_router
+from src.forte.api.discovery import wave_router as forte_discovery_wave_router
+from src.forte.api.domain_trust import router as forte_domain_trust_router
+from src.forte.api.health import router as forte_health_router
+from src.forte.api.policy_actions import source_router as forte_source_policy_action_router
+from src.forte.api.policy_actions import wave_router as forte_wave_policy_action_router
+from src.forte.api.records import router as forte_record_router
+from src.forte.api.runs import connector_router as forte_connector_run_router
+from src.forte.api.runs import wave_router as forte_wave_run_router
+from src.forte.api.scheduler import router as forte_scheduler_router
+from src.forte.api.signals import connector_router as forte_connector_signal_router
+from src.forte.api.signals import root_router as forte_signal_root_router
+from src.forte.api.signals import wave_router as forte_wave_signal_router
+from src.forte.api.wave_trust_overrides import root_router as forte_wave_trust_override_root_router
+from src.forte.api.wave_trust_overrides import wave_router as forte_wave_trust_override_wave_router
+from src.forte.api.waves import router as forte_wave_router
+from src.forte.api.deps import db as forte_db
+from src.forte.core.settings import settings as forte_settings
+from src.forte.db.init_db import init_db as init_forte_db
 from src.routes.aircraft import router as aircraft_router
 from src.routes.analyst import router as analyst_router
 from src.routes.anchorage_vaac import router as anchorage_vaac_router
@@ -17,14 +39,12 @@ from src.routes.catchments_context import router as catchments_context_router
 from src.routes.cisa_cyber_advisories import router as cisa_cyber_advisories_router
 from src.routes.cisa_kev import router as cisa_kev_router
 from src.routes.cneos import router as cneos_router
-from src.routes.config import router as config_router
 from src.routes.data_ai_feeds import router as data_ai_feeds_router
 from src.routes.environmental_context import router as environmental_context_router
 from src.routes.events import router as events_router
 from src.routes.faa_nas_status import router as faa_nas_status_router
 from src.routes.fire_weather_context import router as fire_weather_context_router
 from src.routes.feeds import router as feeds_router
-from src.routes.features import router as features_router
 from src.routes.geomagnetism import router as geomagnetism_router
 from src.routes.gpsjam import router as gpsjam_router
 from src.routes.health import router as health_router
@@ -45,7 +65,6 @@ from src.routes.source_discovery import router as source_discovery_router
 from src.routes.swpc import router as swpc_router
 from src.routes.tokyo_vaac import router as tokyo_vaac_router
 from src.routes.washington_vaac import router as washington_vaac_router
-from src.routes.wave_llm import router as wave_llm_router
 from src.routes.wave_monitor import router as wave_monitor_router
 from src.routes.water_quality_context import router as water_quality_context_router
 from src.routes.weather_context import router as weather_context_router
@@ -64,6 +83,7 @@ warnings.filterwarnings("ignore", category=UnsupportedFieldAttributeWarning)
 @asynccontextmanager
 async def _lifespan(_: FastAPI):
     settings = get_settings()
+    init_forte_db(forte_db)
     stop_event: asyncio.Event | None = None
     worker_task: asyncio.Task[None] | None = None
     source_discovery_stop_event: asyncio.Event | None = None
@@ -109,21 +129,29 @@ def create_application() -> FastAPI:
     settings = get_settings()
     configure_runtime_scheduler_state(settings)
     application = FastAPI(
-        title="WorldView Spatial Intelligence Simulator API",
+        title="11Writer Forte Backend API",
         version="0.1.0",
         lifespan=_lifespan,
     )
 
-    application.add_middleware(
-        CORSMiddleware,
-        allow_origins=settings.cors_origins,
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+    if settings.cors_origins:
+        application.add_middleware(
+            CORSMiddleware,
+            allow_origins=settings.cors_origins,
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+
+    @application.middleware("http")
+    async def _require_api_token(request: Request, call_next):
+        if settings.app_api_token and request.url.path != "/health":
+            expected = f"Bearer {settings.app_api_token}"
+            if request.headers.get("authorization") != expected:
+                return JSONResponse(status_code=401, content={"detail": "Missing or invalid API token."})
+        return await call_next(request)
 
     application.include_router(health_router)
-    application.include_router(config_router)
     application.include_router(base_earth_context_router)
     application.include_router(catchments_context_router)
     application.include_router(cisa_cyber_advisories_router)
@@ -133,7 +161,6 @@ def create_application() -> FastAPI:
     application.include_router(events_router)
     application.include_router(fire_weather_context_router)
     application.include_router(feeds_router)
-    application.include_router(features_router)
     application.include_router(first_epss_router)
     application.include_router(geomagnetism_router)
     application.include_router(status_router)
@@ -163,6 +190,23 @@ def create_application() -> FastAPI:
     application.include_router(nvd_cve_router)
     application.include_router(cameras_router)
     application.include_router(wave_monitor_router)
-    application.include_router(wave_llm_router)
+    application.include_router(forte_health_router, prefix=forte_settings.api_prefix)
+    application.include_router(forte_wave_router, prefix=forte_settings.api_prefix)
+    application.include_router(forte_connector_router, prefix=forte_settings.api_prefix)
+    application.include_router(forte_connector_root_router, prefix=forte_settings.api_prefix)
+    application.include_router(forte_record_router, prefix=forte_settings.api_prefix)
+    application.include_router(forte_wave_run_router, prefix=forte_settings.api_prefix)
+    application.include_router(forte_connector_run_router, prefix=forte_settings.api_prefix)
+    application.include_router(forte_scheduler_router, prefix=forte_settings.api_prefix)
+    application.include_router(forte_wave_signal_router, prefix=forte_settings.api_prefix)
+    application.include_router(forte_connector_signal_router, prefix=forte_settings.api_prefix)
+    application.include_router(forte_signal_root_router, prefix=forte_settings.api_prefix)
+    application.include_router(forte_discovery_wave_router, prefix=forte_settings.api_prefix)
+    application.include_router(forte_discovery_root_router, prefix=forte_settings.api_prefix)
+    application.include_router(forte_domain_trust_router, prefix=forte_settings.api_prefix)
+    application.include_router(forte_wave_trust_override_wave_router, prefix=forte_settings.api_prefix)
+    application.include_router(forte_wave_trust_override_root_router, prefix=forte_settings.api_prefix)
+    application.include_router(forte_wave_policy_action_router, prefix=forte_settings.api_prefix)
+    application.include_router(forte_source_policy_action_router, prefix=forte_settings.api_prefix)
 
     return application
