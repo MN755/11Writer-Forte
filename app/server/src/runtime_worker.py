@@ -6,13 +6,14 @@ import signal
 
 from src.config.settings import get_settings
 from src.services.runtime_scheduler_service import (
+    WORKER_INTEL_EVENT_SYNC,
     RuntimeSchedulerCoordinator,
     WORKER_SOURCE_DISCOVERY,
     WORKER_WAVE_MONITOR,
 )
 
 
-WORKER_CHOICES = [WORKER_SOURCE_DISCOVERY, WORKER_WAVE_MONITOR, "all"]
+WORKER_CHOICES = [WORKER_SOURCE_DISCOVERY, WORKER_WAVE_MONITOR, WORKER_INTEL_EVENT_SYNC, "all"]
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -21,7 +22,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--worker",
         choices=WORKER_CHOICES,
         default="all",
-        help="Choose one worker or run both together.",
+        help="Choose one worker or run all configured workers together.",
     )
     parser.add_argument("--once", action="store_true", help="Run one bounded cycle and exit.")
     parser.add_argument("--loop", action="store_true", help="Run continuously until stopped.")
@@ -49,6 +50,8 @@ async def _run_once(coordinator: RuntimeSchedulerCoordinator, worker: str) -> No
         await coordinator.run_source_discovery_cycle()
     if worker in {WORKER_WAVE_MONITOR, "all"}:
         await coordinator.run_wave_monitor_cycle()
+    if worker in {WORKER_INTEL_EVENT_SYNC, "all"}:
+        await coordinator.run_intel_event_sync_cycle()
 
 
 def _loop_tasks(
@@ -61,6 +64,8 @@ def _loop_tasks(
         tasks.append(asyncio.create_task(coordinator.source_discovery_loop(stop_event=stop_event)))
     if worker in {WORKER_WAVE_MONITOR, "all"}:
         tasks.append(asyncio.create_task(coordinator.wave_monitor_loop(stop_event=stop_event)))
+    if worker in {WORKER_INTEL_EVENT_SYNC, "all"}:
+        tasks.append(asyncio.create_task(coordinator.intel_event_sync_loop(stop_event=stop_event)))
     return tasks
 
 

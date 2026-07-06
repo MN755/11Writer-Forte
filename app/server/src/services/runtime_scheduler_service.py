@@ -15,6 +15,10 @@ from uuid import uuid4
 from sqlalchemy import select
 
 from src.config.settings import Settings
+from src.intel.db import db as intel_db
+from src.intel.event_sync import EventFeedSyncService
+from src.intel.models import EventFeedSyncRequest
+from src.intel.service import IntelService
 from src.services.runtime_paths import ensure_runtime_service_artifact_dir, resolve_runtime_paths
 from src.services.source_discovery_service import SourceDiscoveryService
 from src.services.wave_monitor_service import WaveMonitorService
@@ -46,6 +50,7 @@ from src.types.source_discovery import (
 
 WORKER_SOURCE_DISCOVERY = "source_discovery"
 WORKER_WAVE_MONITOR = "wave_monitor"
+WORKER_INTEL_EVENT_SYNC = "intel_event_sync"
 PROCESS_OWNER = f"pid-{os.getpid()}-{uuid4().hex[:8]}"
 SERVICE_ENTRYPOINT_MODULE = "src.runtime_worker"
 SERVER_WORKDIR = Path(__file__).resolve().parents[2]
@@ -63,6 +68,7 @@ class _RuntimeSchedulerState:
     runtime_mode: str = "desktop-sidecar"
     source_discovery: _WorkerState = field(default_factory=_WorkerState)
     wave_monitor: _WorkerState = field(default_factory=_WorkerState)
+    intel_event_sync: _WorkerState = field(default_factory=_WorkerState)
 
 
 _STATE = _RuntimeSchedulerState()
@@ -82,6 +88,8 @@ def configure_runtime_scheduler_state(settings: Settings) -> None:
     _STATE.source_discovery.poll_seconds = max(1, settings.source_discovery_scheduler_poll_seconds)
     _STATE.wave_monitor.enabled = settings.wave_monitor_scheduler_enabled
     _STATE.wave_monitor.poll_seconds = max(1, settings.wave_monitor_scheduler_poll_seconds)
+    _STATE.intel_event_sync.enabled = settings.intel_event_sync_scheduler_enabled
+    _STATE.intel_event_sync.poll_seconds = max(1, settings.intel_event_sync_scheduler_poll_seconds)
 
 
 def build_runtime_status(settings: Settings) -> SourceDiscoveryRuntimeStatusResponse:
@@ -90,6 +98,7 @@ def build_runtime_status(settings: Settings) -> SourceDiscoveryRuntimeStatusResp
     workers = _load_worker_summaries(settings)
     source_worker = next(worker for worker in workers if worker.worker_name == WORKER_SOURCE_DISCOVERY)
     wave_worker = next(worker for worker in workers if worker.worker_name == WORKER_WAVE_MONITOR)
+    intel_sync_worker = next(worker for worker in workers if worker.worker_name == WORKER_INTEL_EVENT_SYNC)
     service_managers = _supported_service_managers()
     current_platform = _current_service_platform()
     _sync_service_installation_rows(settings, current_platform)
@@ -169,6 +178,12 @@ def build_runtime_status(settings: Settings) -> SourceDiscoveryRuntimeStatusResp
         wave_monitor_scheduler_last_tick_at=wave_worker.last_tick_finished_at,
         wave_monitor_scheduler_last_error=wave_worker.last_error,
         wave_monitor_scheduler_last_summary=wave_worker.last_summary,
+        intel_event_sync_scheduler_enabled=intel_sync_worker.enabled_by_config,
+        intel_event_sync_scheduler_running=intel_sync_worker.loop_active_in_process,
+        intel_event_sync_scheduler_poll_seconds=intel_sync_worker.poll_seconds,
+        intel_event_sync_scheduler_last_tick_at=intel_sync_worker.last_tick_finished_at,
+        intel_event_sync_scheduler_last_error=intel_sync_worker.last_error,
+        intel_event_sync_scheduler_last_summary=intel_sync_worker.last_summary,
         workers=workers,
         service_installations=_load_service_installations(settings, current_platform),
         caveats=[
@@ -209,12 +224,16 @@ def should_start_wave_monitor_scheduler(settings: Settings) -> bool:
     return settings.wave_monitor_scheduler_enabled and settings.wave_monitor_scheduler_run_on_startup
 
 
+def should_start_intel_event_sync_scheduler(settings: Settings) -> bool:
+    return settings.intel_event_sync_scheduler_enabled and settings.intel_event_sync_scheduler_run_on_startup
+
+
 def control_runtime_worker(
     settings: Settings,
     worker_name: str,
     request: SourceDiscoveryRuntimeControlRequest,
 ) -> SourceDiscoveryRuntimeControlResponse:
-    if worker_name not in {WORKER_SOURCE_DISCOVERY, WORKER_WAVE_MONITOR}:
+    if worker_name not in {WORKER_SOURCE_DISCOVERY, WORKER_WAVE_MONITOR, WORKER_INTEL_EVENT_SYNC}:
         raise ValueError(f"Unsupported runtime worker: {worker_name}")
     _ensure_worker_rows(settings)
     if request.action == "run_now":
@@ -333,11 +352,26 @@ class RuntimeSchedulerCoordinator:
         finally:
             _STATE.wave_monitor.running = False
 
+    async def intel_event_sync_loop(self, *, stop_event: asyncio.Event) -> None:
+        _STATE.intel_event_sync.running = True
+        try:
+            while not stop_event.is_set():
+                await self._run_intel_event_sync_cycle_async(trigger_kind="scheduled", requested_by="runtime-loop")
+                try:
+                    await asyncio.wait_for(stop_event.wait(), timeout=_STATE.intel_event_sync.poll_seconds)
+                except asyncio.TimeoutError:
+                    continue
+        finally:
+            _STATE.intel_event_sync.running = False
+
     async def run_source_discovery_cycle(self) -> None:
         self._run_source_discovery_cycle_sync(trigger_kind="scheduled", requested_by="runtime-loop")
 
     async def run_wave_monitor_cycle(self) -> None:
         await self._run_wave_monitor_cycle_async(trigger_kind="scheduled", requested_by="runtime-loop")
+
+    async def run_intel_event_sync_cycle(self) -> None:
+        await self._run_intel_event_sync_cycle_async(trigger_kind="scheduled", requested_by="runtime-loop")
 
     def run_worker_now(self, worker_name: str, *, requested_by: str) -> SourceDiscoveryRuntimeRunSummary:
         if worker_name == WORKER_SOURCE_DISCOVERY:
@@ -349,6 +383,14 @@ class RuntimeSchedulerCoordinator:
         if worker_name == WORKER_WAVE_MONITOR:
             return asyncio.run(
                 self._run_wave_monitor_cycle_async(
+                    trigger_kind="manual",
+                    requested_by=requested_by,
+                    ignore_state=True,
+                )
+            )
+        if worker_name == WORKER_INTEL_EVENT_SYNC:
+            return asyncio.run(
+                self._run_intel_event_sync_cycle_async(
                     trigger_kind="manual",
                     requested_by=requested_by,
                     ignore_state=True,
@@ -400,6 +442,30 @@ class RuntimeSchedulerCoordinator:
             return run
         try:
             summary = await self._execute_wave_monitor_cycle()
+            return self._complete_worker_run(worker_name, run.run_id, summary=summary)
+        except Exception as exc:  # noqa: BLE001
+            return self._fail_worker_run(worker_name, run.run_id, error_summary=str(exc)[:400])
+
+    async def _run_intel_event_sync_cycle_async(
+        self,
+        *,
+        trigger_kind: str,
+        requested_by: str,
+        ignore_state: bool = False,
+    ) -> SourceDiscoveryRuntimeRunSummary:
+        worker_name = WORKER_INTEL_EVENT_SYNC
+        now = _utc_now()
+        run = self._prepare_worker_run(
+            worker_name,
+            trigger_kind=trigger_kind,
+            requested_by=requested_by,
+            ignore_state=ignore_state,
+            now=now,
+        )
+        if run.status != "running":
+            return run
+        try:
+            summary = await self._execute_intel_event_sync_cycle()
             return self._complete_worker_run(worker_name, run.run_id, summary=summary)
         except Exception as exc:  # noqa: BLE001
             return self._fail_worker_run(worker_name, run.run_id, error_summary=str(exc)[:400])
@@ -566,6 +632,35 @@ class RuntimeSchedulerCoordinator:
             f"signals={response.signals_created}"
         )
 
+    async def _execute_intel_event_sync_cycle(self) -> str:
+        if getattr(intel_db, "_url", None) != self._settings.database_url:
+            intel_db.reconfigure(self._settings.database_url)
+        # Runtime-triggered intel sync can run outside normal app startup, so ensure the canonical tables exist.
+        intel_db.create_all()
+        request = EventFeedSyncRequest(
+            feeds=_intel_event_sync_feeds(self._settings),
+            max_records_per_feed=max(1, self._settings.intel_event_sync_max_records_per_feed),
+            actor="runtime-scheduler",
+            evaluate_geofences=self._settings.intel_event_sync_evaluate_geofences,
+        )
+        generator = intel_db.get_session()
+        session = next(generator)
+        try:
+            result = await EventFeedSyncService(self._settings, IntelService(session)).sync(request)
+        finally:
+            try:
+                next(generator)
+            except StopIteration:
+                pass
+        return (
+            f"feeds={result.synced_feed_count}/{result.feed_count}, "
+            f"alerts={result.created_alert_count}, "
+            f"eventsCreated={sum(item.events_created for item in result.results)}, "
+            f"eventsUpdated={sum(item.events_updated for item in result.results)}, "
+            f"observationsCreated={sum(item.observations_created for item in result.results)}, "
+            f"observationsUpdated={sum(item.observations_updated for item in result.results)}"
+        )
+
 
 def _ensure_worker_rows(settings: Settings) -> None:
     specs = _worker_specs(settings)
@@ -607,6 +702,10 @@ def _worker_specs(settings: Settings) -> dict[str, dict[str, object]]:
             "enabled": settings.wave_monitor_scheduler_enabled,
             "poll_seconds": max(1, settings.wave_monitor_scheduler_poll_seconds),
         },
+        WORKER_INTEL_EVENT_SYNC: {
+            "enabled": settings.intel_event_sync_scheduler_enabled,
+            "poll_seconds": max(1, settings.intel_event_sync_scheduler_poll_seconds),
+        },
     }
 
 
@@ -633,16 +732,19 @@ def _service_specs(settings: Settings, platform_name: str) -> list[SourceDiscove
         return [
             _windows_task_spec(settings, WORKER_SOURCE_DISCOVERY),
             _windows_task_spec(settings, WORKER_WAVE_MONITOR),
+            _windows_task_spec(settings, WORKER_INTEL_EVENT_SYNC),
         ]
     if platform_name == "macos":
         return [
             _launchd_spec(settings, WORKER_SOURCE_DISCOVERY),
             _launchd_spec(settings, WORKER_WAVE_MONITOR),
+            _launchd_spec(settings, WORKER_INTEL_EVENT_SYNC),
         ]
     if platform_name == "linux":
         return [
             _systemd_user_spec(settings, WORKER_SOURCE_DISCOVERY),
             _systemd_user_spec(settings, WORKER_WAVE_MONITOR),
+            _systemd_user_spec(settings, WORKER_INTEL_EVENT_SYNC),
         ]
     raise ValueError(f"Unsupported runtime service platform: {platform_name}")
 
@@ -663,7 +765,14 @@ def _entry_command(worker_name: str) -> list[str]:
 
 
 def _service_name(worker_name: str) -> str:
-    suffix = "source-discovery" if worker_name == WORKER_SOURCE_DISCOVERY else "wave-monitor"
+    if worker_name == WORKER_SOURCE_DISCOVERY:
+        suffix = "source-discovery"
+    elif worker_name == WORKER_WAVE_MONITOR:
+        suffix = "wave-monitor"
+    elif worker_name == WORKER_INTEL_EVENT_SYNC:
+        suffix = "intel-event-sync"
+    else:
+        raise ValueError(f"Unsupported runtime worker: {worker_name}")
     return f"11writer-{suffix}"
 
 
@@ -1206,19 +1315,27 @@ def _load_worker_summaries(settings: Settings) -> list[SourceDiscoveryRuntimeWor
     with session_scope(settings.source_discovery_database_url) as session:
         rows = list(session.scalars(select(RuntimeSchedulerWorkerORM).order_by(RuntimeSchedulerWorkerORM.worker_name)))
         runs = list(session.scalars(select(RuntimeSchedulerRunORM).order_by(RuntimeSchedulerRunORM.started_at.desc()).limit(40)))
-        grouped_runs: dict[str, list[RuntimeSchedulerRunORM]] = {WORKER_SOURCE_DISCOVERY: [], WORKER_WAVE_MONITOR: []}
+        grouped_runs: dict[str, list[RuntimeSchedulerRunORM]] = {
+            WORKER_SOURCE_DISCOVERY: [],
+            WORKER_WAVE_MONITOR: [],
+            WORKER_INTEL_EVENT_SYNC: [],
+        }
+        running_by_worker = {
+            WORKER_SOURCE_DISCOVERY: _STATE.source_discovery.running,
+            WORKER_WAVE_MONITOR: _STATE.wave_monitor.running,
+            WORKER_INTEL_EVENT_SYNC: _STATE.intel_event_sync.running,
+        }
         for run in runs:
             grouped_runs.setdefault(run.worker_name, []).append(run)
         summaries: list[SourceDiscoveryRuntimeWorkerSummary] = []
         for row in rows:
-            loop_active = _STATE.source_discovery.running if row.worker_name == WORKER_SOURCE_DISCOVERY else _STATE.wave_monitor.running
             summaries.append(
                 SourceDiscoveryRuntimeWorkerSummary(
                     worker_name=row.worker_name,  # type: ignore[arg-type]
                     desired_state=row.desired_state,  # type: ignore[arg-type]
                     enabled_by_config=row.enabled_by_config,
                     poll_seconds=row.poll_seconds,
-                    loop_active_in_process=loop_active,
+                    loop_active_in_process=running_by_worker.get(row.worker_name, False),
                     lease_owner=row.lease_owner,
                     lease_expires_at=row.lease_expires_at,
                     last_tick_requested_at=row.last_tick_requested_at,
@@ -1249,6 +1366,13 @@ def _get_or_create_worker_row(session, settings: Settings, worker_name: str) -> 
     session.add(row)
     session.flush()
     return row
+
+
+def _intel_event_sync_feeds(settings: Settings) -> list[str]:
+    raw_value = settings.intel_event_sync_feeds.strip()
+    if not raw_value:
+        return []
+    return [part.strip() for part in raw_value.split(",") if part.strip()]
 
 
 def _create_runtime_run(
