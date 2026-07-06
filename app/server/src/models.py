@@ -64,6 +64,7 @@ class AlertORM(TimestampMixin, Base):
     geofence_id: Mapped[int | None] = mapped_column(ForeignKey("geofences.geofence_id"), default=None)
     severity: Mapped[str] = mapped_column(String(30), default="info")
     status: Mapped[str] = mapped_column(String(30), default="open")
+    dedupe_key: Mapped[str | None] = mapped_column(String(160), index=True, default=None)
     message: Mapped[str] = mapped_column(Text)
     trigger_basis_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
@@ -126,3 +127,37 @@ class CustodyLogORM(Base):
     actor: Mapped[str] = mapped_column(String(80), default="system")
     details_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class ScheduledTaskORM(TimestampMixin, Base):
+    __tablename__ = "scheduled_tasks"
+
+    task_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(160), unique=True, index=True)
+    task_type: Mapped[str] = mapped_column(String(40), index=True)
+    enabled: Mapped[bool] = mapped_column(default=True)
+    interval_seconds: Mapped[int] = mapped_column(Integer)
+    target_path: Mapped[str | None] = mapped_column(Text, default=None)
+    layer_key: Mapped[str | None] = mapped_column(String(80), default=None)
+    geofence_id: Mapped[int | None] = mapped_column(ForeignKey("geofences.geofence_id"), default=None)
+    notes: Mapped[str] = mapped_column(Text, default="")
+    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    last_run_at: Mapped[datetime | None] = mapped_column(default=None)
+    next_run_at: Mapped[datetime | None] = mapped_column(default=None)
+
+    runs: Mapped[list["ScheduledTaskRunORM"]] = relationship(back_populates="task")
+
+
+class ScheduledTaskRunORM(Base):
+    __tablename__ = "scheduled_task_runs"
+
+    task_run_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    task_id: Mapped[int] = mapped_column(ForeignKey("scheduled_tasks.task_id"), index=True)
+    status: Mapped[str] = mapped_column(String(30), default="queued")
+    started_at: Mapped[datetime] = mapped_column(default=utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(default=None)
+    records_affected: Mapped[int] = mapped_column(Integer, default=0)
+    error_text: Mapped[str | None] = mapped_column(Text, default=None)
+    output_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+    task: Mapped[ScheduledTaskORM] = relationship(back_populates="runs")

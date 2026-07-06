@@ -71,6 +71,7 @@ class AlertCreate(ForteModel):
     geofence_id: int | None = None
     severity: str = "info"
     status: str = "open"
+    dedupe_key: str | None = None
     message: str
     trigger_basis_json: dict[str, Any] = Field(default_factory=dict)
 
@@ -95,7 +96,7 @@ class SourceTrustProfileRead(SourceTrustProfileCreate):
     updated_at: datetime
 
 
-class IntegritySeedResponse(BaseModel):
+class IntegritySeedResponse(ForteModel):
     created: int
     domains: list[str]
 
@@ -138,3 +139,49 @@ class LocalImportRunRead(ForteModel):
     created_at: datetime
     updated_at: datetime
     observations: list[ObservationRead] = Field(default_factory=list)
+
+
+class CustodyLogRead(ForteModel):
+    custody_log_id: int
+    object_type: str
+    object_id: str
+    action: str
+    actor: str
+    details_json: dict[str, Any]
+    created_at: datetime
+
+
+class ScheduledTaskCreate(ForteModel):
+    name: str
+    task_type: Literal["local_import", "geofence_scan", "integrity_seed"]
+    interval_seconds: int = Field(ge=60)
+    enabled: bool = True
+    target_path: str | None = None
+    layer_key: str | None = None
+    geofence_id: int | None = None
+    notes: str = ""
+    payload_json: dict[str, Any] = Field(default_factory=dict)
+
+
+class ScheduledTaskRead(ScheduledTaskCreate):
+    task_id: int
+    last_run_at: datetime | None
+    next_run_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ScheduledTaskRunRead(ForteModel):
+    task_run_id: int
+    task_id: int
+    status: str
+    started_at: datetime
+    finished_at: datetime | None
+    records_affected: int
+    error_text: str | None
+    output_json: dict[str, Any]
+
+
+class SchedulerKickResponse(ForteModel):
+    runs_created: int
+    task_run_ids: list[int]
