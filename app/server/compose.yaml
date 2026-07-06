@@ -1,0 +1,63 @@
+services:
+  postgres:
+    image: postgis/postgis:16-3.4
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: 11writer
+      POSTGRES_USER: 11writer
+      POSTGRES_PASSWORD: 11writer
+    ports:
+      - "5432:5432"
+    volumes:
+      - 11writer-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U 11writer -d 11writer"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment: &runtime-env
+      APP_ENV: development
+      APP_RUNTIME_MODE: backend-only
+      APP_CORS_ORIGINS: ""
+      PRIMARY_DATABASE_URL: postgresql+psycopg://11writer:11writer@postgres:5432/11writer
+      PRIMARY_DATABASE_ENABLE_POSTGIS: "true"
+      SOURCE_DISCOVERY_SCHEDULER_ENABLED: "true"
+      SOURCE_DISCOVERY_SCHEDULER_RUN_ON_STARTUP: "false"
+      WAVE_MONITOR_SCHEDULER_ENABLED: "true"
+      WAVE_MONITOR_SCHEDULER_RUN_ON_STARTUP: "false"
+      WEBCAM_WORKER_ENABLED: "false"
+    ports:
+      - "8000:8000"
+    volumes:
+      - 11writer-runtime-data:/opt/11writer/data
+    healthcheck:
+      test: ["CMD", "11writer", "ready"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  workers:
+    build:
+      context: .
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    environment: *runtime-env
+    command: ["11writer", "worker", "--worker", "all", "--loop"]
+    volumes:
+      - 11writer-runtime-data:/opt/11writer/data
+
+volumes:
+  11writer-postgres-data:
+  11writer-runtime-data:

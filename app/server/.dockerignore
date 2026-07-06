@@ -1,0 +1,9 @@
+.pytest_cache
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+tests
+data/*.db
+data/reference_staging

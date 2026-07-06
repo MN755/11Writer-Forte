@@ -7,7 +7,7 @@ from pathlib import Path
 from sqlalchemy import inspect, text
 
 from src.config.settings import Settings
-from src.reference.db import get_engine
+from src.reference.db import get_engine, init_db as init_reference_db
 from src.reference.models import Base as ReferenceBase
 from src.source_discovery.db import init_db as init_source_discovery_db
 from src.source_discovery.models import SourceDiscoveryBase
@@ -96,8 +96,8 @@ def _component_definitions(settings: Settings) -> list[_StorageComponentDefiniti
             component="reference",
             database_url=settings.reference_database_url,
             uses_primary_database=_uses_primary_database(settings, settings.reference_database_url),
-            expected_tables=set(ReferenceBase.metadata.tables.keys()),
-            initializer=lambda database_url: ReferenceBase.metadata.create_all(get_engine(database_url)),
+            expected_tables=set(ReferenceBase.metadata.tables.keys()) | {"reference_spatial_index"},
+            initializer=init_reference_db,
         ),
         _StorageComponentDefinition(
             component="webcam",

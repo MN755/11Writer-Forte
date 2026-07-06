@@ -25,6 +25,21 @@ class HealthResponse(CamelModel):
     status: Literal["ok"]
 
 
+class RuntimeHealthCheck(CamelModel):
+    name: str
+    ready: bool
+    detail: str
+
+
+class RuntimeReadinessResponse(CamelModel):
+    status: Literal["ok", "degraded"]
+    ready: bool
+    runtime_mode: str
+    storage_mode: str
+    checks: list[RuntimeHealthCheck] = Field(default_factory=list)
+    caveats: list[str] = Field(default_factory=list)
+
+
 class TilesConfig(CamelModel):
     provider: Literal["google-photorealistic-3d", "cesium-world-terrain"]
     google_tiles_enabled: bool

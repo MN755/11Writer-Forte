@@ -3,9 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from sqlalchemy import inspect
 
 from src.app import create_application
 from src.config.settings import Settings, get_settings
+from src.reference.db import get_engine
 from src.services.storage_profile_service import bootstrap_storage, build_storage_status
 
 
@@ -35,6 +37,7 @@ def test_bootstrap_storage_initializes_shared_primary_database(tmp_path: Path) -
     settings = _primary_sqlite_settings(tmp_path)
 
     report = bootstrap_storage(settings)
+    table_names = set(inspect(get_engine(settings.primary_database_url)).get_table_names())
 
     assert report.storage_mode == "persistent-sqlite"
     assert report.shared_storage is True
@@ -43,6 +46,7 @@ def test_bootstrap_storage_initializes_shared_primary_database(tmp_path: Path) -
     assert all(component.reachable for component in report.components)
     assert all(component.initialized for component in report.components)
     assert all(component.uses_primary_database for component in report.components)
+    assert "reference_spatial_index" in table_names
 
 
 def test_storage_status_route_reports_shared_primary_storage(tmp_path: Path) -> None:

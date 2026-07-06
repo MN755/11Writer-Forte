@@ -170,3 +170,56 @@ def test_alerts_json_output(monkeypatch, capsys) -> None:
     assert exit_code == 0
     assert payload["count"] == 1
     assert payload["alerts"][0]["alertType"] == "runtime_worker_failure"
+
+
+def test_ready_json_output(monkeypatch, capsys) -> None:
+    class _FakeReport:
+        def model_dump(self, *, mode: str, by_alias: bool) -> dict[str, object]:
+            assert mode == "json"
+            assert by_alias is True
+            return {
+                "status": "ok",
+                "ready": True,
+                "runtimeMode": "backend-only",
+                "storageMode": "persistent-postgis",
+                "checks": [
+                    {"name": "storage", "ready": True, "detail": "5/5 configured storage components are reachable and initialized."}
+                ],
+                "caveats": [],
+            }
+
+    monkeypatch.setattr(cli, "build_runtime_readiness_report", lambda settings: _FakeReport())
+    monkeypatch.setattr(cli, "get_settings", lambda: Settings(_env_file=None))
+
+    exit_code = cli.main(["ready", "--json"])
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["ready"] is True
+    assert payload["storageMode"] == "persistent-postgis"
+
+
+def test_ready_command_returns_nonzero_when_not_ready(monkeypatch, capsys) -> None:
+    class _FakeReport:
+        def model_dump(self, *, mode: str, by_alias: bool) -> dict[str, object]:
+            assert mode == "json"
+            assert by_alias is True
+            return {
+                "status": "degraded",
+                "ready": False,
+                "runtimeMode": "backend-only",
+                "storageMode": "persistent-sqlite",
+                "checks": [
+                    {"name": "storage", "ready": False, "detail": "0/5 configured storage components are reachable and initialized."}
+                ],
+                "caveats": ["Run `11writer db-bootstrap` before treating the backend as ready."],
+            }
+
+    monkeypatch.setattr(cli, "build_runtime_readiness_report", lambda settings: _FakeReport())
+    monkeypatch.setattr(cli, "get_settings", lambda: Settings(_env_file=None))
+
+    exit_code = cli.main(["ready", "--json"])
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 1
+    assert payload["ready"] is False

@@ -51,12 +51,6 @@ def init_db(database_url: str) -> None:
             )
             """
         )
-        connection.exec_driver_sql(
-            "CREATE INDEX IF NOT EXISTS ix_reference_spatial_index_lat ON reference_spatial_index (min_lat, max_lat)"
-        )
-        connection.exec_driver_sql(
-            "CREATE INDEX IF NOT EXISTS ix_reference_spatial_index_lon ON reference_spatial_index (min_lon, max_lon)"
-        )
 
 
 @contextmanager

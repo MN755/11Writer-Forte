@@ -36,11 +36,31 @@ Useful CLI commands:
 11writer doctor
 11writer db-status
 11writer db-bootstrap
+11writer ready
 11writer serve --host 127.0.0.1 --port 8000
 11writer worker --worker all --loop
 11writer webcam-worker --once
 11writer reference-ingest fixes ./path/to/reference/files
 ```
+
+Docker/PostGIS quick start:
+
+```bash
+cd app/server
+docker compose up --build
+```
+
+The compose stack runs:
+
+- `postgres`: primary Postgres/PostGIS store
+- `api`: bootstraps storage, serves FastAPI on `http://127.0.0.1:8000`
+- `workers`: long-lived runtime worker loop for Source Discovery and Wave Monitor
+
+Readiness surfaces:
+
+- `11writer ready`
+- `GET /health/live`
+- `GET /health/ready`
 
 ## Operating Principles
 
@@ -55,6 +75,7 @@ Useful CLI commands:
 - FastAPI backend foundation is real.
 - Runtime workers and reference ingestion are CLI-operable.
 - Primary-database fanout, storage bootstrap, and storage-status reporting now exist for headless operations.
+- Runtime readiness probes and a Docker/PostGIS deployment stack now exist for headless operations.
 - Wave Monitor and source-discovery concepts are being folded out of 7Po8 into the main runtime.
 - Frontend code is not part of the supported runtime anymore.
 

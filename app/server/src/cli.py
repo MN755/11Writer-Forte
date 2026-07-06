@@ -11,6 +11,7 @@ import uvicorn
 
 from src.config.settings import Settings, get_settings
 from src.services.ops_audit_service import list_alert_records, list_provenance_events
+from src.services.runtime_health_service import build_runtime_readiness_report
 from src.reference.ingest import cli as reference_ingest_cli
 from src import runtime_worker
 from src.services.storage_profile_service import bootstrap_storage, build_storage_status
@@ -150,6 +151,13 @@ def build_parser() -> argparse.ArgumentParser:
     db_bootstrap_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
     db_bootstrap_parser.set_defaults(handler=_handle_db_bootstrap)
 
+    ready_parser = subparsers.add_parser(
+        "ready",
+        help="Check whether the backend is ready for headless operations.",
+    )
+    ready_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+    ready_parser.set_defaults(handler=_handle_ready)
+
     alerts_parser = subparsers.add_parser(
         "alerts",
         help="List persisted backend alert records.",
@@ -177,8 +185,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(list(argv) if argv is not None else None)
-    args.handler(args)
-    return 0
+    result = args.handler(args)
+    return 0 if result is None else int(result)
 
 
 def _handle_serve(args: argparse.Namespace) -> None:
@@ -310,6 +318,30 @@ def _handle_db_bootstrap(args: argparse.Namespace) -> None:
             f"reachable={component['reachable']} "
             f"initialized={component['initialized']}"
         )
+
+
+def _handle_ready(args: argparse.Namespace) -> int:
+    report = build_runtime_readiness_report(get_settings()).model_dump(mode="json", by_alias=True)
+    if args.json:
+        print(json.dumps(report, indent=2, sort_keys=True))
+        return 0 if report["ready"] else 1
+    print(ASCII_BANNER)
+    print()
+    print(f"status         : {report['status']}")
+    print(f"ready          : {report['ready']}")
+    print(f"runtime mode   : {report['runtimeMode']}")
+    print(f"storage mode   : {report['storageMode']}")
+    print()
+    print("checks")
+    for check in report["checks"]:
+        state = "ready" if check["ready"] else "not-ready"
+        print(f"  [{state}] {check['name']} :: {check['detail']}")
+    if report["caveats"]:
+        print()
+        print("caveats")
+        for caveat in report["caveats"]:
+            print(f"  - {caveat}")
+    return 0 if report["ready"] else 1
 
 
 def _handle_alerts(args: argparse.Namespace) -> None:
