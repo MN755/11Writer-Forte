@@ -407,6 +407,31 @@ class GeofenceEvaluationORM(SourceDiscoveryBase):
     created_at: Mapped[str] = mapped_column(String(64), index=True)
 
 
+class SourceImportRunORM(SourceDiscoveryBase):
+    __tablename__ = "source_import_runs"
+
+    import_run_id: Mapped[str] = mapped_column(String(180), primary_key=True)
+    source_id: Mapped[str | None] = mapped_column(String(160), index=True)
+    file_path: Mapped[str] = mapped_column(Text)
+    file_format: Mapped[str] = mapped_column(String(32), index=True)
+    source_kind: Mapped[str] = mapped_column(String(64), index=True)
+    requested_by: Mapped[str] = mapped_column(String(160), index=True)
+    status: Mapped[str] = mapped_column(String(32), index=True)
+    file_sha256: Mapped[str | None] = mapped_column(String(80), index=True)
+    file_size_bytes: Mapped[int | None] = mapped_column(Integer)
+    imported_record_count: Mapped[int] = mapped_column(Integer, default=0)
+    snapshot_count: Mapped[int] = mapped_column(Integer, default=0)
+    duplicate_snapshot_count: Mapped[int] = mapped_column(Integer, default=0)
+    geospatial_record_count: Mapped[int] = mapped_column(Integer, default=0)
+    tables_json: Mapped[str] = mapped_column(Text, default="[]")
+    metadata_json: Mapped[str] = mapped_column(Text, default="{}")
+    caveats_json: Mapped[str] = mapped_column(Text, default="[]")
+    error_summary: Mapped[str | None] = mapped_column(Text)
+    provenance_event_id: Mapped[str | None] = mapped_column(String(180), index=True)
+    started_at: Mapped[str] = mapped_column(String(64), index=True)
+    finished_at: Mapped[str | None] = mapped_column(String(64), index=True)
+
+
 class SourceMediaArtifactORM(SourceDiscoveryBase):
     __tablename__ = "source_media_artifacts"
 

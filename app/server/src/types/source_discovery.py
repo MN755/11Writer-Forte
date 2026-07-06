@@ -76,7 +76,7 @@ SourceDiscoveryDuplicateClass = Literal[
 ]
 SourceDiscoveryStorageMode = Literal["full_text", "compacted_duplicate", "metadata_only"]
 SourceDiscoveryFetchMode = Literal["auto", "live", "archive"]
-SourceDiscoveryRetrievalOrigin = Literal["live", "archive"]
+SourceDiscoveryRetrievalOrigin = Literal["live", "archive", "local"]
 SourceDiscoveryKnowledgeBackfillMode = Literal["missing_only", "recompute_selected"]
 SourceDiscoveryReviewClaimCandidateStatus = Literal["pending", "applied"]
 SourceDiscoveryEventGraphRefreshMode = Literal["missing_only", "recompute_selected"]

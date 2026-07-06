@@ -11,6 +11,7 @@ import uvicorn
 
 from src.config.settings import Settings, get_settings
 from src.services.geofence_service import GeofenceService
+from src.services.local_dataset_import_service import LocalDatasetImportService
 from src.services.ops_audit_service import list_alert_records, list_provenance_events
 from src.services.runtime_health_service import build_runtime_readiness_report
 from src.services.source_event_artifact_service import SourceEventArtifactService
@@ -18,6 +19,7 @@ from src.reference.ingest import cli as reference_ingest_cli
 from src import runtime_worker
 from src.services.storage_profile_service import bootstrap_storage, build_storage_status
 from src.types.geofence import GeofenceCreateRequest, GeofenceEvaluationRequest
+from src.types.local_import import LocalDatasetImportRequest
 from src.types.source_discovery import SourceDiscoveryEventArtifactGenerationRequest
 from src.webcam import worker as webcam_worker
 
@@ -275,6 +277,34 @@ def build_parser() -> argparse.ArgumentParser:
     geofence_history_parser.add_argument("--limit", type=int, default=25)
     geofence_history_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
     geofence_history_parser.set_defaults(handler=_handle_geofence_history)
+
+    import_local_parser = subparsers.add_parser(
+        "import-local",
+        help="Import a local JSON, TXT, or SQLite dataset into the backend evidence store.",
+    )
+    import_local_parser.add_argument("file_path")
+    import_local_parser.add_argument("--source-id", default=None)
+    import_local_parser.add_argument("--title", default=None)
+    import_local_parser.add_argument("--format", choices=["auto", "json", "jsonl", "txt", "sqlite"], default="auto")
+    import_local_parser.add_argument("--source-kind", choices=["historical_source", "data_feed_source", "data_source", "integrity_source"], default="historical_source")
+    import_local_parser.add_argument("--source-class", choices=["static", "live", "article", "social_image", "official", "community", "dataset", "unknown"], default="dataset")
+    import_local_parser.add_argument("--requested-by", default="11writer-cli")
+    import_local_parser.add_argument("--encoding", default="utf-8")
+    import_local_parser.add_argument("--table", action="append", default=[])
+    import_local_parser.add_argument("--max-records", type=int, default=100)
+    import_local_parser.add_argument("--tag", action="append", default=[])
+    import_local_parser.add_argument("--metadata-json", default="{}")
+    import_local_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+    import_local_parser.set_defaults(handler=_handle_import_local)
+
+    import_runs_parser = subparsers.add_parser(
+        "import-runs",
+        help="List persisted local dataset import runs.",
+    )
+    import_runs_parser.add_argument("--limit", type=int, default=25)
+    import_runs_parser.add_argument("--source-id", default=None)
+    import_runs_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+    import_runs_parser.set_defaults(handler=_handle_import_runs)
 
     return parser
 
@@ -646,6 +676,56 @@ def _handle_geofence_history(args: argparse.Namespace) -> None:
         print(f"  observed     : {evaluation['observedAt']} @ ({evaluation['observedLat']}, {evaluation['observedLon']})")
         if evaluation.get("alertId"):
             print(f"  alert id     : {evaluation['alertId']}")
+
+
+def _handle_import_local(args: argparse.Namespace) -> None:
+    payload = LocalDatasetImportService(get_settings()).import_dataset(
+        LocalDatasetImportRequest(
+            file_path=args.file_path,
+            source_id=args.source_id,
+            title=args.title,
+            format=args.format,
+            source_kind=args.source_kind,
+            source_class=args.source_class,
+            requested_by=args.requested_by,
+            encoding=args.encoding,
+            table_names=args.table,
+            max_records=args.max_records,
+            tags=args.tag,
+            metadata=_parse_json_object(args.metadata_json, flag_name="--metadata-json"),
+        )
+    ).model_dump(mode="json", by_alias=True)
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return
+    run = payload["run"]
+    memory = payload["memory"]
+    print(ASCII_BANNER)
+    print()
+    print(f"import run     : {run['importRunId']}")
+    print(f"source id      : {memory['sourceId']}")
+    print(f"format         : {run['fileFormat']}")
+    print(f"records        : {run['importedRecordCount']}")
+    print(f"snapshots      : {run['snapshotCount']} ({run['duplicateSnapshotCount']} duplicate skips)")
+    print(f"geospatial     : {run['geospatialRecordCount']}")
+    if run.get("provenanceEventId"):
+        print(f"provenance id  : {run['provenanceEventId']}")
+
+
+def _handle_import_runs(args: argparse.Namespace) -> None:
+    payload = LocalDatasetImportService(get_settings()).list_import_runs(limit=args.limit, source_id=args.source_id).model_dump(mode="json", by_alias=True)
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return
+    print(ASCII_BANNER)
+    print()
+    print(f"import count   : {payload['count']}")
+    print()
+    for run in payload["runs"]:
+        print(f"[{run['status']}/{run['fileFormat']}] {run['importRunId']}")
+        print(f"  source id    : {run['sourceId']}")
+        print(f"  file path    : {run['filePath']}")
+        print(f"  records      : {run['importedRecordCount']} -> snapshots={run['snapshotCount']} duplicates={run['duplicateSnapshotCount']}")
 
 
 def _parse_lon_lat(value: str) -> list[float]:

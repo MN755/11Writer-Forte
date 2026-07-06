@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from pathlib import Path
 
 from src import cli
@@ -470,3 +471,57 @@ def test_geofence_check_json_output(monkeypatch, capsys) -> None:
     assert exit_code == 0
     assert payload["evaluation"]["matched"] is True
     assert payload["evaluation"]["alertId"] == "alert:test"
+
+
+def test_import_local_json_output(tmp_path: Path, monkeypatch, capsys) -> None:
+    dataset_path = tmp_path / "events.json"
+    dataset_path.write_text(json.dumps([{"id": "evt-1", "title": "One", "lat": 30.0, "lon": -97.0}]), encoding="utf-8")
+    settings = Settings(
+        _env_file=None,
+        APP_ENV="test",
+        APP_RUNTIME_MODE="backend-only",
+        PRIMARY_DATABASE_URL=f"sqlite:///{(tmp_path / '11writer.db').as_posix()}",
+        APP_CORS_ORIGINS="",
+        WEBCAM_WORKER_ENABLED=False,
+        WEBCAM_WORKER_RUN_ON_STARTUP=False,
+    )
+    monkeypatch.setattr(cli, "get_settings", lambda: settings)
+
+    exit_code = cli.main(["import-local", str(dataset_path), "--requested-by", "test-cli", "--json"])
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["run"]["fileFormat"] == "json"
+    assert payload["run"]["importedRecordCount"] == 1
+    assert payload["memory"]["sourceType"] == "historical_source"
+
+
+def test_import_runs_json_output(tmp_path: Path, monkeypatch, capsys) -> None:
+    dataset_path = tmp_path / "signals.sqlite"
+    connection = sqlite3.connect(dataset_path)
+    try:
+        connection.execute("CREATE TABLE signals (id TEXT, title TEXT)")
+        connection.execute("INSERT INTO signals VALUES ('1', 'Ping')")
+        connection.commit()
+    finally:
+        connection.close()
+
+    settings = Settings(
+        _env_file=None,
+        APP_ENV="test",
+        APP_RUNTIME_MODE="backend-only",
+        PRIMARY_DATABASE_URL=f"sqlite:///{(tmp_path / '11writer.db').as_posix()}",
+        APP_CORS_ORIGINS="",
+        WEBCAM_WORKER_ENABLED=False,
+        WEBCAM_WORKER_RUN_ON_STARTUP=False,
+    )
+    monkeypatch.setattr(cli, "get_settings", lambda: settings)
+    cli.main(["import-local", str(dataset_path), "--format", "sqlite", "--json"])
+    capsys.readouterr()
+
+    exit_code = cli.main(["import-runs", "--json"])
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["count"] == 1
+    assert payload["runs"][0]["fileFormat"] == "sqlite"

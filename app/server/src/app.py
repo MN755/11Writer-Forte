@@ -44,6 +44,7 @@ from src.routes.satellite import router as satellite_router
 from src.routes.seismic_context import router as seismic_context_router
 from src.routes.status import router as status_router
 from src.routes.source_discovery import router as source_discovery_router
+from src.routes.source_imports import router as source_imports_router
 from src.routes.swpc import router as swpc_router
 from src.routes.tokyo_vaac import router as tokyo_vaac_router
 from src.routes.washington_vaac import router as washington_vaac_router
@@ -143,6 +144,7 @@ def create_application() -> FastAPI:
     application.include_router(geofences_router)
     application.include_router(status_router)
     application.include_router(source_discovery_router)
+    application.include_router(source_imports_router)
     application.include_router(reference_router)
     application.include_router(risk_context_router)
     application.include_router(seismic_context_router)

@@ -40,6 +40,8 @@ Useful CLI commands:
 11writer geofences
 11writer geofence-create geofence:austin-box "Austin Box" --shape-kind bbox --min-lat 30.0 --min-lon -98.0 --max-lat 30.5 --max-lon -97.5
 11writer geofence-check geofence:austin-box --lat 30.2672 --lon -97.7431 --subject-type event --subject-id event:austin-sighting
+11writer import-local ./data/austin-events.json --source-kind historical_source
+11writer import-runs
 11writer event-report source-event:example --kind report --redaction-level public
 11writer serve --host 127.0.0.1 --port 8000
 11writer worker --worker all --loop
@@ -72,6 +74,7 @@ Readiness surfaces:
 - Keep observed, inferred, and derived facts separate.
 - Treat discovered sources as candidates, not truth.
 - Persist geofences and evaluation history so spatial triggers remain queryable, auditable, and alertable.
+- Persist local JSON/TXT/SQLite import runs so historical packets and file-based source drops enter the backend with chain-of-custody metadata.
 - Persist event-level cited summaries and reports with explicit redaction labels and deterministic citations.
 - Prefer Postgres/PostGIS for future primary storage, but keep SQLite and file-based ingest paths usable for local and migration workflows.
 - Keep the runtime cross-platform: Windows, macOS, and Linux.
@@ -83,6 +86,7 @@ Readiness surfaces:
 - Primary-database fanout, storage bootstrap, and storage-status reporting now exist for headless operations.
 - Runtime readiness probes and a Docker/PostGIS deployment stack now exist for headless operations.
 - Geofence APIs and CLI commands now persist geospatial perimeters, bounded reference context, evaluation history, alerts, and provenance.
+- Local dataset import now persists JSON, TXT, and SQLite inputs as reviewable backend evidence with import-run records and provenance.
 - Event artifacts now persist cited summaries and reports with rule-based confidence and provenance logging.
 - Wave Monitor and source-discovery concepts are being folded out of 7Po8 into the main runtime.
 - Frontend code is not part of the supported runtime anymore.
@@ -94,6 +98,7 @@ cd app/server
 python -m compileall src
 pytest tests/test_cli.py -q
 pytest tests/test_geofences.py -q
+pytest tests/test_local_imports.py -q
 pytest tests/test_wave_monitor.py -q
 pytest tests/test_source_discovery_memory.py -q
 ```
