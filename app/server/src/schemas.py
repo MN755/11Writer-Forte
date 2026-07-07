@@ -771,6 +771,8 @@ class ScheduledTaskCreate(ForteModel):
         "integrity_seed",
         "source_sync",
         "storage_lifecycle",
+        "clickhouse_sync",
+        "clickhouse_archive",
         "camera_inventory_refresh",
         "entity_resolution_refresh",
         "event_fusion_refresh",

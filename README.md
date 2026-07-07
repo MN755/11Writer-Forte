@@ -95,6 +95,8 @@ elevenwriter archive-clickhouse-observations --layer marine-track --limit 5000
 elevenwriter rehydrate-clickhouse-observations "https://<ACCOUNT_ID>.r2.cloudflarestorage.com/11writer-archive/11writer-archive/observations/layer=*/date=*/*.parquet"
 elevenwriter show-clickhouse-r2-config
 elevenwriter write-clickhouse-r2-config
+elevenwriter add-clickhouse-sync-schedule clickhouse-sync 900 --layer marine-track --limit 5000
+elevenwriter add-clickhouse-archive-schedule clickhouse-archive 3600 --layer marine-track --limit 50000
 elevenwriter add-entity-resolution-schedule nightly-entities 600 --bbox "-96,29,-94,31" --min-observations 2
 elevenwriter add-event-fusion-schedule nightly-fusion 600 --bbox "-96,29,-94,31" --distance-km 10 --time-window-minutes 120
 elevenwriter query-observations --bbox "-96,29,-94,31"
@@ -174,6 +176,7 @@ ELEVENWRITER_CLICKHOUSE_R2_CACHE_SIZE=10Gi
 - ClickHouse is now an optional secondary backend instead of a hand-wavy future idea: `/api/operations/clickhouse` exposes diagnostics, provisioning, runtime sync, R2 archive export, R2 rehydration, and R2 storage-config preview, while the CLI mirrors those same flows for headless ops.
 - Forte still keeps PostgreSQL/SQLite as the primary operational store. ClickHouse is wired for analytics, cold archive, and large-scale query workloads; pretending it fully replaces the relational runtime here would be unserious.
 - Cloudflare R2 support now covers three operator paths: `archive_only` export into partitioned Parquet, `hybrid` rehydrate/query workflows over R2 data, and optional `r2_disk` provisioning for self-hosted ClickHouse storage policies backed by R2.
+- ClickHouse maintenance is scheduler-native now too: `clickhouse_sync` and `clickhouse_archive` tasks can mirror runtime facts and archive observation partitions toward R2 without waiting for an operator to remember the command at 2 AM.
 - Camera/webcam work is no longer just notes: `/api/cameras` and `/api/cameras/materialize` now persist camera inventory from imported observations, including MnDOT-style feeds that expose image or stream endpoints plus geospatial coordinates.
 - Camera endpoint lifecycle is backend-native now too: `/api/camera-sources`, `/api/camera-sources/materialize`, `/api/camera-sources/summary`, and `/api/camera-sources/{id}/ops` maintain a candidate source registry for observed camera image/stream/page endpoints, with rule-based graduation scores and custody history.
 - Camera ops now have a proper backend reporting surface too: `/api/cameras/summary` rolls up fleet health by layer, domain, provider, and status, while `/api/cameras/{id}/ops` exposes per-camera custody, latest observation/import context, and matching refresh schedules.
