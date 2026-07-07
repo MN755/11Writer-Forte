@@ -148,6 +148,23 @@ def test_init_db_reconciles_additive_columns(tmp_path: Path, monkeypatch) -> Non
                 created_at DATETIME,
                 updated_at DATETIME
             );
+            CREATE TABLE scheduled_tasks (
+                task_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name VARCHAR(160) NOT NULL,
+                task_type VARCHAR(40) NOT NULL,
+                enabled BOOLEAN NOT NULL DEFAULT 1,
+                interval_seconds INTEGER NOT NULL,
+                source_id INTEGER,
+                target_path TEXT,
+                layer_key VARCHAR(80),
+                geofence_id INTEGER,
+                notes TEXT NOT NULL DEFAULT '',
+                payload_json JSON NOT NULL DEFAULT '{}',
+                last_run_at DATETIME,
+                next_run_at DATETIME,
+                created_at DATETIME,
+                updated_at DATETIME
+            );
             """
         )
         connection.commit()
@@ -172,9 +189,14 @@ def test_init_db_reconciles_additive_columns(tmp_path: Path, monkeypatch) -> Non
         import_columns = {
             row[1] for row in check_connection.execute("PRAGMA table_info(local_import_runs)").fetchall()
         }
+        scheduled_task_columns = {
+            row[1] for row in check_connection.execute("PRAGMA table_info(scheduled_tasks)").fetchall()
+        }
         assert "geometry_wkt" in geofence_columns
         assert "location_wkt" in observation_columns
         assert "records_skipped" in import_columns
+        assert "retry_attempts" in scheduled_task_columns
+        assert "retry_backoff_seconds" in scheduled_task_columns
     finally:
         check_connection.close()
         reset_db_state()

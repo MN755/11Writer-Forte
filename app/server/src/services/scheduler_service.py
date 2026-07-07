@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import and_, select
@@ -86,77 +87,139 @@ def run_task(session: Session, task_id: int, actor: str = "scheduler") -> Schedu
         )
     )
 
-    try:
-        records_affected, output_json = execute_task(session, task, actor=actor)
-        finished_at = scheduler_now()
-        task_run.status = "completed"
-        task_run.records_affected = records_affected
-        task_run.output_json = output_json
-        task_run.finished_at = finished_at
-        task.last_run_at = finished_at
-        task.next_run_at = compute_next_run(task.interval_seconds, finished_at)
-        session.add(
-            CustodyLogORM(
-                object_type="scheduled_task_run",
-                object_id=str(task_run.task_run_id),
-                action="task_run_completed",
-                actor=actor,
-                details_json={
-                    "task_id": task.task_id,
-                    "task_type": task.task_type,
-                    "records_affected": records_affected,
-                },
+    max_attempts = max(1, task.retry_attempts)
+    attempt_errors: list[dict[str, object]] = []
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            records_affected, output_json = execute_task(session, task, actor=actor)
+            finished_at = scheduler_now()
+            task_run.status = "completed"
+            task_run.records_affected = records_affected
+            task_run.output_json = {
+                **output_json,
+                "attempt_count": attempt,
+                "max_attempts": max_attempts,
+                "attempt_errors": attempt_errors,
+            }
+            task_run.finished_at = finished_at
+            task.last_run_at = finished_at
+            task.next_run_at = compute_next_run(task.interval_seconds, finished_at)
+            session.add(
+                CustodyLogORM(
+                    object_type="scheduled_task_run",
+                    object_id=str(task_run.task_run_id),
+                    action="task_run_completed",
+                    actor=actor,
+                    details_json={
+                        "task_id": task.task_id,
+                        "task_type": task.task_type,
+                        "records_affected": records_affected,
+                        "attempt_count": attempt,
+                        "max_attempts": max_attempts,
+                    },
+                )
             )
-        )
-        session.add(
-            CustodyLogORM(
-                object_type="scheduled_task",
-                object_id=str(task.task_id),
-                action="task_run_completed",
-                actor=actor,
-                details_json={
-                    "task_type": task.task_type,
-                    "task_run_id": task_run.task_run_id,
-                    "records_affected": records_affected,
-                },
+            session.add(
+                CustodyLogORM(
+                    object_type="scheduled_task",
+                    object_id=str(task.task_id),
+                    action="task_run_completed",
+                    actor=actor,
+                    details_json={
+                        "task_type": task.task_type,
+                        "task_run_id": task_run.task_run_id,
+                        "records_affected": records_affected,
+                        "attempt_count": attempt,
+                        "max_attempts": max_attempts,
+                    },
+                )
             )
-        )
-        session.commit()
-    except Exception as exc:
-        finished_at = scheduler_now()
-        task_run.status = "failed"
-        task_run.error_text = str(exc)
-        task_run.finished_at = finished_at
-        task.last_run_at = finished_at
-        task.next_run_at = compute_next_run(task.interval_seconds, finished_at)
-        session.add(
-            CustodyLogORM(
-                object_type="scheduled_task_run",
-                object_id=str(task_run.task_run_id),
-                action="task_run_failed",
-                actor=actor,
-                details_json={
-                    "task_id": task.task_id,
-                    "task_type": task.task_type,
-                    "error_text": str(exc),
-                },
+            session.commit()
+            session.refresh(task_run)
+            return task_run
+        except Exception as exc:
+            error_details = {
+                "attempt": attempt,
+                "error_text": str(exc),
+            }
+            attempt_errors.append(error_details)
+            session.add(
+                CustodyLogORM(
+                    object_type="scheduled_task_run",
+                    object_id=str(task_run.task_run_id),
+                    action="task_attempt_failed",
+                    actor=actor,
+                    details_json={
+                        "task_id": task.task_id,
+                        "task_type": task.task_type,
+                        **error_details,
+                    },
+                )
             )
-        )
-        session.add(
-            CustodyLogORM(
-                object_type="scheduled_task",
-                object_id=str(task.task_id),
-                action="task_run_failed",
-                actor=actor,
-                details_json={
-                    "task_type": task.task_type,
-                    "task_run_id": task_run.task_run_id,
-                    "error_text": str(exc),
-                },
+            if attempt < max_attempts:
+                retry_delay = compute_retry_delay(task.retry_backoff_seconds, attempt)
+                session.add(
+                    CustodyLogORM(
+                        object_type="scheduled_task_run",
+                        object_id=str(task_run.task_run_id),
+                        action="task_retry_scheduled",
+                        actor=actor,
+                        details_json={
+                            "task_id": task.task_id,
+                            "task_type": task.task_type,
+                            "attempt": attempt,
+                            "next_attempt": attempt + 1,
+                            "retry_delay_seconds": retry_delay,
+                        },
+                    )
+                )
+                apply_task_retry_backoff(retry_delay)
+                continue
+
+            finished_at = scheduler_now()
+            task_run.status = "failed"
+            task_run.error_text = str(exc)
+            task_run.output_json = {
+                "attempt_count": attempt,
+                "max_attempts": max_attempts,
+                "attempt_errors": attempt_errors,
+            }
+            task_run.finished_at = finished_at
+            task.last_run_at = finished_at
+            task.next_run_at = compute_next_run(task.interval_seconds, finished_at)
+            session.add(
+                CustodyLogORM(
+                    object_type="scheduled_task_run",
+                    object_id=str(task_run.task_run_id),
+                    action="task_run_failed",
+                    actor=actor,
+                    details_json={
+                        "task_id": task.task_id,
+                        "task_type": task.task_type,
+                        "error_text": str(exc),
+                        "attempt_count": attempt,
+                        "max_attempts": max_attempts,
+                    },
+                )
             )
-        )
-        session.commit()
-        raise
+            session.add(
+                CustodyLogORM(
+                    object_type="scheduled_task",
+                    object_id=str(task.task_id),
+                    action="task_run_failed",
+                    actor=actor,
+                    details_json={
+                        "task_type": task.task_type,
+                        "task_run_id": task_run.task_run_id,
+                        "error_text": str(exc),
+                        "attempt_count": attempt,
+                        "max_attempts": max_attempts,
+                    },
+                )
+            )
+            session.commit()
+            raise
 
     session.refresh(task_run)
     return task_run
@@ -202,6 +265,16 @@ def execute_task(
             },
         )
     raise ValueError(f"Unsupported task type: {task.task_type}")
+
+
+def compute_retry_delay(retry_backoff_seconds: float, attempt: int) -> float:
+    return max(0.0, retry_backoff_seconds) * attempt
+
+
+def apply_task_retry_backoff(retry_delay_seconds: float) -> None:
+    if retry_delay_seconds <= 0:
+        return
+    time.sleep(retry_delay_seconds)
 
 
 def evaluate_geofence_alerts(

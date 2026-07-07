@@ -160,6 +160,8 @@ class ScheduledTaskORM(TimestampMixin, Base):
     task_type: Mapped[str] = mapped_column(String(40), index=True)
     enabled: Mapped[bool] = mapped_column(default=True)
     interval_seconds: Mapped[int] = mapped_column(Integer)
+    retry_attempts: Mapped[int] = mapped_column(Integer, default=1)
+    retry_backoff_seconds: Mapped[float] = mapped_column(Float, default=0.0)
     source_id: Mapped[int | None] = mapped_column(default=None, index=True)
     target_path: Mapped[str | None] = mapped_column(Text, default=None)
     layer_key: Mapped[str | None] = mapped_column(String(80), default=None)

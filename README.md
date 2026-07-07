@@ -65,7 +65,7 @@ elevenwriter fuse-events --bbox "-96,29,-94,31" --distance-km 10
 elevenwriter show-event-products 1
 elevenwriter export-event-product 1 cited_summary ./exports/event-1-summary.txt
 elevenwriter export-event-bundle 1 ./exports/event-1-bundle.json
-elevenwriter add-source-sync-schedule nightly-sync 1 300
+elevenwriter add-source-sync-schedule nightly-sync 1 300 --retry-attempts 3 --retry-backoff-seconds 5
 elevenwriter add-geofence-scan-schedule nightly-watch 300
 elevenwriter list-schedules
 elevenwriter run-due-schedules
@@ -98,3 +98,4 @@ By default the compose stack starts the API plus PostGIS-ready Postgres.
 - HTTP-managed sources support retry attempts, timeout controls, custom headers, cached payload materialization, and persisted fetch metadata so headless sync jobs have enough operational context to debug failures.
 - Managed source runs are idempotent by default: when the payload hash matches the most recent completed or skipped run for that source, the new run is marked `skipped` and does not create duplicate imports.
 - Local imports are dedupe-aware too: exact duplicate records in the same layer are skipped, and each import run reports `records_seen`, `records_imported`, and `records_skipped`.
+- Scheduled tasks now support task-level retry attempts and linear retry backoff, with custody records for failed attempts, retry scheduling, and final completion/failure outcomes.
