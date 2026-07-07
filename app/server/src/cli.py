@@ -74,6 +74,7 @@ def status() -> None:
     print_banner()
     typer.echo(f"env: {settings.app_env}")
     typer.echo(f"database: {settings.database_url}")
+    typer.echo(f"spatial backend: {settings.spatial_backend}")
     typer.echo(f"data dir: {settings.data_dir}")
 
 

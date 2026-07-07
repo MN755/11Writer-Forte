@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from src.models import ObservationORM
+from src.services.geospatial_service import build_bbox_sql_filter, uses_postgis
 
 
 @dataclass
@@ -69,6 +70,22 @@ def query_observations(
     if until:
         statement = statement.where(ObservationORM.created_at <= until)
 
+    if has_complete_bbox(min_lon=min_lon, min_lat=min_lat, max_lon=max_lon, max_lat=max_lat) and uses_postgis(session):
+        statement = statement.where(
+            build_bbox_sql_filter(
+                ObservationORM.location_wkt,
+                min_lon=min_lon,
+                min_lat=min_lat,
+                max_lon=max_lon,
+                max_lat=max_lat,
+            )
+        ).limit(limit)
+        return list(session.scalars(statement))
+
+    if None in {min_lon, min_lat, max_lon, max_lat}:
+        statement = statement.limit(limit)
+        return list(session.scalars(statement))
+
     observations = list(session.scalars(statement))
     observations = [
         observation
@@ -82,6 +99,16 @@ def query_observations(
         )
     ]
     return observations[:limit]
+
+
+def has_complete_bbox(
+    *,
+    min_lon: float | None,
+    min_lat: float | None,
+    max_lon: float | None,
+    max_lat: float | None,
+) -> bool:
+    return None not in {min_lon, min_lat, max_lon, max_lat}
 
 
 def observation_in_bbox(

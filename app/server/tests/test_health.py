@@ -7,4 +7,4 @@ def test_health(client: TestClient) -> None:
     payload = response.json()
     assert payload["status"] == "ok"
     assert payload["app_name"] == "11Writer Forte"
-
+    assert payload["spatial_backend"] == "python"

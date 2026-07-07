@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from src.config import get_settings
 from src.models import CustodyLogORM, LocalImportRunORM, ObservationORM
+from src.services.geospatial_service import geometry_to_wkt
 from src.services.trust_service import normalize_domain, resolve_trust
 
 
@@ -83,6 +84,7 @@ def import_local_path(
             approval_policy=approval_policy,
             confidence_score=confidence_score,
             location_geojson=item.location_geojson,
+            location_wkt=geometry_to_wkt(item.location_geojson),
             content_text=item.content_text,
             content_json=item.content_json,
             raw_hash=hashlib.sha256(

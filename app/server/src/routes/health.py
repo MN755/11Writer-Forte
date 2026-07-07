@@ -14,5 +14,5 @@ def health() -> HealthResponse:
         app_name=settings.app_name,
         app_version=settings.app_version,
         database_url=settings.database_url,
+        spatial_backend=settings.spatial_backend,
     )
-

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Generator
 
+from sqlalchemy import text
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -49,7 +50,31 @@ def get_db() -> Generator[Session, None, None]:
 def init_db() -> None:
     from src.models import Base
 
-    Base.metadata.create_all(get_engine())
+    engine = get_engine()
+    Base.metadata.create_all(engine)
+    initialize_spatial_backend(engine)
+
+
+def initialize_spatial_backend(engine: Engine) -> None:
+    settings = get_settings()
+    if not settings.uses_postgres:
+        return
+    with engine.begin() as connection:
+        connection.execute(text("CREATE EXTENSION IF NOT EXISTS postgis"))
+        connection.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS idx_observations_location_wkt_gist "
+                "ON observations USING GIST (ST_GeomFromText(location_wkt, 4326)) "
+                "WHERE location_wkt IS NOT NULL"
+            )
+        )
+        connection.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS idx_geofences_geometry_wkt_gist "
+                "ON geofences USING GIST (ST_GeomFromText(geometry_wkt, 4326)) "
+                "WHERE geometry_wkt IS NOT NULL"
+            )
+        )
 
 
 def reset_db_state() -> None:
@@ -58,4 +83,3 @@ def reset_db_state() -> None:
         _engine.dispose()
     _engine = None
     _session_factory = None
-
