@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from src.config import get_settings
 from src.models import CustodyLogORM, ObservationORM, StorageObjectORM
-from src.services.observation_service import extract_observation_timestamp
+from src.services.observation_service import ObservationQueryRecord, extract_observation_timestamp
 
 
 def clickhouse_now() -> datetime:
@@ -325,6 +325,78 @@ def rehydrate_clickhouse_observations_from_r2(
         "imported_row_count": imported_row_count,
         "sql": sql,
     }
+
+
+def query_clickhouse_observations(
+    *,
+    layer_key: str | None = None,
+    source_domain: str | None = None,
+    trust_level: str | None = None,
+    min_lon: float | None = None,
+    min_lat: float | None = None,
+    max_lon: float | None = None,
+    max_lat: float | None = None,
+    since: datetime | None = None,
+    until: datetime | None = None,
+    limit: int = 200,
+    backend: str = "clickhouse",
+    archive_glob_url: str | None = None,
+) -> list[ObservationQueryRecord]:
+    settings = get_settings()
+    ensure_clickhouse_enabled()
+    normalized_backend = normalize_clickhouse_query_backend(backend)
+    if normalized_backend == "r2_archive":
+        archive_source = archive_glob_url or build_r2_archive_glob_url()
+        validate_r2_archive_glob_url(archive_source)
+        from_clause = (
+            "s3("
+            f"{to_clickhouse_string(archive_source)}, "
+            f"{to_clickhouse_string(settings.clickhouse_r2_access_key_id or '')}, "
+            f"{to_clickhouse_string(settings.clickhouse_r2_secret_access_key or '')}, "
+            "'Parquet'"
+            ")"
+        )
+    else:
+        from_clause = f"{settings.clickhouse_database}.{settings.clickhouse_observation_table}"
+
+    where_clauses = ["1 = 1"]
+    if layer_key is not None:
+        where_clauses.append(f"layer_key = {to_clickhouse_string(layer_key)}")
+    if source_domain is not None:
+        where_clauses.append(f"source_domain = {to_clickhouse_string(source_domain)}")
+    if trust_level is not None:
+        where_clauses.append(f"trust_level = {to_clickhouse_string(trust_level)}")
+    if since is not None:
+        where_clauses.append(
+            "observed_at >= parseDateTime64BestEffort("
+            f"{to_clickhouse_string(isoformat_millis(since))})"
+        )
+    if until is not None:
+        where_clauses.append(
+            "observed_at <= parseDateTime64BestEffort("
+            f"{to_clickhouse_string(isoformat_millis(until))})"
+        )
+    if None not in {min_lon, min_lat, max_lon, max_lat}:
+        where_clauses.extend(
+            [
+                f"longitude >= {min_lon}",
+                f"longitude <= {max_lon}",
+                f"latitude >= {min_lat}",
+                f"latitude <= {max_lat}",
+            ]
+        )
+
+    query = (
+        "SELECT observation_id, import_run_id, event_id, layer_key, source_domain, source_type, "
+        "record_format, trust_level, approval_policy, confidence_score, longitude, latitude, "
+        "observed_at, created_at, updated_at, raw_hash, content_text, content_json_json "
+        f"FROM {from_clause} "
+        f"WHERE {' AND '.join(where_clauses)} "
+        "ORDER BY observed_at DESC, observation_id DESC "
+        f"LIMIT {max(limit, 1)} FORMAT JSONEachRow"
+    )
+    rows = execute_clickhouse_query_json(query)
+    return [deserialize_clickhouse_observation_row(row) for row in rows]
 
 
 def ping_clickhouse() -> None:
@@ -724,6 +796,9 @@ def render_clickhouse_r2_storage_xml() -> str:
 
 
 def default_clickhouse_r2_config_path() -> Path:
+    repo_root_candidate = Path.cwd() / "app" / "server" / "11writer-r2-storage.xml"
+    if (Path.cwd() / "docker-compose.yml").exists() and repo_root_candidate.parent.exists():
+        return repo_root_candidate
     return Path("./11writer-r2-storage.xml")
 
 
@@ -744,6 +819,69 @@ def ensure_clickhouse_storage_mode_ready() -> None:
 def ensure_clickhouse_enabled() -> None:
     if not get_settings().clickhouse_configured:
         raise ValueError("ClickHouse integration is not enabled or not fully configured.")
+
+
+def normalize_clickhouse_query_backend(backend: str) -> str:
+    normalized = backend.strip().lower()
+    if normalized not in {"clickhouse", "r2_archive"}:
+        raise ValueError("ClickHouse observation backend must be 'clickhouse' or 'r2_archive'.")
+    if normalized == "r2_archive" and not get_settings().clickhouse_r2_configured:
+        raise ValueError("ClickHouse R2 archive settings are incomplete.")
+    return normalized
+
+
+def deserialize_clickhouse_observation_row(row: dict[str, Any]) -> ObservationQueryRecord:
+    longitude = normalize_clickhouse_float(row.get("longitude"))
+    latitude = normalize_clickhouse_float(row.get("latitude"))
+    location_geojson = None
+    if longitude is not None and latitude is not None:
+        location_geojson = {"type": "Point", "coordinates": [longitude, latitude]}
+
+    raw_content_json = row.get("content_json_json")
+    content_json = json.loads(raw_content_json) if isinstance(raw_content_json, str) and raw_content_json else {}
+    if not isinstance(content_json, dict):
+        content_json = {}
+
+    return ObservationQueryRecord(
+        observation_id=int(row["observation_id"]),
+        import_run_id=normalize_clickhouse_int(row.get("import_run_id")),
+        event_id=normalize_clickhouse_int(row.get("event_id")),
+        layer_key=str(row.get("layer_key") or ""),
+        source_domain=str(row["source_domain"]) if row.get("source_domain") is not None else None,
+        source_type=str(row.get("source_type") or ""),
+        record_format=str(row.get("record_format") or ""),
+        trust_level=str(row.get("trust_level") or "neutral"),
+        approval_policy=str(row.get("approval_policy") or "manual_review"),
+        confidence_score=normalize_clickhouse_float(row.get("confidence_score")) or 0.0,
+        location_geojson=location_geojson,
+        content_text=str(row.get("content_text") or ""),
+        content_json=content_json,
+        raw_hash=str(row.get("raw_hash") or ""),
+        created_at=parse_clickhouse_datetime(row.get("created_at")),
+        updated_at=parse_clickhouse_datetime(row.get("updated_at")),
+    )
+
+
+def normalize_clickhouse_int(value: object) -> int | None:
+    if value is None or value == "":
+        return None
+    return int(value)
+
+
+def normalize_clickhouse_float(value: object) -> float | None:
+    if value is None or value == "":
+        return None
+    return float(value)
+
+
+def parse_clickhouse_datetime(value: object) -> datetime:
+    if isinstance(value, datetime):
+        return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("ClickHouse observation row is missing a timestamp field.")
+    normalized = value.strip().replace("Z", "+00:00")
+    parsed = datetime.fromisoformat(normalized)
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
 
 
 def to_clickhouse_string(value: str) -> str:
