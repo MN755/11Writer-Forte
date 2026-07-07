@@ -7,6 +7,8 @@ from sqlalchemy.orm import Session
 
 from src.models import (
     CustodyLogORM,
+    EntityORM,
+    EntityObservationLinkORM,
     EventORM,
     EventObservationLinkORM,
     LocalImportRunORM,
@@ -42,6 +44,21 @@ def build_event_export_bundle(session: Session, event_id: int) -> dict[str, obje
             .order_by(ObservationORM.observation_id.asc())
         )
     ) if observation_ids else []
+    entity_observation_links = list(
+        session.scalars(
+            select(EntityObservationLinkORM)
+            .where(EntityObservationLinkORM.observation_id.in_(observation_ids))
+            .order_by(EntityObservationLinkORM.entity_observation_link_id.asc())
+        )
+    ) if observation_ids else []
+    entity_ids = sorted({link.entity_id for link in entity_observation_links})
+    entities = list(
+        session.scalars(
+            select(EntityORM)
+            .where(EntityORM.entity_id.in_(entity_ids))
+            .order_by(EntityORM.entity_id.asc())
+        )
+    ) if entity_ids else []
 
     import_run_ids = sorted(
         {
@@ -87,6 +104,8 @@ def build_event_export_bundle(session: Session, event_id: int) -> dict[str, obje
         event=event,
         observation_links=observation_links,
         observations=observations,
+        entities=entities,
+        entity_observation_links=entity_observation_links,
         import_runs=import_runs,
         source_definitions=source_definitions,
         products=products,
@@ -96,6 +115,7 @@ def build_event_export_bundle(session: Session, event_id: int) -> dict[str, obje
             exported_at=exported_at,
             observation_count=len(observations),
             product_count=len(products),
+            entity_count=len(entities),
         ),
     )
     citations_json = flatten_citations(products)
@@ -106,6 +126,8 @@ def build_event_export_bundle(session: Session, event_id: int) -> dict[str, obje
         "event": event,
         "observation_links": observation_links,
         "observations": observations,
+        "entities": entities,
+        "entity_observation_links": entity_observation_links,
         "import_runs": import_runs,
         "source_runs": source_runs,
         "source_definitions": source_definitions,
@@ -121,6 +143,8 @@ def filter_relevant_custody_logs(
     event: EventORM,
     observation_links: list[EventObservationLinkORM],
     observations: list[ObservationORM],
+    entities: list[EntityORM],
+    entity_observation_links: list[EntityObservationLinkORM],
     import_runs: list[LocalImportRunORM],
     source_definitions: list[SourceDefinitionORM],
     products: list[SituationProductORM],
@@ -131,6 +155,14 @@ def filter_relevant_custody_logs(
         ("event_fusion", str(event.event_id)),
         ("event_export", str(event.event_id)),
     }
+    relevant_pairs.update(
+        ("entity", str(entity.entity_id))
+        for entity in entities
+    )
+    relevant_pairs.update(
+        ("entity_resolution", str(entity.entity_id))
+        for entity in entities
+    )
     relevant_pairs.update(
         ("observation", str(observation.observation_id))
         for observation in observations
@@ -151,6 +183,10 @@ def filter_relevant_custody_logs(
         ("event_observation_link", str(link.event_observation_link_id))
         for link in observation_links
     )
+    relevant_pairs.update(
+        ("entity_observation_link", str(link.entity_observation_link_id))
+        for link in entity_observation_links
+    )
 
     logs = list(session.scalars(select(CustodyLogORM).order_by(CustodyLogORM.created_at.asc())))
     filtered_logs = [
@@ -169,6 +205,7 @@ def log_bundle_export(
     exported_at: datetime,
     observation_count: int,
     product_count: int,
+    entity_count: int,
 ) -> CustodyLogORM:
     record = CustodyLogORM(
         object_type="event_export",
@@ -180,6 +217,7 @@ def log_bundle_export(
             "exported_at": exported_at.isoformat(),
             "observation_count": observation_count,
             "product_count": product_count,
+            "entity_count": entity_count,
         },
     )
     session.add(record)
