@@ -18,6 +18,7 @@ from src.models import (
 from src.schemas import EntityResolutionRequest, EventFusionRequest, ScheduledTaskCreate, ScheduledTaskUpdate
 from src.services.camera_source_service import materialize_camera_source_inventory
 from src.services.camera_service import materialize_camera_inventory
+from src.services.clickhouse_service import archive_clickhouse_observations_to_r2, sync_runtime_to_clickhouse
 from src.services.entity_resolution_service import materialize_entities
 from src.services.event_fusion_service import materialize_fused_events
 from src.services.geospatial_service import build_contains_geometry_sql_filter, point_in_geometry, uses_postgis
@@ -377,6 +378,48 @@ def execute_task(
                 ],
             },
         )
+    if task.task_type == "clickhouse_sync":
+        source_domain, limit = resolve_clickhouse_sync_payload(task.payload_json)
+        result = sync_runtime_to_clickhouse(
+            session,
+            layer_key=task.layer_key,
+            source_domain=source_domain,
+            limit=limit,
+            actor=actor,
+        )
+        records_affected = int(result["observation_count"]) + int(result["storage_object_count"])
+        return (
+            records_affected,
+            {
+                "layer_key": task.layer_key,
+                "source_domain": source_domain,
+                "limit": limit,
+                "clickhouse_database": result["clickhouse_database"],
+                "observation_count": int(result["observation_count"]),
+                "storage_object_count": int(result["storage_object_count"]),
+            },
+        )
+    if task.task_type == "clickhouse_archive":
+        source_domain, limit = resolve_clickhouse_archive_payload(task.payload_json)
+        result = archive_clickhouse_observations_to_r2(
+            session,
+            layer_key=task.layer_key,
+            source_domain=source_domain,
+            limit=limit,
+            actor=actor,
+        )
+        return (
+            int(result["exported_row_count"]),
+            {
+                "layer_key": task.layer_key,
+                "source_domain": source_domain,
+                "limit": limit,
+                "clickhouse_database": result["clickhouse_database"],
+                "archive_root_url": result["archive_root_url"],
+                "exported_row_count": int(result["exported_row_count"]),
+                "partition_strategy": result["partition_strategy"],
+            },
+        )
     if task.task_type == "camera_inventory_refresh":
         source_domain, limit = resolve_camera_inventory_refresh_payload(task.payload_json)
         result = materialize_camera_inventory(
@@ -595,6 +638,14 @@ def validate_task_configuration(
         if any(value is not None for value in (source_id, target_path, geofence_id)):
             raise ValueError("Storage lifecycle task does not accept source_id, target_path, or geofence_id.")
         resolve_storage_lifecycle_payload(payload_json)
+    if task_type == "clickhouse_sync":
+        if any(value is not None for value in (source_id, target_path, geofence_id)):
+            raise ValueError("ClickHouse sync task does not accept source_id, target_path, or geofence_id.")
+        resolve_clickhouse_sync_payload(payload_json)
+    if task_type == "clickhouse_archive":
+        if any(value is not None for value in (source_id, target_path, geofence_id)):
+            raise ValueError("ClickHouse archive task does not accept source_id, target_path, or geofence_id.")
+        resolve_clickhouse_archive_payload(payload_json)
     if task_type == "camera_inventory_refresh":
         if any(value is not None for value in (source_id, target_path, geofence_id)):
             raise ValueError(
@@ -707,6 +758,50 @@ def resolve_storage_lifecycle_payload(
         raise ValueError("Storage lifecycle payload limit must be between 1 and 1000.")
 
     return retention_class, limit_value
+
+
+def resolve_clickhouse_sync_payload(
+    payload_json: dict[str, object] | None,
+) -> tuple[str | None, int]:
+    payload = resolve_scheduler_payload_json("ClickHouse sync", payload_json)
+
+    source_domain_value = payload.get("source_domain")
+    if source_domain_value is not None and not isinstance(source_domain_value, str):
+        raise ValueError("ClickHouse sync payload source_domain must be a string.")
+    source_domain = source_domain_value.strip() if isinstance(source_domain_value, str) else None
+    if source_domain == "":
+        source_domain = None
+
+    limit_value = payload.get("limit", 1000)
+    if isinstance(limit_value, bool) or not isinstance(limit_value, int):
+        raise ValueError("ClickHouse sync payload limit must be an integer.")
+    if limit_value < 1 or limit_value > 20000:
+        raise ValueError("ClickHouse sync payload limit must be between 1 and 20000.")
+
+    return source_domain, limit_value
+
+
+def resolve_clickhouse_archive_payload(
+    payload_json: dict[str, object] | None,
+) -> tuple[str | None, int | None]:
+    payload = resolve_scheduler_payload_json("ClickHouse archive", payload_json)
+
+    source_domain_value = payload.get("source_domain")
+    if source_domain_value is not None and not isinstance(source_domain_value, str):
+        raise ValueError("ClickHouse archive payload source_domain must be a string.")
+    source_domain = source_domain_value.strip() if isinstance(source_domain_value, str) else None
+    if source_domain == "":
+        source_domain = None
+
+    limit_value = payload.get("limit")
+    if limit_value is None:
+        return source_domain, None
+    if isinstance(limit_value, bool) or not isinstance(limit_value, int):
+        raise ValueError("ClickHouse archive payload limit must be an integer.")
+    if limit_value < 1 or limit_value > 500000:
+        raise ValueError("ClickHouse archive payload limit must be between 1 and 500000.")
+
+    return source_domain, limit_value
 
 
 def build_entity_resolution_request(

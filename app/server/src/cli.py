@@ -2110,6 +2110,80 @@ def add_storage_lifecycle_schedule(
         session.close()
 
 
+@app.command("add-clickhouse-sync-schedule")
+def add_clickhouse_sync_schedule(
+    name: str,
+    interval_seconds: int,
+    layer: str | None = None,
+    source_domain: str | None = None,
+    limit: int = 1000,
+    notes: str = "",
+    retry_attempts: int = 1,
+    retry_backoff_seconds: float = 0.0,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        payload_json: dict[str, object] = {"limit": limit}
+        if source_domain:
+            payload_json["source_domain"] = source_domain
+        task = create_scheduled_task(
+            session,
+            ScheduledTaskCreate(
+                name=name,
+                task_type="clickhouse_sync",
+                interval_seconds=interval_seconds,
+                retry_attempts=retry_attempts,
+                retry_backoff_seconds=retry_backoff_seconds,
+                layer_key=layer,
+                notes=notes,
+                payload_json=payload_json,
+            ),
+        )
+        print_banner()
+        typer.echo(f"scheduled task {task.task_id} created for ClickHouse sync")
+    finally:
+        session.close()
+
+
+@app.command("add-clickhouse-archive-schedule")
+def add_clickhouse_archive_schedule(
+    name: str,
+    interval_seconds: int,
+    layer: str | None = None,
+    source_domain: str | None = None,
+    limit: int | None = None,
+    notes: str = "",
+    retry_attempts: int = 1,
+    retry_backoff_seconds: float = 0.0,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        payload_json: dict[str, object] = {}
+        if source_domain:
+            payload_json["source_domain"] = source_domain
+        if limit is not None:
+            payload_json["limit"] = limit
+        task = create_scheduled_task(
+            session,
+            ScheduledTaskCreate(
+                name=name,
+                task_type="clickhouse_archive",
+                interval_seconds=interval_seconds,
+                retry_attempts=retry_attempts,
+                retry_backoff_seconds=retry_backoff_seconds,
+                layer_key=layer,
+                notes=notes,
+                payload_json=payload_json,
+            ),
+        )
+        print_banner()
+        typer.echo(f"scheduled task {task.task_id} created for ClickHouse archive")
+    finally:
+        session.close()
+
+
 @app.command("add-camera-refresh-schedule")
 def add_camera_refresh_schedule(
     name: str,

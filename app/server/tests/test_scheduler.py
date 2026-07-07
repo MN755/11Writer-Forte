@@ -9,8 +9,10 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from src.config import reset_settings_cache
 from src.db import get_session_factory
 from src.models import ScheduledTaskORM
+from src.services import clickhouse_service
 from src.services.scheduler_runtime_service import run_scheduler_worker
 from src.services.scheduler_service import scheduler_now
 
@@ -45,6 +47,59 @@ def flaky_scheduler_json_server(payload: list[dict[str, object]]):
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
+
+
+class FakeClickHouseResponse:
+    def __init__(self, payload: str) -> None:
+        self.payload = payload
+
+    def read(self) -> bytes:
+        return self.payload.encode("utf-8")
+
+    def __enter__(self) -> "FakeClickHouseResponse":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        return None
+
+
+def configure_fake_clickhouse(monkeypatch, *, row_count: int = 1) -> list[dict[str, object]]:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv("ELEVENWRITER_CLICKHOUSE_ENABLED", "true")
+    monkeypatch.setenv("ELEVENWRITER_CLICKHOUSE_URL", "http://clickhouse.test:8123")
+    monkeypatch.setenv("ELEVENWRITER_CLICKHOUSE_DATABASE", "elevenwriter")
+    monkeypatch.setenv("ELEVENWRITER_CLICKHOUSE_USER", "forte")
+    monkeypatch.setenv("ELEVENWRITER_CLICKHOUSE_PASSWORD", "secret")
+    monkeypatch.setenv(
+        "ELEVENWRITER_CLICKHOUSE_R2_ENDPOINT",
+        "https://acct.r2.cloudflarestorage.com",
+    )
+    monkeypatch.setenv("ELEVENWRITER_CLICKHOUSE_R2_BUCKET", "11writer-archive")
+    monkeypatch.setenv("ELEVENWRITER_CLICKHOUSE_R2_ACCESS_KEY_ID", "r2-key")
+    monkeypatch.setenv("ELEVENWRITER_CLICKHOUSE_R2_SECRET_ACCESS_KEY", "r2-secret")
+    monkeypatch.setenv("ELEVENWRITER_CLICKHOUSE_R2_ARCHIVE_PREFIX", "forte-archive")
+    reset_settings_cache()
+
+    requests: list[dict[str, object]] = []
+
+    def fake_urlopen(request, timeout=0):  # type: ignore[no-untyped-def]
+        body = request.data.decode("utf-8") if request.data else ""
+        requests.append(
+            {
+                "url": request.full_url,
+                "method": request.get_method(),
+                "body": body,
+            }
+        )
+        if request.full_url.endswith("/ping"):
+            return FakeClickHouseResponse("Ok.\n")
+        if "SELECT version()" in body:
+            return FakeClickHouseResponse('{"version":"26.6.1","current_database":"elevenwriter"}\n')
+        if "SELECT count(*) AS row_count" in body:
+            return FakeClickHouseResponse(f'{{"row_count":{row_count}}}\n')
+        return FakeClickHouseResponse("")
+
+    monkeypatch.setattr(clickhouse_service, "urlopen", fake_urlopen)
+    return requests
 
 
 def test_geofence_schedule_creates_alert_and_custody_log(
@@ -269,6 +324,135 @@ def test_storage_lifecycle_schedule_expires_due_objects(client: TestClient) -> N
         and row["details_json"]["task_id"] == task_id
         for row in custody_rows
     )
+
+
+def test_clickhouse_sync_schedule_mirrors_runtime_facts(
+    client: TestClient,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    fixture = tmp_path / "scheduled-clickhouse-sync.json"
+    fixture.write_text(
+        json.dumps(
+            [
+                {
+                    "title": "Scheduled ClickHouse sync",
+                    "url": "https://clickhouse-sync.example.com/1",
+                    "lat": 29.76,
+                    "lon": -95.36,
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    import_response = client.post(
+        "/api/imports/local",
+        json={"source_path": str(fixture), "layer_key": "marine-track"},
+    )
+    assert import_response.status_code == 200
+
+    requests = configure_fake_clickhouse(monkeypatch)
+
+    schedule_response = client.post(
+        "/api/scheduler/tasks",
+        json={
+            "name": "scheduled-clickhouse-sync",
+            "task_type": "clickhouse_sync",
+            "interval_seconds": 300,
+            "layer_key": "marine-track",
+            "payload_json": {"limit": 10},
+        },
+    )
+    assert schedule_response.status_code == 200
+    task_id = schedule_response.json()["task_id"]
+
+    run_response = client.post(f"/api/scheduler/tasks/{task_id}/run")
+    assert run_response.status_code == 200
+    payload = run_response.json()
+    assert payload["status"] == "completed"
+    assert payload["records_affected"] == 2
+    assert payload["output_json"]["observation_count"] == 1
+    assert payload["output_json"]["storage_object_count"] == 1
+    assert payload["output_json"]["clickhouse_database"] == "elevenwriter"
+
+    custody_response = client.get("/api/custody/logs")
+    assert custody_response.status_code == 200
+    custody_rows = custody_response.json()
+    assert any(row["action"] == "clickhouse_synced" for row in custody_rows)
+    assert any(
+        row["object_type"] == "scheduled_task_run"
+        and row["action"] == "task_run_completed"
+        and row["details_json"]["task_id"] == task_id
+        for row in custody_rows
+    )
+
+    assert any("INSERT INTO elevenwriter.observation_facts FORMAT JSONEachRow" in str(item["body"]) for item in requests)
+    assert any("INSERT INTO elevenwriter.storage_object_facts FORMAT JSONEachRow" in str(item["body"]) for item in requests)
+    reset_settings_cache()
+
+
+def test_clickhouse_archive_schedule_exports_r2(
+    client: TestClient,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    fixture = tmp_path / "scheduled-clickhouse-archive.json"
+    fixture.write_text(
+        json.dumps(
+            [
+                {
+                    "title": "Scheduled ClickHouse archive",
+                    "url": "https://archive.example.com/1",
+                    "lat": 29.8,
+                    "lon": -95.3,
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    import_response = client.post(
+        "/api/imports/local",
+        json={"source_path": str(fixture), "layer_key": "marine-track"},
+    )
+    assert import_response.status_code == 200
+
+    requests = configure_fake_clickhouse(monkeypatch, row_count=1)
+
+    schedule_response = client.post(
+        "/api/scheduler/tasks",
+        json={
+            "name": "scheduled-clickhouse-archive",
+            "task_type": "clickhouse_archive",
+            "interval_seconds": 300,
+            "layer_key": "marine-track",
+            "payload_json": {"limit": 25, "source_domain": "archive.example.com"},
+        },
+    )
+    assert schedule_response.status_code == 200
+    task_id = schedule_response.json()["task_id"]
+
+    run_response = client.post(f"/api/scheduler/tasks/{task_id}/run")
+    assert run_response.status_code == 200
+    payload = run_response.json()
+    assert payload["status"] == "completed"
+    assert payload["records_affected"] == 1
+    assert payload["output_json"]["exported_row_count"] == 1
+    assert payload["output_json"]["archive_root_url"].endswith("/11writer-archive/forte-archive")
+    assert payload["output_json"]["partition_strategy"] == "wildcard"
+
+    custody_response = client.get("/api/custody/logs")
+    assert custody_response.status_code == 200
+    custody_rows = custody_response.json()
+    assert any(row["action"] == "clickhouse_archived_to_r2" for row in custody_rows)
+    assert any(
+        row["object_type"] == "scheduled_task_run"
+        and row["action"] == "task_run_completed"
+        and row["details_json"]["task_id"] == task_id
+        for row in custody_rows
+    )
+
+    assert any("INSERT INTO FUNCTION s3(" in str(item["body"]) for item in requests)
+    reset_settings_cache()
 
 
 def test_camera_inventory_refresh_schedule_materializes_camera_inventory(
