@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import hashlib
+import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -12,6 +17,20 @@ from src.config import get_settings
 from src.models import CustodyLogORM, SourceDefinitionORM, SourceRunORM
 from src.schemas import SourceDefinitionCreate
 from src.services.import_service import import_local_path
+
+
+@dataclass(frozen=True)
+class SourceFetchConfig:
+    timeout_seconds: float
+    retry_attempts: int
+    retry_backoff_seconds: float
+    headers: dict[str, str]
+
+
+@dataclass(frozen=True)
+class MaterializedSourcePayload:
+    path: str
+    metadata: dict[str, Any]
 
 
 def source_now() -> datetime:
@@ -74,10 +93,19 @@ def run_source_definition(session: Session, source_id: int, actor: str = "source
     )
 
     try:
-        import_path = materialize_source_payload(source)
+        materialized = materialize_source_payload(source)
+        session.add(
+            CustodyLogORM(
+                object_type="source_run",
+                object_id=str(run.source_run_id),
+                action="source_payload_materialized",
+                actor=actor,
+                details_json=materialized.metadata,
+            )
+        )
         import_run = import_local_path(
             session,
-            import_path,
+            materialized.path,
             source.layer_key,
             source.notes,
             actor=actor,
@@ -91,6 +119,7 @@ def run_source_definition(session: Session, source_id: int, actor: str = "source
             "import_run_id": import_run.import_run_id,
             "source_kind": source.source_kind,
             "target_uri": source.target_uri,
+            **materialized.metadata,
         }
         session.add(
             CustodyLogORM(
@@ -154,18 +183,32 @@ def run_source_definition(session: Session, source_id: int, actor: str = "source
     return run
 
 
-def materialize_source_payload(source: SourceDefinitionORM) -> str:
+def materialize_source_payload(source: SourceDefinitionORM) -> MaterializedSourcePayload:
     if source.source_kind == "local_file":
-        return str(Path(source.target_uri).expanduser().resolve())
+        path = str(Path(source.target_uri).expanduser().resolve())
+        return MaterializedSourcePayload(
+            path=path,
+            metadata={
+                "materialization_kind": "local_file",
+                "resolved_path": path,
+            },
+        )
 
     if source.source_kind in {"http_json", "http_text"}:
         parsed = urlparse(source.target_uri)
         suffix = ".json" if source.source_kind == "http_json" else ".txt"
         destination = build_cached_path(source.source_id, suffix)
-        with urlopen(source.target_uri, timeout=30) as response:
-            payload = response.read()
+        fetch_config = parse_fetch_config(source)
+        payload, fetch_metadata = fetch_http_source(source, fetch_config)
         destination.write_bytes(payload)
-        return str(destination)
+        return MaterializedSourcePayload(
+            path=str(destination),
+            metadata={
+                "materialization_kind": "http_fetch",
+                "cached_path": str(destination),
+                **fetch_metadata,
+            },
+        )
 
     raise ValueError(f"Unsupported source kind: {source.source_kind}")
 
@@ -175,3 +218,73 @@ def build_cached_path(source_id: int, suffix: str) -> Path:
     cache_dir = settings.data_dir / "source_cache"
     cache_dir.mkdir(parents=True, exist_ok=True)
     return cache_dir / f"source-{source_id}{suffix}"
+
+
+def parse_fetch_config(source: SourceDefinitionORM) -> SourceFetchConfig:
+    metadata = source.metadata_json if isinstance(source.metadata_json, dict) else {}
+    timeout_seconds = float(metadata.get("request_timeout_seconds", 30.0))
+    retry_attempts = max(1, int(metadata.get("retry_attempts", 3)))
+    retry_backoff_seconds = max(0.0, float(metadata.get("retry_backoff_seconds", 0.0)))
+    user_headers = metadata.get("headers", {})
+    headers = {
+        "User-Agent": str(metadata.get("user_agent", "11Writer-Forte/0.1 (+headless-source-fetch)")),
+        "Accept": "application/json" if source.source_kind == "http_json" else "text/plain, */*",
+    }
+    if isinstance(user_headers, dict):
+        headers.update({str(key): str(value) for key, value in user_headers.items()})
+    return SourceFetchConfig(
+        timeout_seconds=timeout_seconds,
+        retry_attempts=retry_attempts,
+        retry_backoff_seconds=retry_backoff_seconds,
+        headers=headers,
+    )
+
+
+def fetch_http_source(
+    source: SourceDefinitionORM,
+    fetch_config: SourceFetchConfig,
+) -> tuple[bytes, dict[str, Any]]:
+    last_error: Exception | None = None
+    for attempt in range(1, fetch_config.retry_attempts + 1):
+        request = Request(source.target_uri, headers=fetch_config.headers)
+        try:
+            with urlopen(request, timeout=fetch_config.timeout_seconds) as response:
+                payload = response.read()
+                content_type = response.headers.get("Content-Type")
+                status_code = getattr(response, "status", None) or getattr(response, "code", None) or 200
+                return payload, {
+                    "attempt_count": attempt,
+                    "http_status": int(status_code),
+                    "content_type": content_type,
+                    "byte_count": len(payload),
+                    "payload_sha256": hashlib.sha256(payload).hexdigest(),
+                    "request_timeout_seconds": fetch_config.timeout_seconds,
+                    "retry_attempts": fetch_config.retry_attempts,
+                    "headers": fetch_config.headers,
+                    "host": urlparse(source.target_uri).netloc,
+                }
+        except HTTPError as exc:
+            last_error = exc
+            if not should_retry_http_error(exc.code) or attempt >= fetch_config.retry_attempts:
+                break
+            apply_retry_backoff(fetch_config, attempt)
+        except URLError as exc:
+            last_error = exc
+            if attempt >= fetch_config.retry_attempts:
+                break
+            apply_retry_backoff(fetch_config, attempt)
+
+    assert last_error is not None
+    raise RuntimeError(
+        f"HTTP source fetch failed after {fetch_config.retry_attempts} attempts: {last_error}"
+    ) from last_error
+
+
+def should_retry_http_error(status_code: int) -> bool:
+    return status_code in {408, 425, 429, 500, 502, 503, 504}
+
+
+def apply_retry_backoff(fetch_config: SourceFetchConfig, attempt: int) -> None:
+    if fetch_config.retry_backoff_seconds <= 0:
+        return
+    time.sleep(fetch_config.retry_backoff_seconds * attempt)
