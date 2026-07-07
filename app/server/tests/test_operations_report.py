@@ -111,3 +111,53 @@ def test_operations_report_summarizes_runtime_activity(client: TestClient, tmp_p
     assert len(payload["alerts"]) == 2
     assert payload["alerts"][0]["status"] in {"open", "acknowledged"}
     assert payload["custody_logs"]
+    assert payload["camera_inventory_summary"]["total_count"] == 0
+    assert payload["camera_report_index"]["refresh_task_count"] == 0
+
+    camera_fixture = tmp_path / "ops-cameras.json"
+    camera_fixture.write_text(
+        json.dumps(
+            [
+                {
+                    "camera_id": "ops-cam-1",
+                    "camera_name": "Ops Cam 1",
+                    "status": "offline",
+                    "image_url": "https://cams.example.com/ops-cam-1.jpg",
+                    "provider": "OpsDOT",
+                    "lat": 29.78,
+                    "lon": -95.34,
+                    "observed_at": "2026-07-07T00:00:00Z",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    camera_import = client.post(
+        "/api/imports/local",
+        json={"source_path": str(camera_fixture), "layer_key": "traffic-camera-feed"},
+    )
+    assert camera_import.status_code == 200
+    camera_materialize = client.post(
+        "/api/cameras/materialize",
+        json={"layer_key": "traffic-camera-feed", "limit": 25},
+    )
+    assert camera_materialize.status_code == 200
+    camera_schedule = client.post(
+        "/api/scheduler/tasks",
+        json={
+            "name": "ops-camera-refresh",
+            "task_type": "camera_inventory_refresh",
+            "interval_seconds": 300,
+            "layer_key": "traffic-camera-feed",
+            "payload_json": {"limit": 25, "source_domain": "cams.example.com"},
+        },
+    )
+    assert camera_schedule.status_code == 200
+
+    camera_report_response = client.get("/api/operations/report", params={"limit": 5})
+    assert camera_report_response.status_code == 200
+    camera_payload = camera_report_response.json()
+    assert camera_payload["camera_inventory_summary"]["total_count"] == 1
+    assert camera_payload["camera_inventory_summary"]["inactive_count"] == 1
+    assert camera_payload["camera_report_index"]["refresh_task_count"] == 1
+    assert camera_payload["camera_report_index"]["recent_materializations"][0]["action"] == "camera_materialization_completed"
