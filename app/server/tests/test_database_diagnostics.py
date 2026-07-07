@@ -21,6 +21,7 @@ def test_database_diagnostics_endpoint_reports_sqlite_runtime(client: TestClient
     table_counts = {item["table_name"]: item["row_count"] for item in payload["table_counts"]}
     assert table_counts["observations"] == 0
     assert table_counts["alerts"] == 0
+    assert table_counts["storage_objects"] == 0
 
 
 def test_database_diagnostics_marks_missing_postgis_prerequisites(monkeypatch) -> None:

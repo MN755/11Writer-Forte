@@ -36,6 +36,10 @@ from src.schemas import (
     RuntimeSnapshotRead,
     ScheduledTaskCreate,
     ScheduledTaskUpdate,
+    StorageObjectCreate,
+    StorageObjectPromoteRequest,
+    StorageObjectRead,
+    StorageObjectTransitionRequest,
     SourceDefinitionCreate,
     SourceDefinitionUpdate,
 )
@@ -58,6 +62,7 @@ from src.services.runtime_snapshot_service import build_runtime_snapshot
 from src.services.runtime_snapshot_service import restore_runtime_snapshot
 from src.services.scheduler_runtime_service import run_scheduler_worker
 from src.services.scheduler_service import create_scheduled_task, run_due_tasks, run_task, update_scheduled_task
+from src.services.storage_service import create_storage_object, list_storage_objects, promote_storage_object, transition_storage_object
 from src.services.source_service import (
     create_source_definition,
     list_source_definitions,
@@ -1134,6 +1139,150 @@ def list_custody(limit: int = 20) -> None:
         print_banner()
         for row in rows:
             typer.echo(f"{row.custody_log_id} | {row.object_type} | {row.action} | {row.actor}")
+    finally:
+        session.close()
+
+
+@app.command("list-storage-objects")
+def list_storage_objects_command(
+    owner_type: str | None = None,
+    owner_id: str | None = None,
+    object_kind: str | None = None,
+    lifecycle_status: str | None = None,
+    retention_class: str | None = None,
+    limit: int = 50,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        rows = list_storage_objects(
+            session,
+            owner_type=owner_type,
+            owner_id=owner_id,
+            object_kind=object_kind,
+            lifecycle_status=lifecycle_status,
+            retention_class=retention_class,
+            limit=limit,
+        )
+        print_banner()
+        for row in rows:
+            typer.echo(
+                f"{row.storage_object_id} | {row.object_kind} | owner={row.owner_type}:{row.owner_id} | tier={row.storage_tier} | retention={row.retention_class} | status={row.lifecycle_status} | {row.object_uri}"
+            )
+    finally:
+        session.close()
+
+
+@app.command("add-storage-object")
+def add_storage_object_command(
+    object_key: str,
+    object_kind: str,
+    owner_type: str,
+    owner_id: str,
+    object_uri: str,
+    storage_tier: str = "hot",
+    retention_class: str = "operational",
+    lifecycle_status: str = "active",
+    source_uri: str | None = None,
+    content_hash: str | None = None,
+    media_type: str | None = None,
+    byte_size: int | None = None,
+    metadata_json: str | None = None,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        metadata = parse_json_object_option(metadata_json, "--metadata-json") or {}
+        record = create_storage_object(
+            session,
+            StorageObjectCreate(
+                object_key=object_key,
+                object_kind=object_kind,
+                owner_type=owner_type,
+                owner_id=owner_id,
+                object_uri=object_uri,
+                storage_tier=storage_tier,
+                retention_class=retention_class,
+                lifecycle_status=lifecycle_status,
+                source_uri=source_uri,
+                content_hash=content_hash,
+                media_type=media_type,
+                byte_size=byte_size,
+                metadata_json=metadata,
+            ),
+            actor="cli_storage",
+        )
+        serializable = TypeAdapter(StorageObjectRead).validate_python(record).model_dump(mode="json")
+        print_banner()
+        typer.echo(
+            f"storage_object={serializable['storage_object_id']} tier={serializable['storage_tier']} retention={serializable['retention_class']} status={serializable['lifecycle_status']}"
+        )
+    finally:
+        session.close()
+
+
+@app.command("promote-storage-object")
+def promote_storage_object_command(
+    storage_object_id: int,
+    promoted_by_type: str,
+    promoted_by_id: str,
+    storage_tier: str = "warm",
+    retention_class: str | None = None,
+    metadata_json: str | None = None,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        metadata = parse_json_object_option(metadata_json, "--metadata-json") or {}
+        record = promote_storage_object(
+            session,
+            storage_object_id,
+            StorageObjectPromoteRequest(
+                storage_tier=storage_tier,
+                retention_class=retention_class,
+                promoted_by_type=promoted_by_type,
+                promoted_by_id=promoted_by_id,
+                metadata_json=metadata,
+            ),
+            actor="cli_storage",
+        )
+        print_banner()
+        typer.echo(
+            f"storage_object={record.storage_object_id} tier={record.storage_tier} retention={record.retention_class} status={record.lifecycle_status}"
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.command("transition-storage-object")
+def transition_storage_object_command(
+    storage_object_id: int,
+    lifecycle_status: str,
+    storage_tier: str | None = None,
+    metadata_json: str | None = None,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        metadata = parse_json_object_option(metadata_json, "--metadata-json") or {}
+        record = transition_storage_object(
+            session,
+            storage_object_id,
+            StorageObjectTransitionRequest(
+                lifecycle_status=lifecycle_status,
+                storage_tier=storage_tier,
+                metadata_json=metadata,
+            ),
+            actor="cli_storage",
+        )
+        print_banner()
+        typer.echo(
+            f"storage_object={record.storage_object_id} tier={record.storage_tier} retention={record.retention_class} status={record.lifecycle_status}"
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
     finally:
         session.close()
 

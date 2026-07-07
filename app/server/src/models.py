@@ -165,6 +165,30 @@ class CameraInventoryORM(TimestampMixin, Base):
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
 
+class StorageObjectORM(TimestampMixin, Base):
+    __tablename__ = "storage_objects"
+
+    storage_object_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    object_key: Mapped[str] = mapped_column(String(200), unique=True, index=True)
+    object_kind: Mapped[str] = mapped_column(String(60), index=True)
+    owner_type: Mapped[str] = mapped_column(String(60), index=True)
+    owner_id: Mapped[str] = mapped_column(String(120), index=True)
+    content_hash: Mapped[str | None] = mapped_column(String(64), index=True, default=None)
+    media_type: Mapped[str | None] = mapped_column(String(120), default=None)
+    storage_tier: Mapped[str] = mapped_column(String(30), default="hot", index=True)
+    retention_class: Mapped[str] = mapped_column(String(30), default="operational", index=True)
+    lifecycle_status: Mapped[str] = mapped_column(String(30), default="active", index=True)
+    source_uri: Mapped[str | None] = mapped_column(Text, default=None)
+    object_uri: Mapped[str] = mapped_column(Text)
+    byte_size: Mapped[int | None] = mapped_column(Integer, default=None)
+    observed_at: Mapped[datetime | None] = mapped_column(default=None, index=True)
+    expires_at: Mapped[datetime | None] = mapped_column(default=None, index=True)
+    promoted_by_type: Mapped[str | None] = mapped_column(String(60), default=None)
+    promoted_by_id: Mapped[str | None] = mapped_column(String(120), default=None)
+    degraded_from_storage_object_id: Mapped[int | None] = mapped_column(Integer, default=None)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+
 class CustodyLogORM(Base):
     __tablename__ = "custody_logs"
 

@@ -1,0 +1,444 @@
+from __future__ import annotations
+
+import hashlib
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from src.models import CameraInventoryORM, CustodyLogORM, LocalImportRunORM, StorageObjectORM
+from src.schemas import (
+    StorageObjectCreate,
+    StorageObjectPromoteRequest,
+    StorageObjectTransitionRequest,
+)
+
+RETENTION_WINDOWS_HOURS: dict[str, float | None] = {
+    "ephemeral": 24.0,
+    "operational": 24.0 * 7,
+    "investigative": 24.0 * 30,
+    "permanent": None,
+}
+
+
+def utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def list_storage_objects(
+    session: Session,
+    *,
+    owner_type: str | None = None,
+    owner_id: str | None = None,
+    object_kind: str | None = None,
+    lifecycle_status: str | None = None,
+    retention_class: str | None = None,
+    limit: int = 200,
+) -> list[StorageObjectORM]:
+    statement = select(StorageObjectORM).order_by(
+        StorageObjectORM.observed_at.desc().nullslast(),
+        StorageObjectORM.updated_at.desc(),
+    )
+    if owner_type:
+        statement = statement.where(StorageObjectORM.owner_type == owner_type)
+    if owner_id:
+        statement = statement.where(StorageObjectORM.owner_id == owner_id)
+    if object_kind:
+        statement = statement.where(StorageObjectORM.object_kind == object_kind)
+    if lifecycle_status:
+        statement = statement.where(StorageObjectORM.lifecycle_status == lifecycle_status)
+    if retention_class:
+        statement = statement.where(StorageObjectORM.retention_class == retention_class)
+    return list(session.scalars(statement.limit(limit)))
+
+
+def create_storage_object(
+    session: Session,
+    payload: StorageObjectCreate,
+    *,
+    actor: str = "api_storage",
+) -> StorageObjectORM:
+    record = register_storage_object(
+        session,
+        object_key=payload.object_key,
+        object_kind=payload.object_kind,
+        owner_type=payload.owner_type,
+        owner_id=payload.owner_id,
+        object_uri=payload.object_uri,
+        content_hash=payload.content_hash,
+        media_type=payload.media_type,
+        storage_tier=payload.storage_tier,
+        retention_class=payload.retention_class,
+        lifecycle_status=payload.lifecycle_status,
+        source_uri=payload.source_uri,
+        byte_size=payload.byte_size,
+        observed_at=payload.observed_at,
+        expires_at=payload.expires_at,
+        degraded_from_storage_object_id=payload.degraded_from_storage_object_id,
+        metadata_json=payload.metadata_json,
+        actor=actor,
+    )
+    session.commit()
+    session.refresh(record)
+    return record
+
+
+def promote_storage_object(
+    session: Session,
+    storage_object_id: int,
+    payload: StorageObjectPromoteRequest,
+    *,
+    actor: str = "api_storage",
+) -> StorageObjectORM:
+    record = session.get(StorageObjectORM, storage_object_id)
+    if record is None:
+        raise ValueError(f"Storage object {storage_object_id} does not exist.")
+
+    previous = {
+        "storage_tier": record.storage_tier,
+        "retention_class": record.retention_class,
+        "lifecycle_status": record.lifecycle_status,
+        "expires_at": normalize_timestamp(record.expires_at),
+    }
+    record.storage_tier = payload.storage_tier
+    if payload.retention_class is not None:
+        record.retention_class = payload.retention_class
+    record.promoted_by_type = payload.promoted_by_type
+    record.promoted_by_id = payload.promoted_by_id
+    record.lifecycle_status = "promoted"
+    record.expires_at = resolve_expiration(
+        record.retention_class,
+        observed_at=record.observed_at,
+        explicit_expires_at=payload.expires_at,
+    )
+    if payload.metadata_json:
+        record.metadata_json = merge_metadata(record.metadata_json, payload.metadata_json)
+    session.add(
+        CustodyLogORM(
+            object_type="storage_object",
+            object_id=str(record.storage_object_id),
+            action="storage_promoted",
+            actor=actor,
+            details_json={
+                "object_key": record.object_key,
+                "previous": serialize_storage_values(previous),
+                "current": {
+                    "storage_tier": record.storage_tier,
+                    "retention_class": record.retention_class,
+                    "lifecycle_status": record.lifecycle_status,
+                    "expires_at": normalize_timestamp(record.expires_at).isoformat()
+                    if normalize_timestamp(record.expires_at)
+                    else None,
+                    "promoted_by_type": record.promoted_by_type,
+                    "promoted_by_id": record.promoted_by_id,
+                },
+            },
+        )
+    )
+    session.commit()
+    session.refresh(record)
+    return record
+
+
+def transition_storage_object(
+    session: Session,
+    storage_object_id: int,
+    payload: StorageObjectTransitionRequest,
+    *,
+    actor: str = "api_storage",
+) -> StorageObjectORM:
+    record = session.get(StorageObjectORM, storage_object_id)
+    if record is None:
+        raise ValueError(f"Storage object {storage_object_id} does not exist.")
+
+    previous = {
+        "storage_tier": record.storage_tier,
+        "lifecycle_status": record.lifecycle_status,
+        "expires_at": normalize_timestamp(record.expires_at),
+    }
+    record.lifecycle_status = payload.lifecycle_status
+    if payload.storage_tier is not None:
+        record.storage_tier = payload.storage_tier
+    if payload.expires_at is not None or payload.lifecycle_status == "expired":
+        record.expires_at = payload.expires_at or utcnow()
+    if payload.metadata_json:
+        record.metadata_json = merge_metadata(record.metadata_json, payload.metadata_json)
+    session.add(
+        CustodyLogORM(
+            object_type="storage_object",
+            object_id=str(record.storage_object_id),
+            action="storage_transitioned",
+            actor=actor,
+            details_json={
+                "object_key": record.object_key,
+                "previous": serialize_storage_values(previous),
+                "current": {
+                    "storage_tier": record.storage_tier,
+                    "lifecycle_status": record.lifecycle_status,
+                    "expires_at": normalize_timestamp(record.expires_at).isoformat()
+                    if normalize_timestamp(record.expires_at)
+                    else None,
+                },
+            },
+        )
+    )
+    session.commit()
+    session.refresh(record)
+    return record
+
+
+def register_storage_object(
+    session: Session,
+    *,
+    object_key: str,
+    object_kind: str,
+    owner_type: str,
+    owner_id: str,
+    object_uri: str,
+    content_hash: str | None = None,
+    media_type: str | None = None,
+    storage_tier: str = "hot",
+    retention_class: str = "operational",
+    lifecycle_status: str = "active",
+    source_uri: str | None = None,
+    byte_size: int | None = None,
+    observed_at: datetime | None = None,
+    expires_at: datetime | None = None,
+    degraded_from_storage_object_id: int | None = None,
+    metadata_json: dict[str, Any] | None = None,
+    actor: str = "system",
+) -> StorageObjectORM:
+    record = session.scalar(select(StorageObjectORM).where(StorageObjectORM.object_key == object_key))
+    normalized_observed_at = normalize_timestamp(observed_at) or utcnow()
+    resolved_expires_at = resolve_expiration(
+        retention_class,
+        observed_at=normalized_observed_at,
+        explicit_expires_at=expires_at,
+    )
+    incoming_metadata = metadata_json or {}
+    action = "storage_registered"
+    details: dict[str, Any] = {
+        "object_key": object_key,
+        "object_kind": object_kind,
+        "owner_type": owner_type,
+        "owner_id": owner_id,
+    }
+
+    if record is None:
+        record = StorageObjectORM(
+            object_key=object_key,
+            object_kind=object_kind,
+            owner_type=owner_type,
+            owner_id=owner_id,
+            content_hash=content_hash,
+            media_type=media_type,
+            storage_tier=storage_tier,
+            retention_class=retention_class,
+            lifecycle_status=lifecycle_status,
+            source_uri=source_uri,
+            object_uri=object_uri,
+            byte_size=byte_size,
+            observed_at=normalized_observed_at,
+            expires_at=resolved_expires_at,
+            degraded_from_storage_object_id=degraded_from_storage_object_id,
+            metadata_json=incoming_metadata,
+        )
+        session.add(record)
+        session.flush()
+    else:
+        changed_fields: dict[str, dict[str, Any]] = {}
+        field_mapping = {
+            "object_kind": object_kind,
+            "owner_type": owner_type,
+            "owner_id": owner_id,
+            "content_hash": content_hash,
+            "media_type": media_type,
+            "storage_tier": storage_tier,
+            "retention_class": retention_class,
+            "lifecycle_status": lifecycle_status,
+            "source_uri": source_uri,
+            "object_uri": object_uri,
+            "byte_size": byte_size,
+            "observed_at": normalized_observed_at,
+            "expires_at": resolved_expires_at,
+            "degraded_from_storage_object_id": degraded_from_storage_object_id,
+        }
+        for field_name, new_value in field_mapping.items():
+            old_value = getattr(record, field_name)
+            if values_equal(old_value, new_value):
+                continue
+            setattr(record, field_name, new_value)
+            changed_fields[field_name] = {"old": old_value, "new": new_value}
+        merged_metadata = merge_metadata(record.metadata_json, incoming_metadata)
+        if merged_metadata != record.metadata_json:
+            changed_fields["metadata_json"] = {"old": record.metadata_json, "new": merged_metadata}
+            record.metadata_json = merged_metadata
+        action = "storage_refreshed"
+        details["changes"] = serialize_storage_values(changed_fields)
+
+    session.add(
+        CustodyLogORM(
+            object_type="storage_object",
+            object_id=str(record.storage_object_id),
+            action=action,
+            actor=actor,
+            details_json=details,
+        )
+    )
+    session.flush()
+    return record
+
+
+def register_import_storage_object(
+    session: Session,
+    run: LocalImportRunORM,
+    *,
+    actor: str,
+) -> StorageObjectORM:
+    path = Path(run.source_path)
+    content_hash = hash_file(path) if path.exists() and path.is_file() else hash_text(run.source_path)
+    byte_size = path.stat().st_size if path.exists() and path.is_file() else None
+    return register_storage_object(
+        session,
+        object_key=f"local_import_run:{run.import_run_id}:source",
+        object_kind="local_import_source",
+        owner_type="local_import_run",
+        owner_id=str(run.import_run_id),
+        object_uri=run.source_path,
+        source_uri=run.source_path,
+        content_hash=content_hash,
+        media_type=media_type_for_import_format(run.source_format),
+        storage_tier="warm",
+        retention_class="investigative",
+        lifecycle_status="active",
+        byte_size=byte_size,
+        observed_at=run.created_at,
+        metadata_json={
+            "layer_key": run.layer_key,
+            "source_format": run.source_format,
+            "records_seen": run.records_seen,
+            "records_imported": run.records_imported,
+            "records_skipped": run.records_skipped,
+        },
+        actor=actor,
+    )
+
+
+def register_camera_storage_objects(
+    session: Session,
+    camera: CameraInventoryORM,
+    *,
+    actor: str,
+) -> list[StorageObjectORM]:
+    urls = [
+        ("camera_image_ref", camera.image_url, "image/jpeg"),
+        ("camera_stream_ref", camera.stream_url, "application/x-mpegURL"),
+        ("camera_page_ref", camera.page_url, "text/html"),
+    ]
+    registered: list[StorageObjectORM] = []
+    for object_kind, uri, media_type in urls:
+        if not uri:
+            continue
+        registered.append(
+            register_storage_object(
+                session,
+                object_key=build_camera_storage_key(camera.camera_inventory_id, object_kind, uri),
+                object_kind=object_kind,
+                owner_type="camera_inventory",
+                owner_id=str(camera.camera_inventory_id),
+                object_uri=uri,
+                source_uri=uri,
+                content_hash=hash_text(uri),
+                media_type=media_type,
+                storage_tier="hot",
+                retention_class="operational",
+                lifecycle_status="active",
+                observed_at=camera.last_observed_at or camera.updated_at,
+                metadata_json={
+                    "camera_key": camera.camera_key,
+                    "external_id": camera.external_id,
+                    "layer_key": camera.layer_key,
+                    "source_domain": camera.source_domain,
+                    "provider": camera.provider,
+                    "status": camera.status,
+                    "active": camera.active,
+                },
+                actor=actor,
+            )
+        )
+    return registered
+
+
+def resolve_expiration(
+    retention_class: str,
+    *,
+    observed_at: datetime | None,
+    explicit_expires_at: datetime | None,
+) -> datetime | None:
+    if explicit_expires_at is not None:
+        return normalize_timestamp(explicit_expires_at)
+    window_hours = RETENTION_WINDOWS_HOURS.get(retention_class)
+    if window_hours is None:
+        return None
+    base_time = normalize_timestamp(observed_at) or utcnow()
+    return base_time + timedelta(hours=window_hours)
+
+
+def normalize_timestamp(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is not None:
+        return value
+    return value.replace(tzinfo=timezone.utc)
+
+
+def media_type_for_import_format(source_format: str) -> str:
+    return {
+        "json": "application/json",
+        "sqlite": "application/vnd.sqlite3",
+        "txt": "text/plain",
+    }.get(source_format, "application/octet-stream")
+
+
+def build_camera_storage_key(camera_inventory_id: int, object_kind: str, uri: str) -> str:
+    return f"camera_inventory:{camera_inventory_id}:{object_kind}:{hash_text(uri)[:16]}"
+
+
+def hash_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while chunk := handle.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def hash_text(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def merge_metadata(
+    current: dict[str, Any] | None,
+    incoming: dict[str, Any] | None,
+) -> dict[str, Any]:
+    merged = dict(current or {})
+    merged.update(incoming or {})
+    return merged
+
+
+def values_equal(old_value: Any, new_value: Any) -> bool:
+    if isinstance(old_value, datetime) or isinstance(new_value, datetime):
+        return normalize_timestamp(old_value) == normalize_timestamp(new_value)
+    return old_value == new_value
+
+
+def serialize_storage_values(value: Any) -> Any:
+    if isinstance(value, datetime):
+        normalized = normalize_timestamp(value)
+        return normalized.isoformat() if normalized is not None else None
+    if isinstance(value, dict):
+        return {key: serialize_storage_values(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [serialize_storage_values(item) for item in value]
+    return value

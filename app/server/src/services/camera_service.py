@@ -22,6 +22,7 @@ from src.services.observation_service import (
     has_complete_bbox,
     query_observations,
 )
+from src.services.storage_service import register_camera_storage_objects
 from src.services.trust_service import normalize_domain
 
 
@@ -199,6 +200,7 @@ def materialize_camera_inventory(
                     },
                 )
             )
+            register_camera_storage_objects(session, record, actor=actor)
             continue
 
         if (
@@ -226,6 +228,7 @@ def materialize_camera_inventory(
                 },
             )
         )
+        register_camera_storage_objects(session, record, actor=actor)
 
     session.add(
         CustodyLogORM(

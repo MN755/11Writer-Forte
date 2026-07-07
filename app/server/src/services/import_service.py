@@ -14,6 +14,7 @@ from src.config import get_settings
 from src.models import CustodyLogORM, LocalImportRunORM, ObservationORM
 from src.services.geospatial_service import geometry_to_wkt
 from src.services.layer_service import ensure_data_layer
+from src.services.storage_service import register_import_storage_object
 from src.services.trust_service import normalize_domain, resolve_trust
 
 
@@ -122,6 +123,7 @@ def import_local_path(
             },
         )
     )
+    register_import_storage_object(session, run, actor=actor)
     session.commit()
     session.refresh(run)
     return run
