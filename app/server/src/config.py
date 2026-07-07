@@ -32,6 +32,14 @@ class Settings(BaseSettings):
             return {"check_same_thread": False}
         return {}
 
+    @property
+    def uses_postgres(self) -> bool:
+        return self.database_url.startswith("postgresql")
+
+    @property
+    def spatial_backend(self) -> str:
+        return "postgis" if self.uses_postgres else "python"
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
@@ -40,4 +48,3 @@ def get_settings() -> Settings:
 
 def reset_settings_cache() -> None:
     get_settings.cache_clear()
-

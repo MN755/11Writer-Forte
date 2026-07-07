@@ -70,6 +70,7 @@ class GeofenceORM(TimestampMixin, Base):
     name: Mapped[str] = mapped_column(String(160), unique=True, index=True)
     description: Mapped[str] = mapped_column(Text, default="")
     geometry_geojson: Mapped[dict[str, Any]] = mapped_column(JSON)
+    geometry_wkt: Mapped[str | None] = mapped_column(Text, default=None)
     rule_expression: Mapped[str] = mapped_column(Text, default="")
     enabled: Mapped[bool] = mapped_column(default=True)
 
@@ -128,6 +129,7 @@ class ObservationORM(TimestampMixin, Base):
     approval_policy: Mapped[str] = mapped_column(String(40), default="manual_review")
     confidence_score: Mapped[float] = mapped_column(Float, default=0.5)
     location_geojson: Mapped[dict[str, Any] | None] = mapped_column(JSON, default=None)
+    location_wkt: Mapped[str | None] = mapped_column(Text, default=None)
     content_text: Mapped[str] = mapped_column(Text, default="")
     content_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     raw_hash: Mapped[str] = mapped_column(String(64), index=True)

@@ -19,6 +19,7 @@ class HealthResponse(ForteModel):
     app_name: str
     app_version: str
     database_url: str
+    spatial_backend: str
 
 
 class DataLayerCreate(ForteModel):

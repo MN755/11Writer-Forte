@@ -14,7 +14,7 @@ from src.models import (
     ScheduledTaskRunORM,
 )
 from src.schemas import ScheduledTaskCreate
-from src.services.geospatial_service import point_in_geometry
+from src.services.geospatial_service import build_contains_geometry_sql_filter, point_in_geometry, uses_postgis
 from src.services.import_service import import_local_path
 from src.services.source_service import run_source_definition
 from src.services.trust_service import seed_default_integrity_sources
@@ -171,16 +171,10 @@ def evaluate_geofence_alerts(
     if geofence_id is not None:
         geofence_statement = geofence_statement.where(GeofenceORM.geofence_id == geofence_id)
     geofences = list(session.scalars(geofence_statement.order_by(GeofenceORM.geofence_id.asc())))
-    observations = list(
-        session.scalars(
-            select(ObservationORM)
-            .where(ObservationORM.location_geojson.is_not(None))
-            .order_by(ObservationORM.observation_id.asc())
-        )
-    )
 
     created = 0
     for geofence in geofences:
+        observations = query_geofence_observations(session, geofence)
         for observation in observations:
             coordinates = (observation.location_geojson or {}).get("coordinates")
             if not isinstance(coordinates, list) or len(coordinates) < 2:
@@ -237,9 +231,58 @@ def evaluate_geofence_alerts(
             details_json={
                 "alerts_created": created,
                 "geofence_count": len(geofences),
-                "observation_count": len(observations),
+                "observation_count": count_scanned_observations(session, geofences),
             },
         )
     )
     session.flush()
     return created
+
+
+def query_geofence_observations(session: Session, geofence: GeofenceORM) -> list[ObservationORM]:
+    if uses_postgis(session) and geofence.geometry_wkt:
+        statement = (
+            select(ObservationORM)
+            .where(
+                build_contains_geometry_sql_filter(
+                    geofence.geometry_wkt,
+                    ObservationORM.location_wkt,
+                )
+            )
+            .order_by(ObservationORM.observation_id.asc())
+        )
+        return list(session.scalars(statement))
+
+    observations = list(
+        session.scalars(
+            select(ObservationORM)
+            .where(ObservationORM.location_geojson.is_not(None))
+            .order_by(ObservationORM.observation_id.asc())
+        )
+    )
+    matched: list[ObservationORM] = []
+    for observation in observations:
+        coordinates = (observation.location_geojson or {}).get("coordinates")
+        if not isinstance(coordinates, list) or len(coordinates) < 2:
+            continue
+        point = (float(coordinates[0]), float(coordinates[1]))
+        if point_in_geometry(point, geofence.geometry_geojson):
+            matched.append(observation)
+    return matched
+
+
+def count_scanned_observations(session: Session, geofences: list[GeofenceORM]) -> int:
+    if uses_postgis(session):
+        total = 0
+        for geofence in geofences:
+            total += len(query_geofence_observations(session, geofence))
+        return total
+    return len(
+        list(
+            session.scalars(
+                select(ObservationORM)
+                .where(ObservationORM.location_geojson.is_not(None))
+                .order_by(ObservationORM.observation_id.asc())
+            )
+        )
+    )
