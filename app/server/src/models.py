@@ -44,6 +44,9 @@ class EventORM(TimestampMixin, Base):
     redaction_level: Mapped[str] = mapped_column(String(50), default="public")
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
+    observation_links: Mapped[list["EventObservationLinkORM"]] = relationship(back_populates="event")
+    products: Mapped[list["SituationProductORM"]] = relationship(back_populates="event")
+
 
 class GeofenceORM(TimestampMixin, Base):
     __tablename__ = "geofences"
@@ -115,6 +118,7 @@ class ObservationORM(TimestampMixin, Base):
     raw_hash: Mapped[str] = mapped_column(String(64), index=True)
 
     import_run: Mapped[LocalImportRunORM | None] = relationship(back_populates="observations")
+    event_links: Mapped[list["EventObservationLinkORM"]] = relationship(back_populates="observation")
 
 
 class CustodyLogORM(Base):
@@ -161,3 +165,32 @@ class ScheduledTaskRunORM(Base):
     output_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
     task: Mapped[ScheduledTaskORM] = relationship(back_populates="runs")
+
+
+class EventObservationLinkORM(Base):
+    __tablename__ = "event_observation_links"
+
+    event_observation_link_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    event_id: Mapped[int] = mapped_column(ForeignKey("events.event_id"), index=True)
+    observation_id: Mapped[int] = mapped_column(ForeignKey("observations.observation_id"), index=True)
+    relationship_type: Mapped[str] = mapped_column(String(40), default="supporting")
+    confidence_contribution: Mapped[float] = mapped_column(Float, default=0.5)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+    event: Mapped[EventORM] = relationship(back_populates="observation_links")
+    observation: Mapped[ObservationORM] = relationship(back_populates="event_links")
+
+
+class SituationProductORM(TimestampMixin, Base):
+    __tablename__ = "situation_products"
+
+    product_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    event_id: Mapped[int] = mapped_column(ForeignKey("events.event_id"), index=True)
+    product_type: Mapped[str] = mapped_column(String(40), index=True)
+    redaction_level: Mapped[str] = mapped_column(String(50), default="public")
+    title: Mapped[str] = mapped_column(String(200))
+    body_text: Mapped[str] = mapped_column(Text)
+    citations_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    generated_by: Mapped[str] = mapped_column(String(80), default="rule_based")
+
+    event: Mapped[EventORM] = relationship(back_populates="products")
