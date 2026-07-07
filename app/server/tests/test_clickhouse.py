@@ -161,3 +161,146 @@ def test_clickhouse_sync_and_r2_archive_flow(
     assert any("INSERT INTO FUNCTION s3(" in str(item["body"]) for item in requests)
     assert any("INSERT INTO elevenwriter.observation_facts" in str(item["body"]) and "FROM s3(" in str(item["body"]) for item in requests)
     reset_settings_cache()
+
+
+def test_observation_queries_can_use_clickhouse_and_r2_archive(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("ELEVENWRITER_CLICKHOUSE_ENABLED", "true")
+    monkeypatch.setenv("ELEVENWRITER_CLICKHOUSE_URL", "http://clickhouse.test:8123")
+    monkeypatch.setenv("ELEVENWRITER_CLICKHOUSE_DATABASE", "elevenwriter")
+    monkeypatch.setenv(
+        "ELEVENWRITER_CLICKHOUSE_R2_ENDPOINT",
+        "https://acct.r2.cloudflarestorage.com",
+    )
+    monkeypatch.setenv("ELEVENWRITER_CLICKHOUSE_R2_BUCKET", "11writer-archive")
+    monkeypatch.setenv("ELEVENWRITER_CLICKHOUSE_R2_ACCESS_KEY_ID", "r2-key")
+    monkeypatch.setenv("ELEVENWRITER_CLICKHOUSE_R2_SECRET_ACCESS_KEY", "r2-secret")
+    monkeypatch.setenv("ELEVENWRITER_CLICKHOUSE_R2_ARCHIVE_PREFIX", "forte-archive")
+    reset_settings_cache()
+
+    client.post(
+        "/api/source-trust/profiles",
+        json={
+            "domain": "alpha.example.com",
+            "trust_level": "trusted",
+            "approval_policy": "auto_approve_stable",
+            "integrity_source": True,
+            "notes": "fixture",
+        },
+    )
+
+    requests: list[dict[str, object]] = []
+
+    def fake_urlopen(request, timeout=0):  # type: ignore[no-untyped-def]
+        body = request.data.decode("utf-8") if request.data else ""
+        requests.append(
+            {
+                "url": request.full_url,
+                "method": request.get_method(),
+                "body": body,
+            }
+        )
+        if "SELECT observation_id" in body:
+            row_a = {
+                "observation_id": 101,
+                "import_run_id": 1,
+                "event_id": None,
+                "layer_key": "marine-track",
+                "source_domain": "alpha.example.com",
+                "source_type": "http_json",
+                "record_format": "json",
+                "trust_level": "trusted",
+                "approval_policy": "auto_approve_stable",
+                "confidence_score": 0.92,
+                "longitude": -95.36,
+                "latitude": 29.76,
+                "observed_at": "2026-07-07T01:00:00Z",
+                "created_at": "2026-07-07T01:01:00Z",
+                "updated_at": "2026-07-07T01:02:00Z",
+                "raw_hash": "alpha-hash",
+                "content_text": "Alpha observation",
+                "content_json_json": json.dumps(
+                    {"observed_at": "2026-07-07T01:00:00Z", "ground_truth": True},
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ),
+            }
+            row_b = {
+                "observation_id": 102,
+                "import_run_id": 2,
+                "event_id": None,
+                "layer_key": "news-track",
+                "source_domain": "beta.example.com",
+                "source_type": "http_json",
+                "record_format": "json",
+                "trust_level": "neutral",
+                "approval_policy": "manual_review",
+                "confidence_score": 0.74,
+                "longitude": -95.35,
+                "latitude": 29.77,
+                "observed_at": "2026-07-07T01:05:00Z",
+                "created_at": "2026-07-07T01:06:00Z",
+                "updated_at": "2026-07-07T01:07:00Z",
+                "raw_hash": "beta-hash",
+                "content_text": "Beta observation",
+                "content_json_json": json.dumps(
+                    {"observed_at": "2026-07-07T01:05:00Z"},
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ),
+            }
+            return FakeResponse(json.dumps(row_a) + "\n" + json.dumps(row_b) + "\n")
+        return FakeResponse("")
+
+    monkeypatch.setattr(clickhouse_service, "urlopen", fake_urlopen)
+
+    clickhouse_response = client.get(
+        "/api/observations",
+        params={"backend": "clickhouse", "layer_key": "marine-track", "limit": 10},
+    )
+    assert clickhouse_response.status_code == 200
+    clickhouse_payload = clickhouse_response.json()
+    assert len(clickhouse_payload) == 2
+    assert clickhouse_payload[0]["content_text"] == "Alpha observation"
+    assert clickhouse_payload[0]["location_geojson"]["coordinates"] == [-95.36, 29.76]
+
+    verify_response = client.get(
+        "/api/observations/cross-verify",
+        params={
+            "backend": "r2_archive",
+            "limit": 10,
+            "distance_km": 10,
+            "time_window_minutes": 30,
+        },
+    )
+    assert verify_response.status_code == 200
+    verify_payload = verify_response.json()
+    assert len(verify_payload) == 1
+    assert verify_payload[0]["integrity_source_count"] == 1
+    assert verify_payload[0]["ground_truth_count"] == 1
+
+    assert any("FROM elevenwriter.observation_facts" in str(item["body"]) for item in requests)
+    assert any(
+        "FROM s3(" in str(item["body"])
+        and "forte-archive/observations/layer=*/date=*/*.parquet" in str(item["body"])
+        for item in requests
+    )
+    reset_settings_cache()
+
+
+def test_default_clickhouse_r2_config_path_targets_mounted_compose_file(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    repo_root = tmp_path / "repo"
+    app_server = repo_root / "app" / "server"
+    app_server.mkdir(parents=True)
+    (repo_root / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+
+    monkeypatch.chdir(repo_root)
+
+    target = clickhouse_service.default_clickhouse_r2_config_path()
+
+    assert target == repo_root / "app" / "server" / "11writer-r2-storage.xml"

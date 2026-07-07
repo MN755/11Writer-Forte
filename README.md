@@ -95,6 +95,8 @@ elevenwriter archive-clickhouse-observations --layer marine-track --limit 5000
 elevenwriter rehydrate-clickhouse-observations "https://<ACCOUNT_ID>.r2.cloudflarestorage.com/11writer-archive/11writer-archive/observations/layer=*/date=*/*.parquet"
 elevenwriter show-clickhouse-r2-config
 elevenwriter write-clickhouse-r2-config
+elevenwriter query-observations --backend clickhouse --layer marine-track --limit 500
+elevenwriter cross-verify --backend r2_archive --bbox "-96,29,-94,31" --time-window-minutes 120 --distance-km 10
 elevenwriter add-clickhouse-sync-schedule clickhouse-sync 900 --layer marine-track --limit 5000
 elevenwriter add-clickhouse-archive-schedule clickhouse-archive 3600 --layer marine-track --limit 50000
 elevenwriter add-entity-resolution-schedule nightly-entities 600 --bbox "-96,29,-94,31" --min-observations 2
@@ -131,7 +133,7 @@ docker compose up --build
 docker compose --profile clickhouse up --build
 ```
 
-By default the compose stack starts the API, a scheduler worker, and PostGIS-ready Postgres. The optional `clickhouse` profile starts a self-hosted ClickHouse server on `8123`/`9000`; Forte will only use it if you also set the ClickHouse env vars below. The compose file also mounts [`app/server/11writer-r2-storage.xml`](app/server/11writer-r2-storage.xml), so `elevenwriter write-clickhouse-r2-config` can materialize an R2-backed storage policy directly into the container config path without hand-editing the image.
+By default the compose stack starts the API, a scheduler worker, and PostGIS-ready Postgres. The optional `clickhouse` profile starts a self-hosted ClickHouse server on `8123`/`9000`; Forte will only use it if you also set the ClickHouse env vars below. The compose file also mounts [`app/server/11writer-r2-storage.xml`](app/server/11writer-r2-storage.xml), and `elevenwriter write-clickhouse-r2-config` now targets that mounted file automatically when you run it from the repo root, so the generated R2 disk policy lands where Docker actually reads it.
 
 ### Optional ClickHouse + R2 env
 
@@ -180,6 +182,7 @@ ELEVENWRITER_CLICKHOUSE_R2_CACHE_SIZE=10Gi
 - ClickHouse is now an optional secondary backend instead of a hand-wavy future idea: `/api/operations/clickhouse` exposes diagnostics, provisioning, runtime sync, R2 archive export, R2 rehydration, and R2 storage-config preview, while the CLI mirrors those same flows for headless ops.
 - Forte still keeps PostgreSQL/SQLite as the primary operational store. ClickHouse is wired for analytics, cold archive, and large-scale query workloads; pretending it fully replaces the relational runtime here would be unserious.
 - Cloudflare R2 support now covers three operator paths: `archive_only` export into partitioned Parquet, `hybrid` rehydrate/query workflows over R2 data, and optional `r2_disk` provisioning for self-hosted ClickHouse storage policies backed by R2.
+- Observation reads can now hit those optional backends too: `/api/observations` and `/api/observations/cross-verify` accept `backend=clickhouse` for synced hot tables or `backend=r2_archive` for direct archived Parquet reads over Cloudflare R2 when the operator needs cold-data investigation without bulk rehydration first.
 - ClickHouse maintenance is scheduler-native now too: `clickhouse_sync` and `clickhouse_archive` tasks can mirror runtime facts and archive observation partitions toward R2 without waiting for an operator to remember the command at 2 AM.
 - Camera/webcam work is no longer just notes: `/api/cameras` and `/api/cameras/materialize` now persist camera inventory from imported observations, including MnDOT-style feeds that expose image or stream endpoints plus geospatial coordinates.
 - Camera endpoint lifecycle is backend-native now too: `/api/camera-sources`, `/api/camera-sources/materialize`, `/api/camera-sources/summary`, and `/api/camera-sources/{id}/ops` maintain a candidate source registry for observed camera image/stream/page endpoints, with rule-based graduation scores and custody history.

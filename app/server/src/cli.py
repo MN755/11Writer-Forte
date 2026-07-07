@@ -149,6 +149,13 @@ def parse_bbox(value: str | None) -> tuple[float | None, float | None, float | N
     return (min_lon, min_lat, max_lon, max_lat)
 
 
+def parse_observation_backend(value: str) -> str:
+    normalized = value.strip().lower()
+    if normalized not in {"runtime", "clickhouse", "r2_archive"}:
+        raise typer.BadParameter("backend must be one of: runtime, clickhouse, r2_archive")
+    return normalized
+
+
 def resolve_report_since(hours: float | None) -> datetime | None:
     if hours is None:
         return None
@@ -1524,10 +1531,13 @@ def query_observations_command(
     source_domain: str | None = None,
     trust_level: str | None = None,
     limit: int = 50,
+    backend: str = "runtime",
+    archive_glob_url: str | None = None,
 ) -> None:
     init_db()
     session = get_session_factory()()
     try:
+        query_backend = parse_observation_backend(backend)
         min_lon, min_lat, max_lon, max_lat = parse_bbox(bbox)
         rows = query_observations(
             session,
@@ -1539,6 +1549,8 @@ def query_observations_command(
             max_lon=max_lon,
             max_lat=max_lat,
             limit=limit,
+            backend=query_backend,
+            archive_glob_url=archive_glob_url,
         )
         print_banner()
         for row in rows:
@@ -1553,22 +1565,31 @@ def query_observations_command(
 def cross_verify_command(
     bbox: str | None = None,
     layer: str | None = None,
+    source_domain: str | None = None,
+    trust_level: str | None = None,
     limit: int = 200,
     time_window_minutes: int = 60,
     distance_km: float = 25.0,
+    backend: str = "runtime",
+    archive_glob_url: str | None = None,
 ) -> None:
     init_db()
     session = get_session_factory()()
     try:
+        query_backend = parse_observation_backend(backend)
         min_lon, min_lat, max_lon, max_lat = parse_bbox(bbox)
         rows = query_observations(
             session,
             layer_key=layer,
+            source_domain=source_domain,
+            trust_level=trust_level,
             min_lon=min_lon,
             min_lat=min_lat,
             max_lon=max_lon,
             max_lat=max_lat,
             limit=limit,
+            backend=query_backend,
+            archive_glob_url=archive_glob_url,
         )
         summaries = build_cross_verification_summaries(
             session,
