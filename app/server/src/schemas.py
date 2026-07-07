@@ -63,6 +63,63 @@ class DatabaseDiagnosticsRead(ForteModel):
     table_counts: list[DatabaseTableCountRead]
 
 
+class ClickHouseDiagnosticsRead(ForteModel):
+    status: str
+    enabled: bool
+    clickhouse_url: str
+    clickhouse_database: str
+    observation_table: str
+    storage_object_table: str
+    reachable: bool
+    version: str | None
+    current_database: str | None
+    storage_policy: str | None
+    r2_configured: bool
+    r2_endpoint: str | None
+    r2_bucket: str | None
+    r2_region: str | None
+    r2_archive_root: str | None
+    warnings: list[str]
+    notes: list[str]
+
+
+class ClickHouseProvisionResultRead(ForteModel):
+    provisioned_at: datetime
+    clickhouse_database: str
+    observation_table: str
+    storage_object_table: str
+    storage_policy: str | None
+
+
+class ClickHouseSyncResultRead(ForteModel):
+    synced_at: datetime
+    clickhouse_database: str
+    observation_table: str
+    storage_object_table: str
+    filters_json: dict[str, Any]
+    observation_count: int
+    storage_object_count: int
+
+
+class ClickHouseArchiveResultRead(ForteModel):
+    archived_at: datetime
+    clickhouse_database: str
+    observation_table: str
+    archive_root_url: str
+    partition_strategy: str
+    filters_json: dict[str, Any]
+    exported_row_count: int
+    sql: str
+
+
+class ClickHouseR2ConfigRead(ForteModel):
+    generated_at: datetime
+    archive_root_url: str
+    storage_xml: str
+    create_table_sql: str
+    archive_example_sql: str
+
+
 class RuntimeSnapshotRead(ForteModel):
     exported_at: datetime
     app_name: str

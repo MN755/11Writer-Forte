@@ -34,5 +34,19 @@ services:
       - db
     command: elevenwriter scheduler-worker
 
+  clickhouse:
+    image: clickhouse/clickhouse-server:26.6
+    profiles: ["clickhouse"]
+    environment:
+      CLICKHOUSE_DB: elevenwriter
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: ""
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+
 volumes:
   postgres-data:
+  clickhouse-data:

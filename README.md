@@ -17,6 +17,7 @@ This repo intentionally removes the frontend runtime. The only operator-facing i
 - Camera inventory materialization that turns imported/public traffic camera observations into persisted geospatial camera records with provenance
 - Storage-object ledger that tracks retained artifacts, retention class, lifecycle state, and provenance for imports and camera-derived references
 - SQLAlchemy storage foundation that runs on SQLite for local development and Postgres/PostGIS-oriented URLs for deployment
+- Optional ClickHouse analytics/archive backend that can mirror runtime facts and archive observation data to Cloudflare R2 over the S3-compatible API
 - PostGIS-aware spatial query path that persists WKT alongside GeoJSON and automatically provisions spatial indexes on PostgreSQL
 - Local import pipeline for JSON, JSONL, TXT, and SQLite inputs with row-level dedupe inside each layer
 - Rule-based domain trust and integrity source seeding
@@ -79,6 +80,11 @@ elevenwriter list-storage-objects --owner-type camera_inventory --retention-clas
 elevenwriter add-storage-object manual:casefile:1 report_export event 42 file:///tmp/casefile-42.json --storage-tier hot --retention-class investigative
 elevenwriter promote-storage-object 1 event 42 --storage-tier archive --retention-class permanent
 elevenwriter transition-storage-object 1 archived --storage-tier archive
+elevenwriter show-clickhouse-status
+elevenwriter provision-clickhouse
+elevenwriter sync-clickhouse --layer marine-track --limit 5000
+elevenwriter archive-clickhouse-observations --layer marine-track --limit 5000
+elevenwriter show-clickhouse-r2-config
 elevenwriter add-entity-resolution-schedule nightly-entities 600 --bbox "-96,29,-94,31" --min-observations 2
 elevenwriter add-event-fusion-schedule nightly-fusion 600 --bbox "-96,29,-94,31" --distance-km 10 --time-window-minutes 120
 elevenwriter query-observations --bbox "-96,29,-94,31"
@@ -107,9 +113,26 @@ elevenwriter list-custody
 
 ```bash
 docker compose up --build
+docker compose --profile clickhouse up --build
 ```
 
-By default the compose stack starts the API, a scheduler worker, and PostGIS-ready Postgres.
+By default the compose stack starts the API, a scheduler worker, and PostGIS-ready Postgres. The optional `clickhouse` profile starts a self-hosted ClickHouse server on `8123`/`9000`; Forte will only use it if you also set the ClickHouse env vars below.
+
+### Optional ClickHouse + R2 env
+
+```bash
+ELEVENWRITER_CLICKHOUSE_ENABLED=true
+ELEVENWRITER_CLICKHOUSE_URL=http://127.0.0.1:8123
+ELEVENWRITER_CLICKHOUSE_DATABASE=elevenwriter
+ELEVENWRITER_CLICKHOUSE_USER=default
+ELEVENWRITER_CLICKHOUSE_PASSWORD=
+ELEVENWRITER_CLICKHOUSE_R2_ENDPOINT=https://<ACCOUNT_ID>.r2.cloudflarestorage.com
+ELEVENWRITER_CLICKHOUSE_R2_BUCKET=11writer-archive
+ELEVENWRITER_CLICKHOUSE_R2_ACCESS_KEY_ID=<R2_ACCESS_KEY_ID>
+ELEVENWRITER_CLICKHOUSE_R2_SECRET_ACCESS_KEY=<R2_SECRET_ACCESS_KEY>
+ELEVENWRITER_CLICKHOUSE_R2_REGION=auto
+ELEVENWRITER_CLICKHOUSE_R2_ARCHIVE_PREFIX=11writer-archive
+```
 
 ## Design notes
 
@@ -124,6 +147,9 @@ By default the compose stack starts the API, a scheduler worker, and PostGIS-rea
 - Runtime backup and recovery now have a first-class path too: `/api/operations/runtime/export`, `/api/operations/runtime/restore`, and matching CLI commands serialize the core backend state in dependency-safe order and log custody records for both export and restore.
 - The storage-core slice is real now, not a manifesto: `/api/storage/objects` plus the `list-storage-objects`, `add-storage-object`, `promote-storage-object`, and `transition-storage-object` CLI commands expose a first-class artifact ledger with retention classes, tiering, and lifecycle controls.
 - Imports and camera materialization now auto-register storage manifests, so raw local files plus camera image/stream/page references get tracked as storage objects with expiration windows and custody events instead of disappearing into the void.
+- ClickHouse is now an optional secondary backend instead of a hand-wavy future idea: `/api/operations/clickhouse` exposes diagnostics, provisioning, runtime sync, R2 archive export, and R2 storage-config preview, while the CLI mirrors those same flows for headless ops.
+- Forte still keeps PostgreSQL/SQLite as the primary operational store. ClickHouse is wired for analytics, cold archive, and large-scale query workloads; pretending it fully replaces the relational runtime here would be unserious.
+- Cloudflare R2 support follows the S3-compatible path: set the R2 endpoint, bucket, and HMAC creds, then use `sync-clickhouse` to mirror runtime facts into ClickHouse and `archive-clickhouse-observations` to write Parquet archives toward R2.
 - Camera/webcam work is no longer just notes: `/api/cameras` and `/api/cameras/materialize` now persist camera inventory from imported observations, including MnDOT-style feeds that expose image or stream endpoints plus geospatial coordinates.
 - Camera ops now have a proper backend reporting surface too: `/api/cameras/summary` rolls up fleet health by layer, domain, provider, and status, while `/api/cameras/{id}/ops` exposes per-camera custody, latest observation/import context, and matching refresh schedules.
 - Camera reporting is exportable now too: `/api/cameras/report-index` summarizes refresh task coverage, recent materializations, stale inventory, and recent refresh runs, while `/api/cameras/export/summary` emits a JSON-ready artifact for downstream systems and archival.
