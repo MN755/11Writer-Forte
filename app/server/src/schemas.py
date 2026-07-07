@@ -357,6 +357,8 @@ class EventExportBundleRead(ForteModel):
     event: EventRead
     observation_links: list[EventObservationLinkRead]
     observations: list[ObservationRead]
+    entities: list[EntityRead]
+    entity_observation_links: list[EntityObservationLinkRead]
     import_runs: list[LocalImportRunSummaryRead]
     source_runs: list[SourceRunRead]
     source_definitions: list[SourceDefinitionRead]

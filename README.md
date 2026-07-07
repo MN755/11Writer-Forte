@@ -92,5 +92,5 @@ By default the compose stack starts the API plus PostGIS-ready Postgres.
 - Cross-verification is rule-based today: it clusters nearby observations inside a time window and raises confidence when independent domains or layers corroborate the same occurrence.
 - Entity resolution is rule-based today: it extracts stable identifiers such as vessel MMSI values, handles, emails, and registrations, then merges co-occurring identifiers into reusable entity records with linked evidence rows.
 - Event fusion is rule-based today: corroborated clusters materialize into events, linked evidence rows, a cited summary, and a longer report so the headless runtime can emit usable products before LLM narrative generation exists.
-- Event export bundles package the event, linked observations, import/source context, generated products, citations, and relevant custody records into one JSON artifact for downstream systems or archival.
+- Event export bundles package the event, linked observations, resolved entities, import/source context, generated products, citations, and relevant custody records into one JSON artifact for downstream systems or archival.
 - Managed sources provide a named catalog for repeatable ingestion; scheduler tasks can now sync those source definitions instead of only replaying raw file paths.

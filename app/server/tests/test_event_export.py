@@ -19,6 +19,8 @@ def test_event_export_bundle_includes_evidence_products_and_runs(
                     "url": "https://bundle.example.com/1",
                     "lat": 29.76,
                     "lon": -95.36,
+                    "vessel_name": "MV Bundle",
+                    "mmsi": "123456789",
                 }
             ]
         ),
@@ -49,12 +51,27 @@ def test_event_export_bundle_includes_evidence_products_and_runs(
                     "url": "https://bundle-two.example.com/1",
                     "lat": 29.77,
                     "lon": -95.35,
+                    "vessel_name": "MV Bundle",
+                    "mmsi": "123456789",
                 }
             ]
         ),
         encoding="utf-8",
     )
     client.post("/api/imports/local", json={"source_path": str(second_fixture), "layer_key": "news-track"})
+
+    entity_resolution = client.post(
+        "/api/entities/resolve",
+        json={
+            "min_lon": -96.0,
+            "min_lat": 29.0,
+            "max_lon": -94.0,
+            "max_lat": 31.0,
+            "min_observations": 2,
+        },
+    )
+    assert entity_resolution.status_code == 200
+    assert entity_resolution.json()["created_entity_count"] == 1
 
     fused = client.post(
         "/api/events/fuse",
@@ -76,6 +93,9 @@ def test_event_export_bundle_includes_evidence_products_and_runs(
     assert payload["event"]["event_id"] == event_id
     assert len(payload["observation_links"]) == 2
     assert len(payload["observations"]) == 2
+    assert len(payload["entities"]) == 1
+    assert payload["entities"][0]["canonical_name"] == "MV Bundle"
+    assert len(payload["entity_observation_links"]) == 2
     assert len(payload["import_runs"]) >= 1
     assert len(payload["source_runs"]) == 1
     assert len(payload["source_definitions"]) == 1
@@ -83,6 +103,9 @@ def test_event_export_bundle_includes_evidence_products_and_runs(
     assert payload["citations_json"]
     custody_object_types = {row["object_type"] for row in payload["custody_logs"]}
     assert "event" in custody_object_types
+    assert "entity" in custody_object_types
+    assert "entity_resolution" in custody_object_types
+    assert "entity_observation_link" in custody_object_types
     assert "event_fusion" in custody_object_types
     assert "event_observation_link" in custody_object_types
     assert "situation_product" in custody_object_types
