@@ -76,3 +76,12 @@ def test_event_fusion_creates_event_links_and_products(
     assert product_types == {"cited_summary", "report"}
     assert all(product["citations_json"] for product in products)
     assert any("verification score" in product["body_text"].lower() for product in products)
+
+    custody_response = client.get("/api/custody/logs")
+    assert custody_response.status_code == 200
+    custody_rows = custody_response.json()
+    actions = {row["action"] for row in custody_rows}
+    assert "event_created_from_fusion" in actions
+    assert "fusion_materialized" in actions
+    assert "link_created" in actions
+    assert "product_generated" in actions

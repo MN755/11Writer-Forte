@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
 
 from src.models import (
@@ -194,21 +194,35 @@ def evaluate_geofence_alerts(
             )
             if existing is not None:
                 continue
+            alert = AlertORM(
+                geofence_id=geofence.geofence_id,
+                severity="info" if observation.trust_level != "blocked" else "warning",
+                status="open",
+                dedupe_key=dedupe_key,
+                message=(
+                    f"Observation {observation.observation_id} entered geofence "
+                    f"{geofence.name} on layer {observation.layer_key}."
+                ),
+                trigger_basis_json={
+                    "observation_id": observation.observation_id,
+                    "layer_key": observation.layer_key,
+                    "source_domain": observation.source_domain,
+                    "confidence_score": observation.confidence_score,
+                },
+            )
+            session.add(alert)
+            session.flush()
             session.add(
-                AlertORM(
-                    geofence_id=geofence.geofence_id,
-                    severity="info" if observation.trust_level != "blocked" else "warning",
-                    status="open",
-                    dedupe_key=dedupe_key,
-                    message=(
-                        f"Observation {observation.observation_id} entered geofence "
-                        f"{geofence.name} on layer {observation.layer_key}."
-                    ),
-                    trigger_basis_json={
+                CustodyLogORM(
+                    object_type="alert",
+                    object_id=str(alert.alert_id),
+                    action="alert_created",
+                    actor=actor,
+                    details_json={
+                        "geofence_id": geofence.geofence_id,
                         "observation_id": observation.observation_id,
-                        "layer_key": observation.layer_key,
-                        "source_domain": observation.source_domain,
-                        "confidence_score": observation.confidence_score,
+                        "severity": alert.severity,
+                        "dedupe_key": dedupe_key,
                     },
                 )
             )

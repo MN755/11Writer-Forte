@@ -81,3 +81,14 @@ def test_event_export_bundle_includes_evidence_products_and_runs(
     assert len(payload["source_definitions"]) == 1
     assert len(payload["products"]) == 2
     assert payload["citations_json"]
+    custody_object_types = {row["object_type"] for row in payload["custody_logs"]}
+    assert "event" in custody_object_types
+    assert "event_fusion" in custody_object_types
+    assert "event_observation_link" in custody_object_types
+    assert "situation_product" in custody_object_types
+    assert "source_definition" in custody_object_types
+    assert "event_export" in custody_object_types
+    assert any(
+        row["action"] == "bundle_exported" and row["object_type"] == "event_export"
+        for row in payload["custody_logs"]
+    )

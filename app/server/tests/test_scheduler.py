@@ -72,6 +72,7 @@ def test_geofence_schedule_creates_alert_and_custody_log(
     custody_response = client.get("/api/custody/logs")
     assert custody_response.status_code == 200
     actions = [row["action"] for row in custody_response.json()]
+    assert "alert_created" in actions
     assert "alerts_evaluated" in actions
     assert "task_run_completed" in actions
 
