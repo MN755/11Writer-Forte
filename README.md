@@ -51,6 +51,8 @@ MnDOT live-feed notes and source-ingestion examples live in [MNDOT_FEEDS.md](MND
 elevenwriter status
 elevenwriter init-db
 elevenwriter seed-integrity
+elevenwriter add-layer marine-track "Marine Track" --temporal-resolution live --data-latency low
+elevenwriter list-layers
 elevenwriter import-local path/to/file.json --layer incident-feed
 elevenwriter list-imports
 elevenwriter add-source-file harbor-source ./feeds/harbor.json marine-track --skip-unchanged true
@@ -88,6 +90,7 @@ By default the compose stack starts the API plus PostGIS-ready Postgres.
 
 - Events are the primary operational object.
 - Data layers stay distinct from events so multiple layers can intersect around the same event.
+- Data layers are auto-registered during ingest and source onboarding, so the layer catalog tracks the runtime instead of drifting out of date.
 - Observations preserve raw text or raw structured content alongside extracted location and trust metadata.
 - Trust scoring is rule-based first, seeded with starter integrity sources such as the New York Times, NPR, BBC, and Smithsonian.
 - SQLite remains supported for local ingestion inputs and lightweight runtime mode, but primary backend storage targets Postgres/PostGIS deployment.
@@ -95,6 +98,7 @@ By default the compose stack starts the API plus PostGIS-ready Postgres.
 - Geofence scans create persisted alerts with dedupe keys so the same observation-hit pair does not spam duplicates.
 - Scheduler runs and import operations both write custody records so unattended execution still leaves an audit trail.
 - Cross-verification is rule-based today: it clusters nearby observations inside a time window and raises confidence when independent domains or layers corroborate the same occurrence.
+- Verification outputs now include trusted-observation counts, integrity-source counts, ground-truth hits, and observed-time spans so operators can judge corroboration quality without spelunking raw rows.
 - Entity resolution is rule-based today: it extracts stable identifiers such as vessel MMSI values, handles, emails, and registrations, then merges co-occurring identifiers into reusable entity records with linked evidence rows.
 - Event fusion is rule-based today: corroborated clusters materialize into events, linked evidence rows, a cited summary, and a longer report so the headless runtime can emit usable products before LLM narrative generation exists.
 - Event export bundles package the event, linked observations, resolved entities, import/source context, generated products, citations, and relevant custody records into one JSON artifact for downstream systems or archival.

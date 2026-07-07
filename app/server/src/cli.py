@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import typer
@@ -22,9 +23,11 @@ from src.models import (
     SourceTrustProfileORM,
 )
 from src.schemas import (
+    DataLayerCreate,
     EventExportBundleRead,
     EventFusionRequest,
     EntityResolutionRequest,
+    OperationsReportRead,
     ScheduledTaskCreate,
     SourceDefinitionCreate,
 )
@@ -32,7 +35,9 @@ from src.services.entity_resolution_service import materialize_entities
 from src.services.event_export_service import build_event_export_bundle
 from src.services.event_fusion_service import materialize_fused_events
 from src.services.import_service import import_local_path
+from src.services.layer_service import create_data_layer, list_data_layers
 from src.services.observation_service import build_cross_verification_summaries, query_observations
+from src.services.operations_report_service import build_operations_report
 from src.services.scheduler_service import create_scheduled_task, run_due_tasks, run_task
 from src.services.source_service import (
     create_source_definition,
@@ -67,6 +72,12 @@ def parse_bbox(value: str | None) -> tuple[float | None, float | None, float | N
         raise typer.BadParameter("bbox must be 'min_lon,min_lat,max_lon,max_lat'")
     min_lon, min_lat, max_lon, max_lat = (float(part) for part in parts)
     return (min_lon, min_lat, max_lon, max_lat)
+
+
+def resolve_report_since(hours: float | None) -> datetime | None:
+    if hours is None:
+        return None
+    return datetime.now(timezone.utc) - timedelta(hours=hours)
 
 
 def build_http_source_metadata(
@@ -172,6 +183,50 @@ def list_imports() -> None:
         for run in runs:
             typer.echo(
                 f"{run.import_run_id} | {run.source_format} | {run.layer_key} | imported={run.records_imported} | skipped={run.records_skipped} | {run.source_path}"
+            )
+    finally:
+        session.close()
+
+
+@app.command("add-layer")
+def add_layer(
+    key: str,
+    name: str,
+    description: str = "",
+    temporal_resolution: str = "unknown",
+    data_latency: str = "unknown",
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        layer = create_data_layer(
+            session,
+            DataLayerCreate(
+                key=key,
+                name=name,
+                description=description,
+                temporal_resolution=temporal_resolution,
+                data_latency=data_latency,
+                metadata_json={},
+            ),
+            actor="cli",
+        )
+        print_banner()
+        typer.echo(f"layer {layer.layer_id} created for key={layer.key}")
+    finally:
+        session.close()
+
+
+@app.command("list-layers")
+def list_layers_command() -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        rows = list_data_layers(session)
+        print_banner()
+        for row in rows:
+            typer.echo(
+                f"{row.layer_id} | {row.key} | {row.name} | resolution={row.temporal_resolution} | latency={row.data_latency}"
             )
     finally:
         session.close()
@@ -622,6 +677,7 @@ def cross_verify_command(
             limit=limit,
         )
         summaries = build_cross_verification_summaries(
+            session,
             rows,
             time_window_minutes=time_window_minutes,
             distance_km=distance_km,
@@ -629,7 +685,7 @@ def cross_verify_command(
         print_banner()
         for summary in summaries:
             typer.echo(
-                f"{summary['cluster_id']} | observations={summary['observation_count']} | domains={summary['source_domain_count']} | layers={summary['layer_count']} | score={summary['verification_score']:.2f}"
+                f"{summary['cluster_id']} | observations={summary['observation_count']} | domains={summary['source_domain_count']} | layers={summary['layer_count']} | trusted={summary['trusted_observation_count']} | integrity={summary['integrity_source_count']} | ground_truth={summary['ground_truth_count']} | span_min={summary['time_span_minutes']} | score={summary['verification_score']:.2f}"
             )
     finally:
         session.close()
@@ -702,6 +758,52 @@ def list_custody(limit: int = 20) -> None:
         print_banner()
         for row in rows:
             typer.echo(f"{row.custody_log_id} | {row.object_type} | {row.action} | {row.actor}")
+    finally:
+        session.close()
+
+
+@app.command("show-operations-report")
+def show_operations_report(hours: float | None = 24.0, limit: int = 10) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        since = resolve_report_since(hours)
+        report = build_operations_report(session, since=since, limit=limit)
+        summary = report["summary"]
+        print_banner()
+        typer.echo(f"generated_at: {report['generated_at']}")
+        typer.echo(f"scope_since: {report['scope_since']}")
+        typer.echo(
+            f"imports={summary['import_run_count']} imported={summary['imported_record_count']} skipped={summary['skipped_record_count']}"
+        )
+        typer.echo(
+            f"source_runs={summary['source_run_count']} source_failures={summary['source_run_failure_count']}"
+        )
+        typer.echo(
+            f"task_runs={summary['scheduled_task_run_count']} task_failures={summary['scheduled_task_run_failure_count']}"
+        )
+        typer.echo(
+            f"alerts={summary['alert_count']} open={summary['open_alert_count']} acknowledged={summary['acknowledged_alert_count']} closed={summary['closed_alert_count']}"
+        )
+        typer.echo(
+            f"events={summary['event_count']} entities={summary['entity_count']} observations={summary['observation_count']}"
+        )
+    finally:
+        session.close()
+
+
+@app.command("export-operations-report")
+def export_operations_report(output_path: Path, hours: float | None = 24.0, limit: int = 25) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        since = resolve_report_since(hours)
+        report = build_operations_report(session, since=since, limit=limit)
+        serializable = TypeAdapter(OperationsReportRead).validate_python(report).model_dump(mode="json")
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json.dumps(serializable, indent=2), encoding="utf-8")
+        print_banner()
+        typer.echo(f"exported operations report to {output_path}")
     finally:
         session.close()
 

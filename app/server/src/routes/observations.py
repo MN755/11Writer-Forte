@@ -70,6 +70,7 @@ def cross_verify_observations(
         limit=limit,
     )
     return build_cross_verification_summaries(
+        session,
         observations,
         time_window_minutes=time_window_minutes,
         distance_km=distance_km,

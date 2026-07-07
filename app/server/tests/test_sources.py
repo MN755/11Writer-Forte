@@ -121,6 +121,10 @@ def test_source_definition_run_creates_import_and_history(client: TestClient, tm
     assert imports_response.status_code == 200
     assert imports_response.json()[0]["records_imported"] == 1
 
+    layers_response = client.get("/api/layers")
+    assert layers_response.status_code == 200
+    assert any(layer["key"] == "marine-track" for layer in layers_response.json())
+
     custody_response = client.get("/api/custody/logs")
     assert custody_response.status_code == 200
     custody_rows = custody_response.json()

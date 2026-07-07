@@ -47,6 +47,7 @@ def materialize_fused_events(
     )
     observation_map = {observation.observation_id: observation for observation in observations}
     summaries = build_cross_verification_summaries(
+        session,
         observations,
         time_window_minutes=request.time_window_minutes,
         distance_km=request.distance_km,
@@ -163,6 +164,9 @@ def build_event_summary(summary: dict[str, object], observations: list[Observati
         f"{summary['observation_count']} observations across {summary['layer_count']} layers "
         f"and {summary['source_domain_count']} source domains corroborate a shared occurrence. "
         f"Verification score {summary['verification_score']:.2f}. "
+        f"Trusted observations: {summary['trusted_observation_count']}. "
+        f"Integrity sources: {summary['integrity_source_count']}. "
+        f"Ground truth hits: {summary['ground_truth_count']}. "
         f"Layers: {layer_phrase}. Sources: {citations}."
     )
 
@@ -314,6 +318,9 @@ def build_citations(observations: list[ObservationORM]) -> list[dict[str, object
                 "source_domain": observation.source_domain,
                 "layer_key": observation.layer_key,
                 "confidence_score": observation.confidence_score,
+                "trust_level": observation.trust_level,
+                "approval_policy": observation.approval_policy,
+                "observed_at": observation.content_json.get("observed_at"),
             }
         )
     return rows
@@ -331,7 +338,9 @@ def build_cited_summary(
         f"between {format_time(summary['started_at'])} and {format_time(summary['ended_at'])}. "
         f"Independent corroboration spans {summary['layer_count']} layers and "
         f"{summary['source_domain_count']} domains, with a rule-based verification score of "
-        f"{summary['verification_score']:.2f}. Sources represented in this product: {unique_domains}."
+        f"{summary['verification_score']:.2f}. Trusted observations: {summary['trusted_observation_count']}. "
+        f"Integrity sources: {summary['integrity_source_count']}. Ground-truth hits: "
+        f"{summary['ground_truth_count']}. Sources represented in this product: {unique_domains}."
     )
 
 
@@ -364,7 +373,11 @@ def build_detailed_report(
                 f"- Cluster centroid: lat {round(float(centroid[1]), 4)}, "
                 f"lon {round(float(centroid[0]), 4)}"
             ),
+            f"- Time span minutes: {summary['time_span_minutes']}",
             f"- Independent signals: {summary['independent_signal_count']}",
+            f"- Trusted observations: {summary['trusted_observation_count']}",
+            f"- Integrity sources: {summary['integrity_source_count']}",
+            f"- Ground-truth hits: {summary['ground_truth_count']}",
             f"- Redaction level: {event.redaction_level}",
             f"- Generated at: {format_time(datetime.now(timezone.utc))}",
         ]

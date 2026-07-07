@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from src.config import get_settings
 from src.models import CustodyLogORM, LocalImportRunORM, ObservationORM
 from src.services.geospatial_service import geometry_to_wkt
+from src.services.layer_service import ensure_data_layer
 from src.services.trust_service import normalize_domain, resolve_trust
 
 
@@ -37,6 +38,7 @@ def import_local_path(
     if not path.exists():
         raise FileNotFoundError(f"Input path does not exist: {path}")
 
+    ensure_data_layer(session, layer_key, actor=actor)
     source_format = infer_source_format(path)
     run = LocalImportRunORM(
         source_path=str(path),
