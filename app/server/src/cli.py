@@ -39,6 +39,8 @@ from src.schemas import (
 )
 from src.services.camera_service import list_cameras
 from src.services.camera_service import materialize_camera_inventory
+from src.services.camera_service import build_camera_inventory_ops_detail
+from src.services.camera_service import build_camera_inventory_summary
 from src.services.database_diagnostics_service import build_database_diagnostics
 from src.services.entity_resolution_service import materialize_entities
 from src.services.event_export_service import build_event_export_bundle
@@ -613,6 +615,85 @@ def list_cameras_command(
             typer.echo(
                 f"{row.camera_inventory_id} | {row.name} | {row.status} | active={row.active} | provider={row.provider} | road={row.road_name}"
             )
+    finally:
+        session.close()
+
+
+@app.command("show-camera-summary")
+def show_camera_summary_command(
+    layer: str | None = None,
+    source_domain: str | None = None,
+    status: str | None = None,
+    active: bool | None = typer.Option(default=None),
+    bbox: str | None = None,
+    stale_after_hours: float = 24.0,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        min_lon, min_lat, max_lon, max_lat = parse_bbox(bbox)
+        summary = build_camera_inventory_summary(
+            session,
+            layer_key=layer,
+            source_domain=source_domain,
+            status=status,
+            active=active,
+            min_lon=min_lon,
+            min_lat=min_lat,
+            max_lon=max_lon,
+            max_lat=max_lat,
+            stale_after_hours=stale_after_hours,
+        )
+        print_banner()
+        typer.echo(
+            "totals="
+            f"{summary['total_count']} active={summary['active_count']} inactive={summary['inactive_count']} "
+            f"stale={summary['stale_count']} stale_before={summary['stale_before'].isoformat()}"
+        )
+        for group_name in ("layer_counts", "source_domain_counts", "provider_counts", "status_counts"):
+            typer.echo(f"{group_name}:")
+            for item in summary[group_name]:
+                typer.echo(
+                    f"  {item['key']} | total={item['total_count']} | active={item['active_count']} | inactive={item['inactive_count']} | stale={item['stale_count']}"
+                )
+    finally:
+        session.close()
+
+
+@app.command("show-camera-ops")
+def show_camera_ops_command(camera_inventory_id: int) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        detail = build_camera_inventory_ops_detail(session, camera_inventory_id)
+        camera = detail["camera"]
+        print_banner()
+        typer.echo(
+            f"camera={camera.camera_inventory_id} key={camera.camera_key} name={camera.name} status={camera.status} active={camera.active}"
+        )
+        typer.echo(
+            f"layer={camera.layer_key} source_domain={camera.source_domain} provider={camera.provider} last_observed_at={camera.last_observed_at}"
+        )
+        latest_observation = detail["latest_observation"]
+        if latest_observation is not None:
+            typer.echo(
+                f"latest_observation={latest_observation.observation_id} import_run={latest_observation.import_run_id} source_domain={latest_observation.source_domain}"
+            )
+        latest_import_run = detail["latest_import_run"]
+        if latest_import_run is not None:
+            typer.echo(
+                f"latest_import_run={latest_import_run.import_run_id} status={latest_import_run.status} imported={latest_import_run.records_imported}"
+            )
+        typer.echo("refresh_tasks:")
+        for task in detail["refresh_tasks"]:
+            typer.echo(
+                f"  {task.task_id} | enabled={task.enabled} | every={task.interval_seconds}s | next={task.next_run_at} | payload={json.dumps(task.payload_json, sort_keys=True)}"
+            )
+        typer.echo("custody_logs:")
+        for log in detail["custody_logs"]:
+            typer.echo(f"  {log.custody_log_id} | {log.action} | {log.actor} | {log.created_at}")
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
     finally:
         session.close()
 

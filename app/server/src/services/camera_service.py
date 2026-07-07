@@ -2,13 +2,19 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from src.models import CameraInventoryORM, CustodyLogORM, ObservationORM
+from src.models import (
+    CameraInventoryORM,
+    CustodyLogORM,
+    LocalImportRunORM,
+    ObservationORM,
+    ScheduledTaskORM,
+)
 from src.services.geospatial_service import build_bbox_sql_filter, geometry_to_wkt, uses_postgis
 from src.services.observation_service import (
     extract_observation_timestamp,
@@ -51,6 +57,34 @@ def list_cameras(
     max_lat: float | None = None,
     limit: int = 200,
 ) -> list[CameraInventoryORM]:
+    rows = query_camera_inventory(
+        session,
+        layer_key=layer_key,
+        source_domain=source_domain,
+        status=status,
+        active=active,
+        min_lon=min_lon,
+        min_lat=min_lat,
+        max_lon=max_lon,
+        max_lat=max_lat,
+        limit=limit,
+    )
+    return rows[:limit]
+
+
+def query_camera_inventory(
+    session: Session,
+    *,
+    layer_key: str | None = None,
+    source_domain: str | None = None,
+    status: str | None = None,
+    active: bool | None = None,
+    min_lon: float | None = None,
+    min_lat: float | None = None,
+    max_lon: float | None = None,
+    max_lat: float | None = None,
+    limit: int | None = None,
+) -> list[CameraInventoryORM]:
     statement = select(CameraInventoryORM).order_by(
         CameraInventoryORM.last_observed_at.desc().nullslast(),
         CameraInventoryORM.updated_at.desc(),
@@ -73,7 +107,9 @@ def list_cameras(
                 max_lon=max_lon,
                 max_lat=max_lat,
             )
-        ).limit(limit)
+        )
+        if limit is not None:
+            statement = statement.limit(limit)
         return list(session.scalars(statement))
 
     rows = list(session.scalars(statement))
@@ -89,6 +125,8 @@ def list_cameras(
                 max_lat=max_lat,
             )
         ]
+    if limit is None:
+        return rows
     return rows[:limit]
 
 
@@ -223,6 +261,102 @@ def materialize_camera_inventory(
         "updated_count": updated_count,
         "scanned_count": len(observations),
         "cameras": touched_cameras,
+    }
+
+
+def build_camera_inventory_summary(
+    session: Session,
+    *,
+    layer_key: str | None = None,
+    source_domain: str | None = None,
+    status: str | None = None,
+    active: bool | None = None,
+    min_lon: float | None = None,
+    min_lat: float | None = None,
+    max_lon: float | None = None,
+    max_lat: float | None = None,
+    stale_after_hours: float = 24.0,
+) -> dict[str, object]:
+    generated_at = datetime.now(timezone.utc)
+    stale_before = generated_at - timedelta(hours=max(0.0, stale_after_hours))
+    cameras = query_camera_inventory(
+        session,
+        layer_key=layer_key,
+        source_domain=source_domain,
+        status=status,
+        active=active,
+        min_lon=min_lon,
+        min_lat=min_lat,
+        max_lon=max_lon,
+        max_lat=max_lat,
+        limit=None,
+    )
+
+    return {
+        "generated_at": generated_at,
+        "stale_before": stale_before,
+        "total_count": len(cameras),
+        "active_count": sum(1 for camera in cameras if camera.active),
+        "inactive_count": sum(1 for camera in cameras if not camera.active),
+        "stale_count": sum(1 for camera in cameras if is_stale_camera(camera, stale_before)),
+        "layer_counts": build_camera_summary_buckets(cameras, lambda camera: camera.layer_key, stale_before),
+        "source_domain_counts": build_camera_summary_buckets(
+            cameras,
+            lambda camera: camera.source_domain or "unknown",
+            stale_before,
+        ),
+        "provider_counts": build_camera_summary_buckets(
+            cameras,
+            lambda camera: camera.provider or "unknown",
+            stale_before,
+        ),
+        "status_counts": build_camera_summary_buckets(cameras, lambda camera: camera.status or "unknown", stale_before),
+    }
+
+
+def build_camera_inventory_ops_detail(
+    session: Session,
+    camera_inventory_id: int,
+) -> dict[str, object]:
+    camera = session.get(CameraInventoryORM, camera_inventory_id)
+    if camera is None:
+        raise ValueError(f"Camera inventory record {camera_inventory_id} does not exist.")
+
+    latest_observation = session.get(ObservationORM, camera.observation_id) if camera.observation_id is not None else None
+    latest_import_run = (
+        session.get(LocalImportRunORM, latest_observation.import_run_id)
+        if latest_observation is not None and latest_observation.import_run_id is not None
+        else None
+    )
+    custody_logs = list(
+        session.scalars(
+            select(CustodyLogORM)
+            .where(
+                CustodyLogORM.object_type == "camera_inventory",
+                CustodyLogORM.object_id == str(camera.camera_inventory_id),
+            )
+            .order_by(CustodyLogORM.created_at.desc())
+            .limit(50)
+        )
+    )
+    refresh_tasks = list(
+        session.scalars(
+            select(ScheduledTaskORM)
+            .where(ScheduledTaskORM.task_type == "camera_inventory_refresh")
+            .order_by(ScheduledTaskORM.task_id.asc())
+        )
+    )
+    matching_tasks = [
+        task
+        for task in refresh_tasks
+        if camera_matches_refresh_task(camera, task)
+    ]
+    return {
+        "camera": camera,
+        "latest_observation": latest_observation,
+        "latest_import_run": latest_import_run,
+        "custody_logs": custody_logs,
+        "refresh_tasks": matching_tasks,
     }
 
 
@@ -427,6 +561,61 @@ def camera_in_bbox(
 
 def normalize_timestamp(value: datetime) -> datetime:
     return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+
+
+def is_stale_camera(camera: CameraInventoryORM, stale_before: datetime) -> bool:
+    if camera.last_observed_at is None:
+        return True
+    return normalize_timestamp(camera.last_observed_at) < stale_before
+
+
+def build_camera_summary_buckets(
+    cameras: list[CameraInventoryORM],
+    key_fn,
+    stale_before: datetime,
+) -> list[dict[str, object]]:
+    counts: dict[str, dict[str, object]] = {}
+    for camera in cameras:
+        key = str(key_fn(camera) or "unknown")
+        bucket = counts.setdefault(
+            key,
+            {
+                "key": key,
+                "total_count": 0,
+                "active_count": 0,
+                "inactive_count": 0,
+                "stale_count": 0,
+            },
+        )
+        bucket["total_count"] += 1
+        if camera.active:
+            bucket["active_count"] += 1
+        else:
+            bucket["inactive_count"] += 1
+        if is_stale_camera(camera, stale_before):
+            bucket["stale_count"] += 1
+    return sorted(
+        counts.values(),
+        key=lambda item: (-int(item["total_count"]), str(item["key"]).lower()),
+    )
+
+
+def camera_matches_refresh_task(camera: CameraInventoryORM, task: ScheduledTaskORM) -> bool:
+    if task.layer_key is not None and task.layer_key != camera.layer_key:
+        return False
+    payload = task.payload_json if isinstance(task.payload_json, dict) else {}
+    task_source_domain = payload.get("source_domain")
+    if not isinstance(task_source_domain, str) or not task_source_domain.strip():
+        return True
+    normalized_task_domain = normalize_domain(task_source_domain)
+    normalized_camera_domain = normalize_domain(camera.source_domain) if camera.source_domain else None
+    if not normalized_task_domain or not normalized_camera_domain:
+        return False
+    return (
+        normalized_camera_domain == normalized_task_domain
+        or normalized_camera_domain.endswith(f".{normalized_task_domain}")
+        or normalized_task_domain.endswith(f".{normalized_camera_domain}")
+    )
 
 
 def to_json_safe(value: Any) -> Any:

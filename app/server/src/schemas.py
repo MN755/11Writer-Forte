@@ -183,6 +183,35 @@ class CameraMaterializationResponse(ForteModel):
     cameras: list[CameraInventoryRead]
 
 
+class CameraInventorySummaryBucketRead(ForteModel):
+    key: str
+    total_count: int
+    active_count: int
+    inactive_count: int
+    stale_count: int
+
+
+class CameraInventorySummaryRead(ForteModel):
+    generated_at: datetime
+    stale_before: datetime
+    total_count: int
+    active_count: int
+    inactive_count: int
+    stale_count: int
+    layer_counts: list[CameraInventorySummaryBucketRead]
+    source_domain_counts: list[CameraInventorySummaryBucketRead]
+    provider_counts: list[CameraInventorySummaryBucketRead]
+    status_counts: list[CameraInventorySummaryBucketRead]
+
+
+class CameraInventoryOpsDetailRead(ForteModel):
+    camera: CameraInventoryRead
+    latest_observation: ObservationRead | None
+    latest_import_run: LocalImportRunSummaryRead | None
+    custody_logs: list["CustodyLogRead"]
+    refresh_tasks: list["ScheduledTaskRead"]
+
+
 class EventObservationLinkRead(ForteModel):
     event_observation_link_id: int
     event_id: int
