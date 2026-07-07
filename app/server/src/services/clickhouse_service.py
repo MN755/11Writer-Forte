@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -26,6 +27,7 @@ def build_clickhouse_diagnostics() -> dict[str, object]:
     version: str | None = None
     current_database: str | None = None
     r2_archive_root = build_r2_archive_root() if settings.clickhouse_r2_configured else None
+    r2_storage_root = build_r2_storage_root() if settings.clickhouse_r2_storage_configured else None
 
     if not settings.clickhouse_enabled:
         notes.append("ClickHouse integration is disabled.")
@@ -39,18 +41,29 @@ def build_clickhouse_diagnostics() -> dict[str, object]:
             "reachable": False,
             "version": None,
             "current_database": None,
-            "storage_policy": settings.clickhouse_storage_policy,
+            "storage_policy": settings.clickhouse_effective_storage_policy,
+            "storage_mode": settings.clickhouse_r2_storage_mode,
             "r2_configured": settings.clickhouse_r2_configured,
             "r2_endpoint": settings.clickhouse_r2_endpoint,
             "r2_bucket": settings.clickhouse_r2_bucket,
             "r2_region": settings.clickhouse_r2_region,
             "r2_archive_root": r2_archive_root,
+            "r2_storage_ready": settings.clickhouse_r2_storage_configured,
+            "r2_storage_bucket": settings.clickhouse_r2_storage_bucket_effective,
+            "r2_storage_root": r2_storage_root,
             "warnings": warnings,
             "notes": notes,
         }
 
     if not settings.clickhouse_r2_configured:
         warnings.append("ClickHouse is enabled, but Cloudflare R2 archive settings are incomplete.")
+    if settings.clickhouse_r2_storage_mode == "hybrid":
+        notes.append("Hybrid mode keeps hot ClickHouse tables local and expects R2 for archive query/rehydration.")
+    if settings.clickhouse_r2_storage_mode == "r2_disk":
+        if settings.clickhouse_r2_storage_configured:
+            notes.append("R2 disk mode will provision ClickHouse tables against the configured remote storage policy.")
+        else:
+            warnings.append("ClickHouse R2 disk mode is selected, but the R2 storage settings are incomplete.")
 
     try:
         ping_clickhouse()
@@ -74,12 +87,16 @@ def build_clickhouse_diagnostics() -> dict[str, object]:
         "reachable": reachable,
         "version": version,
         "current_database": current_database,
-        "storage_policy": settings.clickhouse_storage_policy,
+        "storage_policy": settings.clickhouse_effective_storage_policy,
+        "storage_mode": settings.clickhouse_r2_storage_mode,
         "r2_configured": settings.clickhouse_r2_configured,
         "r2_endpoint": settings.clickhouse_r2_endpoint,
         "r2_bucket": settings.clickhouse_r2_bucket,
         "r2_region": settings.clickhouse_r2_region,
         "r2_archive_root": r2_archive_root,
+        "r2_storage_ready": settings.clickhouse_r2_storage_configured,
+        "r2_storage_bucket": settings.clickhouse_r2_storage_bucket_effective,
+        "r2_storage_root": r2_storage_root,
         "warnings": warnings,
         "notes": notes,
     }
@@ -92,6 +109,7 @@ def provision_clickhouse_backend(
 ) -> dict[str, object]:
     settings = get_settings()
     ensure_clickhouse_enabled()
+    ensure_clickhouse_storage_mode_ready()
     ping_clickhouse()
     execute_clickhouse_sql(f"CREATE DATABASE IF NOT EXISTS {settings.clickhouse_database}")
     execute_clickhouse_sql(build_observation_table_sql())
@@ -101,7 +119,8 @@ def provision_clickhouse_backend(
         "clickhouse_database": settings.clickhouse_database,
         "observation_table": settings.clickhouse_observation_table,
         "storage_object_table": settings.clickhouse_storage_object_table,
-        "storage_policy": settings.clickhouse_storage_policy,
+        "storage_policy": settings.clickhouse_effective_storage_policy,
+        "storage_mode": settings.clickhouse_r2_storage_mode,
     }
     if session is not None:
         session.add(
@@ -113,7 +132,8 @@ def provision_clickhouse_backend(
                 details_json={
                     "observation_table": settings.clickhouse_observation_table,
                     "storage_object_table": settings.clickhouse_storage_object_table,
-                    "storage_policy": settings.clickhouse_storage_policy,
+                    "storage_policy": settings.clickhouse_effective_storage_policy,
+                    "storage_mode": settings.clickhouse_r2_storage_mode,
                 },
             )
         )
@@ -247,48 +267,63 @@ def archive_clickhouse_observations_to_r2(
 def build_clickhouse_r2_config_preview() -> dict[str, object]:
     settings = get_settings()
     if not settings.clickhouse_r2_configured:
-        raise ValueError("ClickHouse R2 archive settings are incomplete.")
+        raise ValueError("ClickHouse R2 settings are incomplete.")
     archive_root_url = build_r2_archive_root()
-    storage_endpoint = (
-        f"{settings.clickhouse_r2_endpoint.rstrip('/')}/"
-        f"{settings.clickhouse_r2_bucket}/{settings.clickhouse_r2_archive_prefix}/clickhouse/"
-    )
-    storage_xml = (
-        "<clickhouse>\n"
-        "  <storage_configuration>\n"
-        "    <disks>\n"
-        "      <r2_disk>\n"
-        "        <type>s3</type>\n"
-        f"        <endpoint>{storage_endpoint}</endpoint>\n"
-        f"        <access_key_id>{settings.clickhouse_r2_access_key_id}</access_key_id>\n"
-        f"        <secret_access_key>{settings.clickhouse_r2_secret_access_key}</secret_access_key>\n"
-        "        <metadata_path>/var/lib/clickhouse/disks/r2_disk/</metadata_path>\n"
-        "      </r2_disk>\n"
-        "      <r2_cache>\n"
-        "        <type>cache</type>\n"
-        "        <disk>r2_disk</disk>\n"
-        "        <path>/var/lib/clickhouse/disks/r2_cache/</path>\n"
-        "        <max_size>10Gi</max_size>\n"
-        "      </r2_cache>\n"
-        "    </disks>\n"
-        "    <policies>\n"
-        "      <r2_main>\n"
-        "        <volumes>\n"
-        "          <main>\n"
-        "            <disk>r2_cache</disk>\n"
-        "          </main>\n"
-        "        </volumes>\n"
-        "      </r2_main>\n"
-        "    </policies>\n"
-        "  </storage_configuration>\n"
-        "</clickhouse>"
-    )
+    storage_root_url = build_r2_storage_root()
+    sample_archive_glob = build_r2_archive_glob_url()
+    storage_xml = render_clickhouse_r2_storage_xml()
     return {
         "generated_at": clickhouse_now(),
+        "storage_mode": settings.clickhouse_r2_storage_mode,
         "archive_root_url": archive_root_url,
+        "storage_root_url": storage_root_url,
+        "storage_policy": settings.clickhouse_effective_storage_policy,
         "storage_xml": storage_xml,
-        "create_table_sql": build_observation_table_sql(storage_policy_override="r2_main"),
+        "create_table_sql": build_observation_table_sql(
+            storage_policy_override=settings.clickhouse_r2_storage_policy
+        ),
         "archive_example_sql": build_archive_observations_sql(archive_root_url=archive_root_url),
+        "rehydrate_example_sql": build_rehydrate_observations_sql(sample_archive_glob),
+        "direct_query_example_sql": build_r2_direct_query_example_sql(sample_archive_glob),
+        "docker_output_path": str(default_clickhouse_r2_config_path()),
+    }
+
+
+def rehydrate_clickhouse_observations_from_r2(
+    session: Session,
+    *,
+    archive_glob_url: str,
+    actor: str = "clickhouse_operator",
+) -> dict[str, object]:
+    settings = get_settings()
+    ensure_clickhouse_enabled()
+    if not settings.clickhouse_r2_configured:
+        raise ValueError("ClickHouse R2 settings are incomplete.")
+    validate_r2_archive_glob_url(archive_glob_url)
+    provision_clickhouse_backend()
+    imported_row_count = count_r2_archive_rows(archive_glob_url)
+    sql = build_rehydrate_observations_sql(archive_glob_url)
+    execute_clickhouse_sql(sql)
+    session.add(
+        CustodyLogORM(
+            object_type="clickhouse_backend",
+            object_id=settings.clickhouse_database,
+            action="clickhouse_rehydrated_from_r2",
+            actor=actor,
+            details_json={
+                "archive_glob_url": archive_glob_url,
+                "imported_row_count": imported_row_count,
+            },
+        )
+    )
+    session.commit()
+    return {
+        "rehydrated_at": clickhouse_now(),
+        "clickhouse_database": settings.clickhouse_database,
+        "observation_table": settings.clickhouse_observation_table,
+        "archive_glob_url": archive_glob_url,
+        "imported_row_count": imported_row_count,
+        "sql": sql,
     }
 
 
@@ -424,7 +459,7 @@ def build_storage_object_table_sql(*, storage_policy_override: str | None = None
 
 
 def build_storage_policy_clause(storage_policy_override: str | None = None) -> str | None:
-    storage_policy = storage_policy_override or get_settings().clickhouse_storage_policy
+    storage_policy = storage_policy_override or get_settings().clickhouse_effective_storage_policy
     if not storage_policy:
         return None
     return f"storage_policy = '{storage_policy}'"
@@ -462,7 +497,7 @@ def build_archive_observations_sql(
         ")\n"
         "PARTITION BY concat("
         "'layer=', replaceRegexpAll(layer_key, '[^A-Za-z0-9_-]+', '_'), "
-        "',date=', formatDateTime(observed_at, '%Y-%m-%d')"
+        "'/date=', formatDateTime(observed_at, '%Y-%m-%d')"
         ")\n"
         "SELECT observation_id, import_run_id, event_id, layer_key, source_domain, source_type, "
         "record_format, trust_level, approval_policy, confidence_score, longitude, latitude, "
@@ -471,6 +506,50 @@ def build_archive_observations_sql(
         f"WHERE {where_sql}"
         f"{limit_sql}"
     )
+
+
+def build_rehydrate_observations_sql(archive_glob_url: str) -> str:
+    settings = get_settings()
+    return (
+        f"INSERT INTO {settings.clickhouse_database}.{settings.clickhouse_observation_table}\n"
+        "SELECT observation_id, import_run_id, event_id, layer_key, source_domain, source_type, "
+        "record_format, trust_level, approval_policy, confidence_score, longitude, latitude, "
+        "observed_at, created_at, updated_at, raw_hash, content_text, content_json_json\n"
+        "FROM s3("
+        f"{to_clickhouse_string(archive_glob_url)}, "
+        f"{to_clickhouse_string(settings.clickhouse_r2_access_key_id or '')}, "
+        f"{to_clickhouse_string(settings.clickhouse_r2_secret_access_key or '')}, "
+        "'Parquet'"
+        ")"
+    )
+
+
+def build_r2_direct_query_example_sql(archive_glob_url: str) -> str:
+    settings = get_settings()
+    return (
+        "SELECT layer_key, count(*) AS row_count\n"
+        "FROM s3("
+        f"{to_clickhouse_string(archive_glob_url)}, "
+        f"{to_clickhouse_string(settings.clickhouse_r2_access_key_id or '')}, "
+        f"{to_clickhouse_string(settings.clickhouse_r2_secret_access_key or '')}, "
+        "'Parquet'"
+        ")\n"
+        "GROUP BY layer_key\n"
+        "ORDER BY row_count DESC\n"
+        "LIMIT 100"
+    )
+
+
+def count_r2_archive_rows(archive_glob_url: str) -> int:
+    rows = execute_clickhouse_query_json(
+        "SELECT count(*) AS row_count FROM s3("
+        f"{to_clickhouse_string(archive_glob_url)}, "
+        f"{to_clickhouse_string(get_settings().clickhouse_r2_access_key_id or '')}, "
+        f"{to_clickhouse_string(get_settings().clickhouse_r2_secret_access_key or '')}, "
+        "'Parquet'"
+        ") FORMAT JSONEachRow"
+    )
+    return int(rows[0]["row_count"]) if rows else 0
 
 
 def count_clickhouse_observation_rows(
@@ -589,6 +668,77 @@ def build_r2_archive_root() -> str:
         f"{settings.clickhouse_r2_bucket}/"
         f"{settings.clickhouse_r2_archive_prefix.strip('/')}"
     )
+
+
+def build_r2_storage_root() -> str:
+    settings = get_settings()
+    if not settings.clickhouse_r2_storage_configured:
+        raise ValueError("ClickHouse R2 storage settings are incomplete.")
+    return (
+        f"{settings.clickhouse_r2_endpoint.rstrip('/')}/"
+        f"{settings.clickhouse_r2_storage_bucket_effective}/"
+        f"{settings.clickhouse_r2_storage_prefix.strip('/')}"
+    )
+
+
+def build_r2_archive_glob_url() -> str:
+    return f"{build_r2_archive_root().rstrip('/')}/observations/layer=*/date=*/*.parquet"
+
+
+def render_clickhouse_r2_storage_xml() -> str:
+    settings = get_settings()
+    storage_root_url = build_r2_storage_root()
+    return (
+        "<clickhouse>\n"
+        "  <storage_configuration>\n"
+        "    <disks>\n"
+        "      <r2_disk>\n"
+        "        <type>object_storage</type>\n"
+        "        <object_storage_type>s3</object_storage_type>\n"
+        "        <metadata_type>local</metadata_type>\n"
+        f"        <endpoint>{storage_root_url.rstrip('/')}/</endpoint>\n"
+        f"        <access_key_id>{settings.clickhouse_r2_access_key_id}</access_key_id>\n"
+        f"        <secret_access_key>{settings.clickhouse_r2_secret_access_key}</secret_access_key>\n"
+        f"        <region>{settings.clickhouse_r2_region}</region>\n"
+        "        <metadata_path>/var/lib/clickhouse/disks/r2_disk/</metadata_path>\n"
+        "      </r2_disk>\n"
+        "      <r2_cache>\n"
+        "        <type>cache</type>\n"
+        "        <disk>r2_disk</disk>\n"
+        "        <path>/var/lib/clickhouse/disks/r2_cache/</path>\n"
+        f"        <max_size>{settings.clickhouse_r2_cache_size}</max_size>\n"
+        "      </r2_cache>\n"
+        "    </disks>\n"
+        "    <policies>\n"
+        f"      <{settings.clickhouse_r2_storage_policy}>\n"
+        "        <volumes>\n"
+        "          <main>\n"
+        "            <disk>r2_cache</disk>\n"
+        "          </main>\n"
+        "        </volumes>\n"
+        f"      </{settings.clickhouse_r2_storage_policy}>\n"
+        "    </policies>\n"
+        "  </storage_configuration>\n"
+        "</clickhouse>"
+    )
+
+
+def default_clickhouse_r2_config_path() -> Path:
+    return Path("./11writer-r2-storage.xml")
+
+
+def validate_r2_archive_glob_url(archive_glob_url: str) -> None:
+    if not archive_glob_url.strip():
+        raise ValueError("archive_glob_url is required.")
+    endpoint = (get_settings().clickhouse_r2_endpoint or "").rstrip("/")
+    if endpoint and not archive_glob_url.startswith(f"{endpoint}/"):
+        raise ValueError("archive_glob_url must target the configured Cloudflare R2 endpoint.")
+
+
+def ensure_clickhouse_storage_mode_ready() -> None:
+    settings = get_settings()
+    if settings.clickhouse_r2_storage_mode == "r2_disk" and not settings.clickhouse_r2_storage_configured:
+        raise ValueError("ClickHouse R2 disk mode requires complete R2 storage settings.")
 
 
 def ensure_clickhouse_enabled() -> None:

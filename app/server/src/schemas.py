@@ -76,11 +76,15 @@ class ClickHouseDiagnosticsRead(ForteModel):
     version: str | None
     current_database: str | None
     storage_policy: str | None
+    storage_mode: str
     r2_configured: bool
     r2_endpoint: str | None
     r2_bucket: str | None
     r2_region: str | None
     r2_archive_root: str | None
+    r2_storage_ready: bool
+    r2_storage_bucket: str | None
+    r2_storage_root: str | None
     warnings: list[str]
     notes: list[str]
 
@@ -91,6 +95,7 @@ class ClickHouseProvisionResultRead(ForteModel):
     observation_table: str
     storage_object_table: str
     storage_policy: str | None
+    storage_mode: str
 
 
 class ClickHouseSyncResultRead(ForteModel):
@@ -116,10 +121,25 @@ class ClickHouseArchiveResultRead(ForteModel):
 
 class ClickHouseR2ConfigRead(ForteModel):
     generated_at: datetime
+    storage_mode: str
     archive_root_url: str
+    storage_root_url: str
+    storage_policy: str | None
     storage_xml: str
     create_table_sql: str
     archive_example_sql: str
+    rehydrate_example_sql: str
+    direct_query_example_sql: str
+    docker_output_path: str
+
+
+class ClickHouseRehydrateResultRead(ForteModel):
+    rehydrated_at: datetime
+    clickhouse_database: str
+    observation_table: str
+    archive_glob_url: str
+    imported_row_count: int
+    sql: str
 
 
 class RuntimeSnapshotRead(ForteModel):
@@ -539,6 +559,57 @@ class SourceOpsDetailRead(ForteModel):
     custody_logs: list["CustodyLogRead"]
 
 
+class SourceOpsStatusRead(ForteModel):
+    source: SourceDefinitionRead
+    latest_run: SourceRunRead | None
+    has_schedule: bool
+    next_run_at: datetime | None
+    latest_success_at: datetime | None
+    is_stale: bool
+    is_failing: bool
+    storage_object_count: int
+    last_storage_observed_at: datetime | None
+
+
+class SourceSummaryBucketRead(ForteModel):
+    key: str
+    total_count: int
+    enabled_count: int
+    disabled_count: int
+    stale_count: int
+    failing_count: int
+
+
+class SourceInventorySummaryRead(ForteModel):
+    generated_at: datetime
+    stale_before: datetime
+    total_count: int
+    enabled_count: int
+    disabled_count: int
+    stale_count: int
+    failing_count: int
+    scheduled_count: int
+    unscheduled_count: int
+    source_kind_counts: list[SourceSummaryBucketRead]
+    layer_counts: list[SourceSummaryBucketRead]
+    latest_status_counts: list[SourceSummaryBucketRead]
+
+
+class SourceOpsReportIndexRead(ForteModel):
+    generated_at: datetime
+    stale_after_hours: float
+    latest_run_at: datetime | None
+    inventory_summary: SourceInventorySummaryRead
+    sync_task_count: int
+    sync_run_count: int
+    sync_failure_count: int
+    sync_tasks: list["ScheduledTaskRead"]
+    recent_runs: list[SourceRunRead]
+    stale_sources: list[SourceOpsStatusRead]
+    failing_sources: list[SourceOpsStatusRead]
+    unscheduled_sources: list[SourceOpsStatusRead]
+
+
 class IntegritySeedResponse(ForteModel):
     created: int
     domains: list[str]
@@ -811,6 +882,8 @@ class OperationsReportRead(ForteModel):
     scope_since: datetime | None
     scope_until: datetime | None
     summary: OperationsSummaryRead
+    source_inventory_summary: SourceInventorySummaryRead
+    source_report_index: SourceOpsReportIndexRead
     camera_inventory_summary: CameraInventorySummaryRead
     camera_report_index: CameraOpsReportIndexRead
     import_runs: list[LocalImportRunSummaryRead]

@@ -24,12 +24,13 @@ from src.models import (
 )
 from src.schemas import (
     CameraSourceMaterializationResponse,
-    CameraSourceSummaryRead,
     CameraSourceInventoryRead,
+    CameraSourceSummaryRead,
     ClickHouseArchiveResultRead,
     ClickHouseDiagnosticsRead,
     ClickHouseProvisionResultRead,
     ClickHouseR2ConfigRead,
+    ClickHouseRehydrateResultRead,
     ClickHouseSyncResultRead,
     CameraOpsExportSummaryRead,
     CameraOpsReportIndexRead,
@@ -52,6 +53,8 @@ from src.schemas import (
     StorageReportRead,
     SourceDefinitionCreate,
     SourceDefinitionUpdate,
+    SourceInventorySummaryRead,
+    SourceOpsReportIndexRead,
 )
 from src.services.camera_source_service import (
     build_camera_source_inventory_ops_detail,
@@ -63,7 +66,9 @@ from src.services.clickhouse_service import (
     archive_clickhouse_observations_to_r2,
     build_clickhouse_diagnostics,
     build_clickhouse_r2_config_preview,
+    default_clickhouse_r2_config_path,
     provision_clickhouse_backend,
+    rehydrate_clickhouse_observations_from_r2,
     sync_runtime_to_clickhouse,
 )
 from src.services.camera_service import list_cameras
@@ -95,7 +100,9 @@ from src.services.storage_service import (
     transition_storage_object,
 )
 from src.services.source_service import (
+    build_source_inventory_summary,
     build_source_ops_detail,
+    build_source_ops_report_index,
     create_source_definition,
     list_source_definitions,
     list_source_runs,
@@ -253,7 +260,12 @@ def show_clickhouse_status() -> None:
         f"url={serializable['clickhouse_url']} observations={serializable['observation_table']} storage={serializable['storage_object_table']}"
     )
     typer.echo(
-        f"r2_configured={serializable['r2_configured']} r2_root={serializable['r2_archive_root']}"
+        "storage_mode="
+        f"{serializable['storage_mode']} storage_policy={serializable['storage_policy']} "
+        f"r2_configured={serializable['r2_configured']}"
+    )
+    typer.echo(
+        f"r2_archive_root={serializable['r2_archive_root']} r2_storage_root={serializable['r2_storage_root']}"
     )
     if serializable["warnings"]:
         typer.echo("warnings:")
@@ -342,15 +354,64 @@ def show_clickhouse_r2_config() -> None:
         result = build_clickhouse_r2_config_preview()
         serializable = TypeAdapter(ClickHouseR2ConfigRead).validate_python(result).model_dump(mode="json")
         print_banner()
+        typer.echo(
+            f"storage_mode={serializable['storage_mode']} storage_policy={serializable['storage_policy']}"
+        )
         typer.echo(f"archive_root: {serializable['archive_root_url']}")
+        typer.echo(f"storage_root: {serializable['storage_root_url']}")
+        typer.echo(f"docker_output_path: {serializable['docker_output_path']}")
         typer.echo("storage_xml:")
         typer.echo(serializable["storage_xml"])
         typer.echo("create_table_sql:")
         typer.echo(serializable["create_table_sql"])
         typer.echo("archive_example_sql:")
         typer.echo(serializable["archive_example_sql"])
+        typer.echo("rehydrate_example_sql:")
+        typer.echo(serializable["rehydrate_example_sql"])
+        typer.echo("direct_query_example_sql:")
+        typer.echo(serializable["direct_query_example_sql"])
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
+
+
+@app.command("write-clickhouse-r2-config")
+def write_clickhouse_r2_config(
+    output_path: Path | None = None,
+) -> None:
+    try:
+        result = build_clickhouse_r2_config_preview()
+        serializable = TypeAdapter(ClickHouseR2ConfigRead).validate_python(result).model_dump(mode="json")
+        target_path = output_path or default_clickhouse_r2_config_path()
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        target_path.write_text(serializable["storage_xml"] + "\n", encoding="utf-8")
+        print_banner()
+        typer.echo(f"wrote {target_path}")
+        typer.echo(
+            f"storage_mode={serializable['storage_mode']} storage_policy={serializable['storage_policy']}"
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+
+@app.command("rehydrate-clickhouse-observations")
+def rehydrate_clickhouse_observations_command(archive_glob_url: str) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        result = rehydrate_clickhouse_observations_from_r2(
+            session,
+            archive_glob_url=archive_glob_url,
+            actor="cli_clickhouse",
+        )
+        serializable = TypeAdapter(ClickHouseRehydrateResultRead).validate_python(result).model_dump(mode="json")
+        print_banner()
+        typer.echo(
+            f"rehydrated rows={serializable['imported_row_count']} database={serializable['clickhouse_database']} source={serializable['archive_glob_url']}"
+        )
+    except (RuntimeError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
 
 
 @app.command("init-db")
@@ -739,6 +800,82 @@ def show_source_ops_command(source_id: int) -> None:
             typer.echo(f"  {row.custody_log_id} | {row.object_type} | {row.action} | {row.actor}")
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.command("show-source-summary")
+def show_source_summary_command(stale_after_hours: float = 24.0) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        summary = build_source_inventory_summary(session, stale_after_hours=stale_after_hours)
+        serializable = TypeAdapter(SourceInventorySummaryRead).validate_python(summary).model_dump(mode="json")
+        print_banner()
+        typer.echo(
+            "totals="
+            f"{serializable['total_count']} enabled={serializable['enabled_count']} disabled={serializable['disabled_count']} "
+            f"stale={serializable['stale_count']} failing={serializable['failing_count']} "
+            f"scheduled={serializable['scheduled_count']} unscheduled={serializable['unscheduled_count']}"
+        )
+        typer.echo(f"stale_before={serializable['stale_before']}")
+        for group_name in ("source_kind_counts", "layer_counts", "latest_status_counts"):
+            typer.echo(f"{group_name}:")
+            for item in serializable[group_name]:
+                typer.echo(
+                    f"  {item['key']} | total={item['total_count']} | enabled={item['enabled_count']} | disabled={item['disabled_count']} | stale={item['stale_count']} | failing={item['failing_count']}"
+                )
+    finally:
+        session.close()
+
+
+@app.command("show-source-report-index")
+def show_source_report_index_command(
+    stale_after_hours: float = 24.0,
+    limit: int = 25,
+    stale_source_limit: int = 25,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        report = build_source_ops_report_index(
+            session,
+            stale_after_hours=stale_after_hours,
+            limit=limit,
+            stale_source_limit=stale_source_limit,
+        )
+        serializable = TypeAdapter(SourceOpsReportIndexRead).validate_python(report).model_dump(mode="json")
+        print_banner()
+        typer.echo(
+            f"sync_tasks={serializable['sync_task_count']} sync_runs={serializable['sync_run_count']} sync_failures={serializable['sync_failure_count']}"
+        )
+        typer.echo(
+            f"latest_run_at={serializable['latest_run_at']} stale_after_hours={serializable['stale_after_hours']}"
+        )
+        inventory = serializable["inventory_summary"]
+        typer.echo(
+            f"inventory total={inventory['total_count']} stale={inventory['stale_count']} failing={inventory['failing_count']} unscheduled={inventory['unscheduled_count']}"
+        )
+        typer.echo("recent_runs:")
+        for row in serializable["recent_runs"]:
+            typer.echo(
+                f"  {row['source_run_id']} | source={row['source_id']} | {row['status']} | records={row['records_imported']} | started={row['started_at']}"
+            )
+        typer.echo("stale_sources:")
+        for row in serializable["stale_sources"]:
+            typer.echo(
+                f"  {row['source']['source_id']} | {row['source']['name']} | stale={row['is_stale']} | next_run_at={row['next_run_at']} | latest_success_at={row['latest_success_at']}"
+            )
+        typer.echo("failing_sources:")
+        for row in serializable["failing_sources"]:
+            typer.echo(
+                f"  {row['source']['source_id']} | {row['source']['name']} | latest_run={row['latest_run']['status'] if row['latest_run'] else 'none'}"
+            )
+        typer.echo("unscheduled_sources:")
+        for row in serializable["unscheduled_sources"]:
+            typer.echo(
+                f"  {row['source']['source_id']} | {row['source']['name']} | enabled={row['source']['enabled']}"
+            )
     finally:
         session.close()
 

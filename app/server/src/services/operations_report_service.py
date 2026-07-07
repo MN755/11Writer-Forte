@@ -16,6 +16,7 @@ from src.models import (
     SourceRunORM,
 )
 from src.services.camera_service import build_camera_inventory_summary, build_camera_ops_report_index
+from src.services.source_service import build_source_inventory_summary, build_source_ops_report_index
 
 
 def report_now() -> datetime:
@@ -81,6 +82,8 @@ def build_operations_report(
     )
     camera_inventory_summary = build_camera_inventory_summary(session)
     camera_report_index = build_camera_ops_report_index(session, limit=limit)
+    source_inventory_summary = build_source_inventory_summary(session)
+    source_report_index = build_source_ops_report_index(session, limit=limit)
 
     return {
         "generated_at": report_now(),
@@ -162,6 +165,8 @@ def build_operations_report(
             "entity_count": count_records(session, EntityORM, EntityORM.created_at, since, until),
             "observation_count": count_records(session, ObservationORM, ObservationORM.created_at, since, until),
         },
+        "source_inventory_summary": source_inventory_summary,
+        "source_report_index": source_report_index,
         "camera_inventory_summary": camera_inventory_summary,
         "camera_report_index": camera_report_index,
         "import_runs": import_runs,
