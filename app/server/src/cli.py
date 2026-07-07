@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import typer
+from pydantic import TypeAdapter
 from sqlalchemy import select
 
 from src.config import get_settings
@@ -16,7 +18,13 @@ from src.models import (
     SituationProductORM,
     SourceTrustProfileORM,
 )
-from src.schemas import EventFusionRequest, ScheduledTaskCreate, SourceDefinitionCreate
+from src.schemas import (
+    EventExportBundleRead,
+    EventFusionRequest,
+    ScheduledTaskCreate,
+    SourceDefinitionCreate,
+)
+from src.services.event_export_service import build_event_export_bundle
 from src.services.event_fusion_service import materialize_fused_events
 from src.services.import_service import import_local_path
 from src.services.observation_service import build_cross_verification_summaries, query_observations
@@ -287,6 +295,21 @@ def export_event_product(event_id: int, product_type: str, output_path: Path) ->
         output_path.write_text(product.body_text, encoding="utf-8")
         print_banner()
         typer.echo(f"exported {product.product_type} to {output_path}")
+    finally:
+        session.close()
+
+
+@app.command("export-event-bundle")
+def export_event_bundle(event_id: int, output_path: Path) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        bundle = build_event_export_bundle(session, event_id)
+        serializable = TypeAdapter(EventExportBundleRead).validate_python(bundle).model_dump(mode="json")
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json.dumps(serializable, indent=2), encoding="utf-8")
+        print_banner()
+        typer.echo(f"exported event bundle to {output_path}")
     finally:
         session.close()
 
