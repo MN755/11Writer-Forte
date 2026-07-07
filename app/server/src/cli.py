@@ -16,11 +16,17 @@ from src.models import (
     SituationProductORM,
     SourceTrustProfileORM,
 )
-from src.schemas import EventFusionRequest, ScheduledTaskCreate
+from src.schemas import EventFusionRequest, ScheduledTaskCreate, SourceDefinitionCreate
 from src.services.event_fusion_service import materialize_fused_events
 from src.services.import_service import import_local_path
 from src.services.observation_service import build_cross_verification_summaries, query_observations
 from src.services.scheduler_service import create_scheduled_task, run_due_tasks, run_task
+from src.services.source_service import (
+    create_source_definition,
+    list_source_definitions,
+    list_source_runs,
+    run_source_definition,
+)
 from src.services.trust_service import seed_default_integrity_sources
 
 app = typer.Typer(help="11Writer Forte backend operator CLI")
@@ -119,6 +125,78 @@ def list_imports() -> None:
         for run in runs:
             typer.echo(
                 f"{run.import_run_id} | {run.source_format} | {run.layer_key} | {run.records_imported} | {run.source_path}"
+            )
+    finally:
+        session.close()
+
+
+@app.command("add-source-file")
+def add_source_file(
+    name: str,
+    source_path: Path,
+    layer: str,
+    notes: str = "",
+    integrity_source: bool = False,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        source = create_source_definition(
+            session,
+            SourceDefinitionCreate(
+                name=name,
+                source_kind="local_file",
+                layer_key=layer,
+                target_uri=str(source_path),
+                notes=notes,
+                integrity_source=integrity_source,
+            ),
+        )
+        print_banner()
+        typer.echo(f"source {source.source_id} created for {source.target_uri}")
+    finally:
+        session.close()
+
+
+@app.command("list-sources")
+def list_sources() -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        rows = list_source_definitions(session)
+        print_banner()
+        for row in rows:
+            typer.echo(
+                f"{row.source_id} | {row.source_kind} | {row.layer_key} | enabled={row.enabled} | {row.name}"
+            )
+    finally:
+        session.close()
+
+
+@app.command("run-source")
+def run_source(source_id: int) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        run = run_source_definition(session, source_id, actor="cli")
+        print_banner()
+        typer.echo(
+            f"source_run={run.source_run_id} import_run={run.import_run_id} records={run.records_imported}"
+        )
+    finally:
+        session.close()
+
+
+@app.command("list-source-runs")
+def list_source_runs_command() -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        rows = list_source_runs(session)
+        print_banner()
+        for row in rows:
+            typer.echo(
+                f"{row.source_run_id} | source={row.source_id} | status={row.status} | records={row.records_imported}"
             )
     finally:
         session.close()
@@ -359,6 +437,32 @@ def add_geofence_scan_schedule(
         )
         print_banner()
         typer.echo(f"scheduled task {task.task_id} created for geofence scan")
+    finally:
+        session.close()
+
+
+@app.command("add-source-sync-schedule")
+def add_source_sync_schedule(
+    name: str,
+    source_id: int,
+    interval_seconds: int,
+    notes: str = "",
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        task = create_scheduled_task(
+            session,
+            ScheduledTaskCreate(
+                name=name,
+                task_type="source_sync",
+                interval_seconds=interval_seconds,
+                source_id=source_id,
+                notes=notes,
+            ),
+        )
+        print_banner()
+        typer.echo(f"scheduled task {task.task_id} created for source sync")
     finally:
         session.close()
 

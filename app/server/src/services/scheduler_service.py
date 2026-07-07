@@ -16,6 +16,7 @@ from src.models import (
 from src.schemas import ScheduledTaskCreate
 from src.services.geospatial_service import point_in_geometry
 from src.services.import_service import import_local_path
+from src.services.source_service import run_source_definition
 from src.services.trust_service import seed_default_integrity_sources
 
 
@@ -147,6 +148,17 @@ def execute_task(
     if task.task_type == "integrity_seed":
         created = seed_default_integrity_sources(session)
         return (len(created), {"domains": created})
+    if task.task_type == "source_sync":
+        if task.source_id is None:
+            raise ValueError("Source sync task requires source_id.")
+        source_run = run_source_definition(session, task.source_id, actor=actor)
+        return (
+            source_run.records_imported,
+            {
+                "source_run_id": source_run.source_run_id,
+                "import_run_id": source_run.import_run_id,
+            },
+        )
     raise ValueError(f"Unsupported task type: {task.task_type}")
 
 
