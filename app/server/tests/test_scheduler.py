@@ -103,12 +103,33 @@ def test_geofence_schedule_creates_alert_and_custody_log(
     assert len(alerts) == 1
     assert alerts[0]["geofence_id"] == geofence_id
     assert "Observation" in alerts[0]["message"]
+    alert_id = alerts[0]["alert_id"]
+
+    update_response = client.patch(
+        f"/api/alerts/{alert_id}",
+        json={
+            "status": "acknowledged",
+            "severity": "warning",
+            "disposition_note": "Reviewed by operator",
+        },
+    )
+    assert update_response.status_code == 200
+    assert update_response.json()["status"] == "acknowledged"
+    assert update_response.json()["severity"] == "warning"
+    assert update_response.json()["disposition_note"] == "Reviewed by operator"
+
+    filtered_alerts = client.get("/api/alerts", params={"status": "acknowledged", "geofence_id": geofence_id})
+    assert filtered_alerts.status_code == 200
+    filtered_payload = filtered_alerts.json()
+    assert len(filtered_payload) == 1
+    assert filtered_payload[0]["alert_id"] == alert_id
 
     custody_response = client.get("/api/custody/logs")
     assert custody_response.status_code == 200
     custody_rows = custody_response.json()
     actions = [row["action"] for row in custody_rows]
     assert "alert_created" in actions
+    assert "alert_updated" in actions
     assert "alerts_evaluated" in actions
     assert "task_run_completed" in actions
     assert any(

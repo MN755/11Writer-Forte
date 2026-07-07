@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import threading
 from contextlib import contextmanager
@@ -37,6 +38,39 @@ def flaky_json_server(payload: list[dict[str, object]]):
     thread.start()
     try:
         yield f"http://127.0.0.1:{server.server_port}/feed.json", state
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+@contextmanager
+def basic_auth_xml_server(payload: str, *, username: str, password: str):
+    expected_token = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode("ascii")
+    state = {"requests": 0, "last_authorization": None}
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            state["requests"] += 1
+            state["last_authorization"] = self.headers.get("Authorization")
+            if state["last_authorization"] != f"Basic {expected_token}":
+                self.send_response(401)
+                self.send_header("WWW-Authenticate", 'Basic realm="test"')
+                self.end_headers()
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "application/xml")
+            self.end_headers()
+            self.wfile.write(payload.encode("utf-8"))
+
+        def log_message(self, format: str, *args: object) -> None:  # noqa: A003
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}/feed.xml", state
     finally:
         server.shutdown()
         server.server_close()
@@ -281,3 +315,94 @@ def test_source_run_skips_unchanged_payloads(client: TestClient, tmp_path: Path)
         and row["action"] == "source_run_skipped"
         for row in custody_response.json()
     )
+
+
+def test_http_xml_source_uses_env_basic_auth_and_parses_records(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    xml_payload = """<?xml version="1.0" encoding="UTF-8"?>
+<FEUMessages>
+  <feu:full-event-update xmlns:feu="http://www.northamericanhub.org">
+    <message-header>
+      <message-time-stamp>
+        <date>20260706</date>
+        <time>204544</time>
+        <utc-offset>-0500</utc-offset>
+      </message-time-stamp>
+    </message-header>
+    <event-reference>
+      <event-id>MNSEG-5145378</event-id>
+      <update>316</update>
+    </event-reference>
+    <event-indicators>
+      <event-indicator><status>updated</status></event-indicator>
+    </event-indicators>
+    <headline><headline><mdss-conditions>normal driving conditions</mdss-conditions></headline></headline>
+    <details>
+      <detail>
+        <locations>
+          <location>
+            <location-on-link>
+              <route-designator>MN 5</route-designator>
+              <primary-location>
+                <geo-location>
+                  <latitude>44801479</latitude>
+                  <longitude>-93891350</longitude>
+                </geo-location>
+              </primary-location>
+            </location-on-link>
+          </location>
+        </locations>
+      </detail>
+    </details>
+  </feu:full-event-update>
+</FEUMessages>
+"""
+    monkeypatch.setenv("TEST_MNDOT_FEED_PASSWORD", "secret-pass")
+    with basic_auth_xml_server(
+        xml_payload,
+        username="mn-user",
+        password="secret-pass",
+    ) as (target_uri, state):
+        source_response = client.post(
+            "/api/sources",
+            json={
+                "name": "remote-xml-source",
+                "source_kind": "http_xml",
+                "layer_key": "mndot-loop-feed",
+                "target_uri": target_uri,
+                "metadata_json": {
+                    "retry_attempts": 1,
+                    "request_timeout_seconds": 5,
+                    "basic_auth_username": "mn-user",
+                    "basic_auth_password_env": "TEST_MNDOT_FEED_PASSWORD",
+                },
+            },
+        )
+        assert source_response.status_code == 200
+        source_id = source_response.json()["source_id"]
+
+        run_response = client.post(f"/api/sources/{source_id}/run")
+        assert run_response.status_code == 200
+        run_payload = run_response.json()
+        assert run_payload["status"] == "completed"
+        assert run_payload["records_imported"] == 1
+        assert run_payload["output_json"]["content_type"] == "application/xml"
+        assert run_payload["output_json"]["materialized_content_type"] == "application/json"
+        assert run_payload["output_json"]["cached_record_count"] == 1
+        assert run_payload["output_json"]["cached_path"].endswith(".json")
+
+        observations_response = client.get("/api/observations", params={"layer_key": "mndot-loop-feed"})
+        assert observations_response.status_code == 200
+        observations = observations_response.json()
+        assert len(observations) == 1
+        observation = observations[0]
+        assert observation["source_domain"].startswith("127.0.0.1")
+        assert observation["content_json"]["event_id"] == "MNSEG-5145378"
+        assert observation["content_json"]["route_designator"] == "MN 5"
+        assert observation["content_json"]["observed_at"] == "2026-07-06T20:45:44-05:00"
+        assert observation["location_geojson"]["coordinates"] == [-93.89135, 44.801479]
+
+        assert state["requests"] == 1
+        assert state["last_authorization"] is not None

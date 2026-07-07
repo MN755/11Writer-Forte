@@ -85,6 +85,7 @@ class AlertORM(TimestampMixin, Base):
     status: Mapped[str] = mapped_column(String(30), default="open")
     dedupe_key: Mapped[str | None] = mapped_column(String(160), index=True, default=None)
     message: Mapped[str] = mapped_column(Text)
+    disposition_note: Mapped[str] = mapped_column(Text, default="")
     trigger_basis_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
 

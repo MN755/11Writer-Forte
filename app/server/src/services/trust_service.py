@@ -28,7 +28,14 @@ def normalize_domain(value: str | None) -> str | None:
         return None
     candidate = value.strip().lower()
     if "://" in candidate:
-        candidate = urlparse(candidate).netloc.lower()
+        parsed = urlparse(candidate)
+        candidate = (parsed.hostname or parsed.netloc).lower()
+    if "@" in candidate:
+        candidate = candidate.rsplit("@", 1)[-1]
+    if candidate.startswith("[") and "]" in candidate:
+        candidate = candidate[1:candidate.index("]")]
+    elif ":" in candidate and candidate.count(":") == 1:
+        candidate = candidate.split(":", 1)[0]
     candidate = candidate.split("/")[0]
     if candidate.startswith("www."):
         candidate = candidate[4:]
@@ -73,4 +80,3 @@ def seed_default_integrity_sources(session: Session) -> list[str]:
         created_domains.append(domain)
     session.commit()
     return created_domains
-

@@ -121,8 +121,15 @@ class AlertCreate(ForteModel):
     trigger_basis_json: dict[str, Any] = Field(default_factory=dict)
 
 
+class AlertUpdate(ForteModel):
+    status: Literal["open", "acknowledged", "closed"]
+    severity: str | None = None
+    disposition_note: str = ""
+
+
 class AlertRead(AlertCreate):
     alert_id: int
+    disposition_note: str
     created_at: datetime
     updated_at: datetime
 
@@ -143,7 +150,7 @@ class SourceTrustProfileRead(SourceTrustProfileCreate):
 
 class SourceDefinitionCreate(ForteModel):
     name: str
-    source_kind: Literal["local_file", "http_json", "http_text"]
+    source_kind: Literal["local_file", "http_json", "http_text", "http_xml"]
     layer_key: str
     target_uri: str
     enabled: bool = True
@@ -363,9 +370,12 @@ class EventExportBundleRead(ForteModel):
     observations: list[ObservationRead]
     entities: list[EntityRead]
     entity_observation_links: list[EntityObservationLinkRead]
+    alerts: list[AlertRead]
     import_runs: list[LocalImportRunSummaryRead]
     source_runs: list[SourceRunRead]
     source_definitions: list[SourceDefinitionRead]
+    scheduled_tasks: list[ScheduledTaskRead]
+    scheduled_task_runs: list[ScheduledTaskRunRead]
     products: list[SituationProductRead]
     custody_logs: list[CustodyLogRead]
     citations_json: list[dict[str, Any]]

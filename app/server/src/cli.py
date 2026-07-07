@@ -17,6 +17,7 @@ from src.models import (
     EventORM,
     LocalImportRunORM,
     ScheduledTaskORM,
+    ScheduledTaskRunORM,
     SituationProductORM,
     SourceTrustProfileORM,
 )
@@ -75,6 +76,8 @@ def build_http_source_metadata(
     retry_backoff_seconds: float,
     skip_unchanged: bool,
     header: list[str],
+    basic_auth_username: str | None,
+    basic_auth_password_env: str | None,
 ) -> dict[str, object]:
     headers: dict[str, str] = {}
     for item in header:
@@ -82,13 +85,21 @@ def build_http_source_metadata(
             raise typer.BadParameter("header must be 'Name: Value'")
         key, value = item.split(":", 1)
         headers[key.strip()] = value.strip()
-    return {
+    metadata: dict[str, object] = {
         "request_timeout_seconds": timeout_seconds,
         "retry_attempts": retry_attempts,
         "retry_backoff_seconds": retry_backoff_seconds,
         "skip_unchanged": skip_unchanged,
         "headers": headers,
     }
+    if bool(basic_auth_username) != bool(basic_auth_password_env):
+        raise typer.BadParameter(
+            "basic auth requires both --basic-auth-username and --basic-auth-password-env"
+        )
+    if basic_auth_username and basic_auth_password_env:
+        metadata["basic_auth_username"] = basic_auth_username
+        metadata["basic_auth_password_env"] = basic_auth_password_env
+    return metadata
 
 
 @app.command("status")
@@ -208,6 +219,8 @@ def add_source_http_json(
     retry_backoff_seconds: float = 0.0,
     skip_unchanged: bool = True,
     header: list[str] = typer.Option(default_factory=list),
+    basic_auth_username: str | None = None,
+    basic_auth_password_env: str | None = None,
 ) -> None:
     init_db()
     session = get_session_factory()()
@@ -227,6 +240,8 @@ def add_source_http_json(
                     retry_backoff_seconds=retry_backoff_seconds,
                     skip_unchanged=skip_unchanged,
                     header=header,
+                    basic_auth_username=basic_auth_username,
+                    basic_auth_password_env=basic_auth_password_env,
                 ),
             ),
         )
@@ -248,6 +263,8 @@ def add_source_http_text(
     retry_backoff_seconds: float = 0.0,
     skip_unchanged: bool = True,
     header: list[str] = typer.Option(default_factory=list),
+    basic_auth_username: str | None = None,
+    basic_auth_password_env: str | None = None,
 ) -> None:
     init_db()
     session = get_session_factory()()
@@ -267,6 +284,52 @@ def add_source_http_text(
                     retry_backoff_seconds=retry_backoff_seconds,
                     skip_unchanged=skip_unchanged,
                     header=header,
+                    basic_auth_username=basic_auth_username,
+                    basic_auth_password_env=basic_auth_password_env,
+                ),
+            ),
+        )
+        print_banner()
+        typer.echo(f"source {source.source_id} created for {source.target_uri}")
+    finally:
+        session.close()
+
+
+@app.command("add-source-http-xml")
+def add_source_http_xml(
+    name: str,
+    target_uri: str,
+    layer: str,
+    notes: str = "",
+    integrity_source: bool = False,
+    timeout_seconds: float = 30.0,
+    retry_attempts: int = 3,
+    retry_backoff_seconds: float = 0.0,
+    skip_unchanged: bool = True,
+    header: list[str] = typer.Option(default_factory=list),
+    basic_auth_username: str | None = None,
+    basic_auth_password_env: str | None = None,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        source = create_source_definition(
+            session,
+            SourceDefinitionCreate(
+                name=name,
+                source_kind="http_xml",
+                layer_key=layer,
+                target_uri=target_uri,
+                notes=notes,
+                integrity_source=integrity_source,
+                metadata_json=build_http_source_metadata(
+                    timeout_seconds=timeout_seconds,
+                    retry_attempts=retry_attempts,
+                    retry_backoff_seconds=retry_backoff_seconds,
+                    skip_unchanged=skip_unchanged,
+                    header=header,
+                    basic_auth_username=basic_auth_username,
+                    basic_auth_password_env=basic_auth_password_env,
                 ),
             ),
         )
@@ -587,6 +650,48 @@ def list_alerts() -> None:
         session.close()
 
 
+@app.command("update-alert")
+def update_alert_command(
+    alert_id: int,
+    status: str,
+    disposition_note: str = "",
+    severity: str | None = None,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        alert = session.get(AlertORM, alert_id)
+        if alert is None:
+            raise typer.BadParameter(f"Alert {alert_id} does not exist.")
+        previous_status = alert.status
+        alert.status = status
+        if severity is not None:
+            alert.severity = severity
+        alert.disposition_note = disposition_note
+        session.add(
+            CustodyLogORM(
+                object_type="alert",
+                object_id=str(alert.alert_id),
+                action="alert_updated",
+                actor="cli",
+                details_json={
+                    "previous_status": previous_status,
+                    "status": alert.status,
+                    "severity": alert.severity,
+                    "disposition_note": alert.disposition_note,
+                },
+            )
+        )
+        session.commit()
+        session.refresh(alert)
+        print_banner()
+        typer.echo(
+            f"alert={alert.alert_id} status={alert.status} severity={alert.severity} note={alert.disposition_note}"
+        )
+    finally:
+        session.close()
+
+
 @app.command("list-custody")
 def list_custody(limit: int = 20) -> None:
     init_db()
@@ -703,6 +808,24 @@ def list_schedules() -> None:
         for row in rows:
             typer.echo(
                 f"{row.task_id} | {row.task_type} | every={row.interval_seconds}s | retry={row.retry_attempts} | backoff={row.retry_backoff_seconds}s | enabled={row.enabled} | next={row.next_run_at}"
+            )
+    finally:
+        session.close()
+
+
+@app.command("list-schedule-runs")
+def list_schedule_runs(task_id: int | None = None) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        statement = select(ScheduledTaskRunORM).order_by(ScheduledTaskRunORM.task_run_id.desc())
+        if task_id is not None:
+            statement = statement.where(ScheduledTaskRunORM.task_id == task_id)
+        rows = list(session.scalars(statement))
+        print_banner()
+        for row in rows:
+            typer.echo(
+                f"{row.task_run_id} | task={row.task_id} | {row.status} | records={row.records_affected} | started={row.started_at} | finished={row.finished_at}"
             )
     finally:
         session.close()
