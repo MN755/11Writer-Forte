@@ -50,6 +50,26 @@ def test_source_definition_run_creates_import_and_history(client: TestClient, tm
     assert imports_response.status_code == 200
     assert imports_response.json()[0]["records_imported"] == 1
 
+    custody_response = client.get("/api/custody/logs")
+    assert custody_response.status_code == 200
+    custody_rows = custody_response.json()
+    assert any(
+        row["object_type"] == "source_definition"
+        and row["object_id"] == str(source_id)
+        and row["action"] == "source_created"
+        for row in custody_rows
+    )
+    assert any(
+        row["object_type"] == "source_run"
+        and row["action"] == "source_run_started"
+        for row in custody_rows
+    )
+    assert any(
+        row["object_type"] == "source_run"
+        and row["action"] == "source_run_completed"
+        for row in custody_rows
+    )
+
 
 def test_source_sync_schedule_runs_source_definition(client: TestClient, tmp_path: Path) -> None:
     fixture = tmp_path / "scheduled-source.json"
@@ -98,3 +118,13 @@ def test_source_sync_schedule_runs_source_definition(client: TestClient, tmp_pat
     source_runs = client.get("/api/sources/runs")
     assert source_runs.status_code == 200
     assert source_runs.json()[0]["records_imported"] == 1
+
+    custody_response = client.get("/api/custody/logs")
+    assert custody_response.status_code == 200
+    custody_rows = custody_response.json()
+    assert any(
+        row["object_type"] == "scheduled_task"
+        and row["object_id"] == str(task_id)
+        and row["action"] == "task_created"
+        for row in custody_rows
+    )

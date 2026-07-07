@@ -71,10 +71,27 @@ def test_geofence_schedule_creates_alert_and_custody_log(
 
     custody_response = client.get("/api/custody/logs")
     assert custody_response.status_code == 200
-    actions = [row["action"] for row in custody_response.json()]
+    custody_rows = custody_response.json()
+    actions = [row["action"] for row in custody_rows]
     assert "alert_created" in actions
     assert "alerts_evaluated" in actions
     assert "task_run_completed" in actions
+    assert any(
+        row["object_type"] == "scheduled_task"
+        and row["object_id"] == str(task_id)
+        and row["action"] == "task_created"
+        for row in custody_rows
+    )
+    assert any(
+        row["object_type"] == "scheduled_task_run"
+        and row["action"] == "task_run_started"
+        for row in custody_rows
+    )
+    assert any(
+        row["object_type"] == "scheduled_task_run"
+        and row["action"] == "task_run_completed"
+        for row in custody_rows
+    )
 
 
 def test_local_import_schedule_runs_manually(client: TestClient, tmp_path: Path) -> None:
@@ -116,3 +133,12 @@ def test_local_import_schedule_runs_manually(client: TestClient, tmp_path: Path)
     imports_response = client.get("/api/imports/runs")
     assert imports_response.status_code == 200
     assert imports_response.json()[0]["records_imported"] == 1
+
+    custody_response = client.get("/api/custody/logs")
+    assert custody_response.status_code == 200
+    assert any(
+        row["object_type"] == "scheduled_task"
+        and row["object_id"] == str(task_id)
+        and row["action"] == "task_created"
+        for row in custody_response.json()
+    )

@@ -110,6 +110,7 @@ def test_event_export_bundle_includes_evidence_products_and_runs(
     assert "event_observation_link" in custody_object_types
     assert "situation_product" in custody_object_types
     assert "source_definition" in custody_object_types
+    assert "source_run" in custody_object_types
     assert "event_export" in custody_object_types
     assert any(
         row["action"] == "bundle_exported" and row["object_type"] == "event_export"
