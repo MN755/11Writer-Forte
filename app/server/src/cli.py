@@ -23,6 +23,7 @@ from src.models import (
     SourceTrustProfileORM,
 )
 from src.schemas import (
+    CameraMaterializationResponse,
     DataLayerCreate,
     DatabaseDiagnosticsRead,
     EventExportBundleRead,
@@ -36,6 +37,8 @@ from src.schemas import (
     SourceDefinitionCreate,
     SourceDefinitionUpdate,
 )
+from src.services.camera_service import list_cameras
+from src.services.camera_service import materialize_camera_inventory
 from src.services.database_diagnostics_service import build_database_diagnostics
 from src.services.entity_resolution_service import materialize_entities
 from src.services.event_export_service import build_event_export_bundle
@@ -546,6 +549,69 @@ def list_source_runs_command() -> None:
         for row in rows:
             typer.echo(
                 f"{row.source_run_id} | source={row.source_id} | status={row.status} | records={row.records_imported}"
+            )
+    finally:
+        session.close()
+
+
+@app.command("materialize-cameras")
+def materialize_cameras_command(
+    layer: str | None = None,
+    source_domain: str | None = None,
+    limit: int = 500,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        result = materialize_camera_inventory(
+            session,
+            layer_key=layer,
+            source_domain=source_domain,
+            limit=limit,
+            actor="cli_camera_registry",
+        )
+        serializable = TypeAdapter(CameraMaterializationResponse).validate_python(result).model_dump(mode="json")
+        print_banner()
+        typer.echo(
+            f"scanned={serializable['scanned_count']} created={serializable['created_count']} updated={serializable['updated_count']}"
+        )
+        for camera in serializable["cameras"]:
+            typer.echo(
+                f"{camera['camera_inventory_id']} | {camera['name']} | {camera['status']} | active={camera['active']} | layer={camera['layer_key']}"
+            )
+    finally:
+        session.close()
+
+
+@app.command("list-cameras")
+def list_cameras_command(
+    layer: str | None = None,
+    source_domain: str | None = None,
+    status: str | None = None,
+    active: bool | None = typer.Option(default=None),
+    bbox: str | None = None,
+    limit: int = 200,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        min_lon, min_lat, max_lon, max_lat = parse_bbox(bbox)
+        rows = list_cameras(
+            session,
+            layer_key=layer,
+            source_domain=source_domain,
+            status=status,
+            active=active,
+            min_lon=min_lon,
+            min_lat=min_lat,
+            max_lon=max_lon,
+            max_lat=max_lat,
+            limit=limit,
+        )
+        print_banner()
+        for row in rows:
+            typer.echo(
+                f"{row.camera_inventory_id} | {row.name} | {row.status} | active={row.active} | provider={row.provider} | road={row.road_name}"
             )
     finally:
         session.close()

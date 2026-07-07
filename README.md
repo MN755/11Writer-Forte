@@ -14,6 +14,7 @@ This repo intentionally removes the frontend runtime. The only operator-facing i
 - Rule-based entity resolution that links observations into reusable entity records
 - Event fusion materialization plus exportable cited summaries and rule-based reports
 - Managed source definitions with persisted source-run history and scheduler-driven sync hooks
+- Camera inventory materialization that turns imported/public traffic camera observations into persisted geospatial camera records with provenance
 - SQLAlchemy storage foundation that runs on SQLite for local development and Postgres/PostGIS-oriented URLs for deployment
 - PostGIS-aware spatial query path that persists WKT alongside GeoJSON and automatically provisions spatial indexes on PostgreSQL
 - Local import pipeline for JSON, JSONL, TXT, and SQLite inputs with row-level dedupe inside each layer
@@ -66,6 +67,8 @@ elevenwriter list-sources
 elevenwriter update-source 1 --enabled false --notes "Disabled for review"
 elevenwriter run-source 1
 elevenwriter list-source-runs
+elevenwriter materialize-cameras --layer traffic-camera-feed
+elevenwriter list-cameras --layer traffic-camera-feed --active true
 elevenwriter query-observations --bbox "-96,29,-94,31"
 elevenwriter cross-verify --bbox "-96,29,-94,31" --distance-km 10
 elevenwriter resolve-entities --bbox "-96,29,-94,31" --min-observations 2
@@ -107,6 +110,7 @@ By default the compose stack starts the API, a scheduler worker, and PostGIS-rea
 - Postgres runtime now auto-enables `postgis` plus GiST expression indexes for observation points and geofence geometries, while SQLite keeps the Python fallback path for local runs and tests.
 - The headless CLI now includes a `doctor` command and the API exposes `/api/operations/database`, so operators can audit connectivity, additive schema drift, table counts, and PostGIS readiness without freestyling SQL in production.
 - Runtime backup and recovery now have a first-class path too: `/api/operations/runtime/export`, `/api/operations/runtime/restore`, and matching CLI commands serialize the core backend state in dependency-safe order and log custody records for both export and restore.
+- Camera/webcam work is no longer just notes: `/api/cameras` and `/api/cameras/materialize` now persist camera inventory from imported observations, including MnDOT-style feeds that expose image or stream endpoints plus geospatial coordinates.
 - Geofence scans create persisted alerts with dedupe keys so the same observation-hit pair does not spam duplicates.
 - Scheduler runs and import operations both write custody records so unattended execution still leaves an audit trail.
 - Cross-verification is rule-based today: it clusters nearby observations inside a time window and raises confidence when independent domains or layers corroborate the same occurrence.

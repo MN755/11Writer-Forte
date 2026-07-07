@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from src.config import get_settings
 from src.models import (
     AlertORM,
+    CameraInventoryORM,
     CustodyLogORM,
     DataLayerORM,
     EntityObservationLinkORM,
@@ -27,6 +28,7 @@ from src.models import (
 )
 from src.schemas import (
     AlertRead,
+    CameraInventoryRead,
     CustodyLogRead,
     DataLayerRead,
     DatabaseTableCountRead,
@@ -67,6 +69,7 @@ SNAPSHOT_SECTIONS: tuple[tuple[str, object, type[BaseModel], object], ...] = (
     ("events", EventORM, EventRead, EventORM.event_id),
     ("entities", EntityORM, EntityRead, EntityORM.entity_id),
     ("observations", ObservationORM, ObservationRead, ObservationORM.observation_id),
+    ("camera_inventory", CameraInventoryORM, CameraInventoryRead, CameraInventoryORM.camera_inventory_id),
     (
         "event_observation_links",
         EventObservationLinkORM,
@@ -96,6 +99,7 @@ RESTORE_ORDER: tuple[tuple[str, object], ...] = (
     ("events", EventORM),
     ("entities", EntityORM),
     ("observations", ObservationORM),
+    ("camera_inventory", CameraInventoryORM),
     ("event_observation_links", EventObservationLinkORM),
     ("entity_observation_links", EntityObservationLinkORM),
     ("alerts", AlertORM),

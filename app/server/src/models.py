@@ -141,6 +141,30 @@ class ObservationORM(TimestampMixin, Base):
     entity_links: Mapped[list["EntityObservationLinkORM"]] = relationship(back_populates="observation")
 
 
+class CameraInventoryORM(TimestampMixin, Base):
+    __tablename__ = "camera_inventory"
+
+    camera_inventory_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    camera_key: Mapped[str] = mapped_column(String(160), unique=True, index=True)
+    observation_id: Mapped[int | None] = mapped_column(ForeignKey("observations.observation_id"), default=None, index=True)
+    external_id: Mapped[str | None] = mapped_column(String(120), default=None, index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    source_domain: Mapped[str | None] = mapped_column(String(255), default=None, index=True)
+    layer_key: Mapped[str] = mapped_column(String(80), index=True)
+    provider: Mapped[str] = mapped_column(String(120), default="")
+    road_name: Mapped[str] = mapped_column(String(160), default="")
+    status: Mapped[str] = mapped_column(String(40), default="unknown", index=True)
+    active: Mapped[bool] = mapped_column(default=True, index=True)
+    image_url: Mapped[str | None] = mapped_column(Text, default=None)
+    stream_url: Mapped[str | None] = mapped_column(Text, default=None)
+    page_url: Mapped[str | None] = mapped_column(Text, default=None)
+    location_geojson: Mapped[dict[str, Any] | None] = mapped_column(JSON, default=None)
+    location_wkt: Mapped[str | None] = mapped_column(Text, default=None)
+    last_observed_at: Mapped[datetime | None] = mapped_column(default=None)
+    confidence_score: Mapped[float] = mapped_column(Float, default=0.5)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+
 class CustodyLogORM(Base):
     __tablename__ = "custody_logs"
 
