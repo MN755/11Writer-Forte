@@ -118,6 +118,35 @@ class SourceTrustProfileRead(SourceTrustProfileCreate):
     updated_at: datetime
 
 
+class SourceDefinitionCreate(ForteModel):
+    name: str
+    source_kind: Literal["local_file", "http_json", "http_text"]
+    layer_key: str
+    target_uri: str
+    enabled: bool = True
+    integrity_source: bool = False
+    notes: str = ""
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+
+
+class SourceDefinitionRead(SourceDefinitionCreate):
+    source_id: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class SourceRunRead(ForteModel):
+    source_run_id: int
+    source_id: int
+    import_run_id: int | None
+    status: str
+    started_at: datetime
+    finished_at: datetime | None
+    records_imported: int
+    error_text: str | None
+    output_json: dict[str, Any]
+
+
 class IntegritySeedResponse(ForteModel):
     created: int
     domains: list[str]
@@ -219,9 +248,10 @@ class CustodyLogRead(ForteModel):
 
 class ScheduledTaskCreate(ForteModel):
     name: str
-    task_type: Literal["local_import", "geofence_scan", "integrity_seed"]
+    task_type: Literal["local_import", "geofence_scan", "integrity_seed", "source_sync"]
     interval_seconds: int = Field(ge=60)
     enabled: bool = True
+    source_id: int | None = None
     target_path: str | None = None
     layer_key: str | None = None
     geofence_id: int | None = None

@@ -141,6 +141,7 @@ class ScheduledTaskORM(TimestampMixin, Base):
     task_type: Mapped[str] = mapped_column(String(40), index=True)
     enabled: Mapped[bool] = mapped_column(default=True)
     interval_seconds: Mapped[int] = mapped_column(Integer)
+    source_id: Mapped[int | None] = mapped_column(default=None, index=True)
     target_path: Mapped[str | None] = mapped_column(Text, default=None)
     layer_key: Mapped[str | None] = mapped_column(String(80), default=None)
     geofence_id: Mapped[int | None] = mapped_column(ForeignKey("geofences.geofence_id"), default=None)
@@ -194,3 +195,35 @@ class SituationProductORM(TimestampMixin, Base):
     generated_by: Mapped[str] = mapped_column(String(80), default="rule_based")
 
     event: Mapped[EventORM] = relationship(back_populates="products")
+
+
+class SourceDefinitionORM(TimestampMixin, Base):
+    __tablename__ = "source_definitions"
+
+    source_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(160), unique=True, index=True)
+    source_kind: Mapped[str] = mapped_column(String(40), index=True)
+    layer_key: Mapped[str] = mapped_column(String(80), index=True)
+    target_uri: Mapped[str] = mapped_column(Text)
+    enabled: Mapped[bool] = mapped_column(default=True)
+    integrity_source: Mapped[bool] = mapped_column(default=False)
+    notes: Mapped[str] = mapped_column(Text, default="")
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+    runs: Mapped[list["SourceRunORM"]] = relationship(back_populates="source")
+
+
+class SourceRunORM(Base):
+    __tablename__ = "source_runs"
+
+    source_run_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    source_id: Mapped[int] = mapped_column(ForeignKey("source_definitions.source_id"), index=True)
+    import_run_id: Mapped[int | None] = mapped_column(ForeignKey("local_import_runs.import_run_id"), default=None)
+    status: Mapped[str] = mapped_column(String(30), default="queued")
+    started_at: Mapped[datetime] = mapped_column(default=utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(default=None)
+    records_imported: Mapped[int] = mapped_column(Integer, default=0)
+    error_text: Mapped[str | None] = mapped_column(Text, default=None)
+    output_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+    source: Mapped[SourceDefinitionORM] = relationship(back_populates="runs")
