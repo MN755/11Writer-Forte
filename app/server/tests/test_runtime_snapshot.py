@@ -74,6 +74,37 @@ def seed_runtime_state(client: TestClient, tmp_path: Path) -> None:
     )
     assert direct_import.status_code == 200
 
+    camera_fixture = tmp_path / "snapshot-cameras.json"
+    camera_fixture.write_text(
+        json.dumps(
+            [
+                {
+                    "camera_id": "snapshot-cam-1",
+                    "camera_name": "Snapshot Camera",
+                    "road_name": "I-35W",
+                    "status": "online",
+                    "image_url": "https://cams.snapshot.example.com/cam-1.jpg",
+                    "page_url": "https://511mn.org/camera/snapshot-1",
+                    "provider": "MnDOT",
+                    "lat": 44.9482,
+                    "lon": -93.2701,
+                    "observed_at": "2026-07-07T01:00:00Z",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    camera_import = client.post(
+        "/api/imports/local",
+        json={"source_path": str(camera_fixture), "layer_key": "traffic-camera-feed"},
+    )
+    assert camera_import.status_code == 200
+    camera_materialization = client.post(
+        "/api/cameras/materialize",
+        json={"layer_key": "traffic-camera-feed", "limit": 25},
+    )
+    assert camera_materialization.status_code == 200
+
     geofence_response = client.post(
         "/api/geofences",
         json={
@@ -140,6 +171,8 @@ def test_runtime_snapshot_export_and_restore_round_trip(client: TestClient, tmp_
     assert snapshot["observations"]
     assert snapshot["events"]
     assert snapshot["entities"]
+    assert snapshot["camera_inventory"]
+    assert snapshot["camera_source_inventory"]
     assert snapshot["storage_objects"]
     assert snapshot["scheduled_tasks"]
     assert snapshot["scheduled_task_runs"]
@@ -163,6 +196,8 @@ def test_runtime_snapshot_export_and_restore_round_trip(client: TestClient, tmp_
     assert row_counts["observations"] >= 2
     assert row_counts["events"] >= 1
     assert row_counts["entities"] >= 1
+    assert row_counts["camera_inventory"] >= 1
+    assert row_counts["camera_source_inventory"] >= 1
     assert row_counts["storage_objects"] >= 1
     assert row_counts["scheduled_tasks"] >= 1
     assert row_counts["source_definitions"] >= 1
@@ -175,5 +210,7 @@ def test_runtime_snapshot_export_and_restore_round_trip(client: TestClient, tmp_
     assert len(restored_snapshot["observations"]) >= len(snapshot["observations"])
     assert len(restored_snapshot["events"]) >= len(snapshot["events"])
     assert len(restored_snapshot["entities"]) >= len(snapshot["entities"])
+    assert len(restored_snapshot["camera_inventory"]) >= len(snapshot["camera_inventory"])
+    assert len(restored_snapshot["camera_source_inventory"]) >= len(snapshot["camera_source_inventory"])
     assert len(restored_snapshot["storage_objects"]) >= len(snapshot["storage_objects"])
     assert any(log["action"] == "runtime_restored" for log in restored_snapshot["custody_logs"])

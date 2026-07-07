@@ -15,6 +15,7 @@ This repo intentionally removes the frontend runtime. The only operator-facing i
 - Event fusion materialization plus exportable cited summaries and rule-based reports
 - Managed source definitions with persisted source-run history and scheduler-driven sync hooks
 - Camera inventory materialization that turns imported/public traffic camera observations into persisted geospatial camera records with provenance
+- Camera source inventory lifecycle that graduates observed camera endpoints into a backend-native candidate registry with rule-based readiness scoring
 - Storage-object ledger that tracks retained artifacts, retention class, lifecycle state, and provenance for imports and camera-derived references
 - SQLAlchemy storage foundation that runs on SQLite for local development and Postgres/PostGIS-oriented URLs for deployment
 - Optional ClickHouse analytics/archive backend that can mirror runtime facts and archive observation data to Cloudflare R2 over the S3-compatible API
@@ -72,6 +73,10 @@ elevenwriter list-source-runs
 elevenwriter show-source-ops 1
 elevenwriter materialize-cameras --layer traffic-camera-feed
 elevenwriter list-cameras --layer traffic-camera-feed --active true
+elevenwriter materialize-camera-sources --layer traffic-camera-feed
+elevenwriter list-camera-sources --layer traffic-camera-feed --status ready
+elevenwriter show-camera-source-summary --layer traffic-camera-feed
+elevenwriter show-camera-source-ops 1
 elevenwriter show-camera-summary --layer traffic-camera-feed --stale-after-hours 24
 elevenwriter show-camera-ops 1
 elevenwriter show-camera-report-index --layer traffic-camera-feed --source-domain cams.example.com
@@ -153,9 +158,10 @@ ELEVENWRITER_CLICKHOUSE_R2_ARCHIVE_PREFIX=11writer-archive
 - Forte still keeps PostgreSQL/SQLite as the primary operational store. ClickHouse is wired for analytics, cold archive, and large-scale query workloads; pretending it fully replaces the relational runtime here would be unserious.
 - Cloudflare R2 support follows the S3-compatible path: set the R2 endpoint, bucket, and HMAC creds, then use `sync-clickhouse` to mirror runtime facts into ClickHouse and `archive-clickhouse-observations` to write Parquet archives toward R2.
 - Camera/webcam work is no longer just notes: `/api/cameras` and `/api/cameras/materialize` now persist camera inventory from imported observations, including MnDOT-style feeds that expose image or stream endpoints plus geospatial coordinates.
+- Camera endpoint lifecycle is backend-native now too: `/api/camera-sources`, `/api/camera-sources/materialize`, `/api/camera-sources/summary`, and `/api/camera-sources/{id}/ops` maintain a candidate source registry for observed camera image/stream/page endpoints, with rule-based graduation scores and custody history.
 - Camera ops now have a proper backend reporting surface too: `/api/cameras/summary` rolls up fleet health by layer, domain, provider, and status, while `/api/cameras/{id}/ops` exposes per-camera custody, latest observation/import context, and matching refresh schedules.
 - Camera reporting is exportable now too: `/api/cameras/report-index` summarizes refresh task coverage, recent materializations, stale inventory, and recent refresh runs, while `/api/cameras/export/summary` emits a JSON-ready artifact for downstream systems and archival.
-- Camera inventory upkeep is scheduler-native now too, so the registry can be refreshed headlessly with `camera_inventory_refresh` tasks instead of waiting for an operator to remember the manual materialization command.
+- Camera inventory upkeep is scheduler-native now too, so the registry can be refreshed headlessly with `camera_inventory_refresh` tasks instead of waiting for an operator to remember the manual materialization command. Those refresh runs also keep the camera source candidate registry in sync automatically.
 - The platform-wide operations report now carries camera inventory and camera refresh sections too, so one headless report can show both event/alert activity and the current health of the camera subsystem.
 - Entity resolution and event fusion are scheduler-native too, so the backend can keep promoting raw observations into reusable entities, linked events, and generated products without a human sitting there pressing the button like it's 2009.
 - Geofence scans create persisted alerts with dedupe keys so the same observation-hit pair does not spam duplicates.

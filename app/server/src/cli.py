@@ -23,6 +23,9 @@ from src.models import (
     SourceTrustProfileORM,
 )
 from src.schemas import (
+    CameraSourceMaterializationResponse,
+    CameraSourceSummaryRead,
+    CameraSourceInventoryRead,
     ClickHouseArchiveResultRead,
     ClickHouseDiagnosticsRead,
     ClickHouseProvisionResultRead,
@@ -49,6 +52,12 @@ from src.schemas import (
     StorageReportRead,
     SourceDefinitionCreate,
     SourceDefinitionUpdate,
+)
+from src.services.camera_source_service import (
+    build_camera_source_inventory_ops_detail,
+    build_camera_source_inventory_summary,
+    list_camera_sources,
+    materialize_camera_source_inventory,
 )
 from src.services.clickhouse_service import (
     archive_clickhouse_observations_to_r2,
@@ -749,14 +758,58 @@ def materialize_cameras_command(
             limit=limit,
             actor="cli_camera_registry",
         )
+        source_result = materialize_camera_source_inventory(
+            session,
+            layer_key=layer,
+            source_domain=source_domain,
+            limit=limit,
+            actor="cli_camera_source_registry",
+        )
+        result["source_created_count"] = int(source_result["created_count"])
+        result["source_updated_count"] = int(source_result["updated_count"])
+        result["source_scanned_endpoint_count"] = int(source_result["scanned_endpoint_count"])
         serializable = TypeAdapter(CameraMaterializationResponse).validate_python(result).model_dump(mode="json")
         print_banner()
         typer.echo(
             f"scanned={serializable['scanned_count']} created={serializable['created_count']} updated={serializable['updated_count']}"
         )
+        typer.echo(
+            f"source_candidates created={serializable['source_created_count']} updated={serializable['source_updated_count']} scanned_endpoints={serializable['source_scanned_endpoint_count']}"
+        )
         for camera in serializable["cameras"]:
             typer.echo(
                 f"{camera['camera_inventory_id']} | {camera['name']} | {camera['status']} | active={camera['active']} | layer={camera['layer_key']}"
+            )
+    finally:
+        session.close()
+
+
+@app.command("materialize-camera-sources")
+def materialize_camera_sources_command(
+    layer: str | None = None,
+    source_domain: str | None = None,
+    active: bool | None = typer.Option(default=None),
+    limit: int = 500,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        result = materialize_camera_source_inventory(
+            session,
+            layer_key=layer,
+            source_domain=source_domain,
+            active=active,
+            limit=limit,
+            actor="cli_camera_source_registry",
+        )
+        serializable = TypeAdapter(CameraSourceMaterializationResponse).validate_python(result).model_dump(mode="json")
+        print_banner()
+        typer.echo(
+            f"scanned_cameras={serializable['scanned_camera_count']} scanned_endpoints={serializable['scanned_endpoint_count']} created={serializable['created_count']} updated={serializable['updated_count']}"
+        )
+        for source in serializable["sources"]:
+            typer.echo(
+                f"{source['camera_source_inventory_id']} | {source['endpoint_kind']} | {source['status']} | score={source['graduation_score']} | {source['endpoint_url']}"
             )
     finally:
         session.close()
@@ -791,6 +844,38 @@ def list_cameras_command(
         for row in rows:
             typer.echo(
                 f"{row.camera_inventory_id} | {row.name} | {row.status} | active={row.active} | provider={row.provider} | road={row.road_name}"
+            )
+    finally:
+        session.close()
+
+
+@app.command("list-camera-sources")
+def list_camera_sources_command(
+    layer: str | None = None,
+    source_domain: str | None = None,
+    endpoint_kind: str | None = None,
+    status: str | None = None,
+    verification_state: str | None = None,
+    active: bool | None = typer.Option(default=None),
+    limit: int = 200,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        rows = list_camera_sources(
+            session,
+            layer_key=layer,
+            source_domain=source_domain,
+            endpoint_kind=endpoint_kind,
+            status=status,
+            verification_state=verification_state,
+            active=active,
+            limit=limit,
+        )
+        print_banner()
+        for row in rows:
+            typer.echo(
+                f"{row.camera_source_inventory_id} | {row.endpoint_kind} | {row.status} | verify={row.verification_state} | score={row.graduation_score:.3f} | {row.endpoint_url}"
             )
     finally:
         session.close()
@@ -837,6 +922,44 @@ def show_camera_summary_command(
         session.close()
 
 
+@app.command("show-camera-source-summary")
+def show_camera_source_summary_command(
+    layer: str | None = None,
+    source_domain: str | None = None,
+    endpoint_kind: str | None = None,
+    status: str | None = None,
+    verification_state: str | None = None,
+    active: bool | None = typer.Option(default=None),
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        summary = build_camera_source_inventory_summary(
+            session,
+            layer_key=layer,
+            source_domain=source_domain,
+            endpoint_kind=endpoint_kind,
+            status=status,
+            verification_state=verification_state,
+            active=active,
+        )
+        serializable = TypeAdapter(CameraSourceSummaryRead).validate_python(summary).model_dump(mode="json")
+        print_banner()
+        typer.echo(
+            "totals="
+            f"{serializable['total_count']} active={serializable['active_count']} ready={serializable['ready_count']} "
+            f"review={serializable['review_count']} candidate={serializable['candidate_count']} graduated={serializable['graduated_count']}"
+        )
+        for group_name in ("source_domain_counts", "endpoint_kind_counts", "status_counts"):
+            typer.echo(f"{group_name}:")
+            for item in serializable[group_name]:
+                typer.echo(
+                    f"  {item['key']} | total={item['total_count']} | active={item['active_count']} | ready={item['ready_count']} | review={item['review_count']}"
+                )
+    finally:
+        session.close()
+
+
 @app.command("show-camera-ops")
 def show_camera_ops_command(camera_inventory_id: int) -> None:
     init_db()
@@ -865,6 +988,39 @@ def show_camera_ops_command(camera_inventory_id: int) -> None:
         for task in detail["refresh_tasks"]:
             typer.echo(
                 f"  {task.task_id} | enabled={task.enabled} | every={task.interval_seconds}s | next={task.next_run_at} | payload={json.dumps(task.payload_json, sort_keys=True)}"
+            )
+        typer.echo("custody_logs:")
+        for log in detail["custody_logs"]:
+            typer.echo(f"  {log.custody_log_id} | {log.action} | {log.actor} | {log.created_at}")
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.command("show-camera-source-ops")
+def show_camera_source_ops_command(camera_source_inventory_id: int) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        detail = build_camera_source_inventory_ops_detail(session, camera_source_inventory_id)
+        source = detail["source"]
+        print_banner()
+        typer.echo(
+            f"camera_source={source.camera_source_inventory_id} kind={source.endpoint_kind} status={source.status} verify={source.verification_state} score={source.graduation_score:.3f}"
+        )
+        typer.echo(
+            f"layer={source.layer_key} source_domain={source.source_domain} endpoint={source.endpoint_url}"
+        )
+        camera = detail["camera"]
+        if camera is not None:
+            typer.echo(
+                f"camera={camera.camera_inventory_id} key={camera.camera_key} name={camera.name} active={camera.active}"
+            )
+        latest_observation = detail["latest_observation"]
+        if latest_observation is not None:
+            typer.echo(
+                f"latest_observation={latest_observation.observation_id} import_run={latest_observation.import_run_id} source_domain={latest_observation.source_domain}"
             )
         typer.echo("custody_logs:")
         for log in detail["custody_logs"]:

@@ -10,6 +10,7 @@ from src.db import REQUIRED_ADDITIVE_COLUMNS, REQUIRED_POSTGIS_INDEX_DDLS
 from src.models import (
     AlertORM,
     CameraInventoryORM,
+    CameraSourceInventoryORM,
     CustodyLogORM,
     DataLayerORM,
     EntityObservationLinkORM,
@@ -35,6 +36,7 @@ TABLE_COUNT_MODELS: tuple[tuple[str, object], ...] = (
     ("local_import_runs", LocalImportRunORM),
     ("observations", ObservationORM),
     ("camera_inventory", CameraInventoryORM),
+    ("camera_source_inventory", CameraSourceInventoryORM),
     ("storage_objects", StorageObjectORM),
     ("events", EventORM),
     ("entities", EntityORM),

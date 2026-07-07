@@ -321,6 +321,9 @@ def test_camera_inventory_refresh_schedule_materializes_camera_inventory(
     assert payload["output_json"]["created_count"] == 1
     assert payload["output_json"]["updated_count"] == 0
     assert payload["output_json"]["scanned_count"] == 1
+    assert payload["output_json"]["source_created_count"] == 2
+    assert payload["output_json"]["source_updated_count"] == 0
+    assert payload["output_json"]["source_scanned_endpoint_count"] == 2
     assert len(payload["output_json"]["camera_inventory_ids"]) == 1
 
     cameras_response = client.get("/api/cameras", params={"layer_key": "traffic-camera-feed"})
@@ -329,6 +332,15 @@ def test_camera_inventory_refresh_schedule_materializes_camera_inventory(
     assert len(cameras) == 1
     assert cameras[0]["external_id"] == "mndot-i35w-001"
     assert cameras[0]["source_domain"] == "images.511mn.org"
+
+    camera_sources_response = client.get(
+        "/api/camera-sources",
+        params={"layer_key": "traffic-camera-feed", "limit": 10},
+    )
+    assert camera_sources_response.status_code == 200
+    camera_sources = camera_sources_response.json()
+    assert len(camera_sources) == 2
+    assert {row["endpoint_kind"] for row in camera_sources} == {"image", "page"}
 
     custody_response = client.get("/api/custody/logs")
     assert custody_response.status_code == 200

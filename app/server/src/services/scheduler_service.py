@@ -16,6 +16,7 @@ from src.models import (
     ScheduledTaskRunORM,
 )
 from src.schemas import EntityResolutionRequest, EventFusionRequest, ScheduledTaskCreate, ScheduledTaskUpdate
+from src.services.camera_source_service import materialize_camera_source_inventory
 from src.services.camera_service import materialize_camera_inventory
 from src.services.entity_resolution_service import materialize_entities
 from src.services.event_fusion_service import materialize_fused_events
@@ -385,6 +386,13 @@ def execute_task(
             limit=limit,
             actor=actor,
         )
+        source_result = materialize_camera_source_inventory(
+            session,
+            layer_key=task.layer_key,
+            source_domain=source_domain,
+            limit=limit,
+            actor=actor,
+        )
         cameras = result["cameras"]
         return (
             int(result["created_count"]) + int(result["updated_count"]),
@@ -395,6 +403,9 @@ def execute_task(
                 "scanned_count": int(result["scanned_count"]),
                 "created_count": int(result["created_count"]),
                 "updated_count": int(result["updated_count"]),
+                "source_created_count": int(source_result["created_count"]),
+                "source_updated_count": int(source_result["updated_count"]),
+                "source_scanned_endpoint_count": int(source_result["scanned_endpoint_count"]),
                 "camera_inventory_ids": [camera.camera_inventory_id for camera in cameras],
                 "camera_keys": [camera.camera_key for camera in cameras],
             },
