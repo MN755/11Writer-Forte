@@ -21,13 +21,17 @@ def source_now() -> datetime:
 def create_source_definition(session: Session, payload: SourceDefinitionCreate) -> SourceDefinitionORM:
     record = SourceDefinitionORM(**payload.model_dump())
     session.add(record)
+    session.flush()
     session.add(
         CustodyLogORM(
             object_type="source_definition",
-            object_id=payload.name,
+            object_id=str(record.source_id),
             action="source_created",
             actor="system",
-            details_json=payload.model_dump(),
+            details_json={
+                **payload.model_dump(),
+                "source_id": record.source_id,
+            },
         )
     )
     session.commit()
@@ -55,6 +59,19 @@ def run_source_definition(session: Session, source_id: int, actor: str = "source
     run = SourceRunORM(source_id=source.source_id, status="running")
     session.add(run)
     session.flush()
+    session.add(
+        CustodyLogORM(
+            object_type="source_run",
+            object_id=str(run.source_run_id),
+            action="source_run_started",
+            actor=actor,
+            details_json={
+                "source_id": source.source_id,
+                "source_kind": source.source_kind,
+                "target_uri": source.target_uri,
+            },
+        )
+    )
 
     try:
         import_path = materialize_source_payload(source)
@@ -77,6 +94,19 @@ def run_source_definition(session: Session, source_id: int, actor: str = "source
         }
         session.add(
             CustodyLogORM(
+                object_type="source_run",
+                object_id=str(run.source_run_id),
+                action="source_run_completed",
+                actor=actor,
+                details_json={
+                    "source_id": source.source_id,
+                    "records_imported": run.records_imported,
+                    "import_run_id": import_run.import_run_id,
+                },
+            )
+        )
+        session.add(
+            CustodyLogORM(
                 object_type="source_definition",
                 object_id=str(source.source_id),
                 action="source_run_completed",
@@ -93,6 +123,18 @@ def run_source_definition(session: Session, source_id: int, actor: str = "source
         run.status = "failed"
         run.error_text = str(exc)
         run.finished_at = source_now()
+        session.add(
+            CustodyLogORM(
+                object_type="source_run",
+                object_id=str(run.source_run_id),
+                action="source_run_failed",
+                actor=actor,
+                details_json={
+                    "source_id": source.source_id,
+                    "error_text": str(exc),
+                },
+            )
+        )
         session.add(
             CustodyLogORM(
                 object_type="source_definition",

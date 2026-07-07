@@ -108,6 +108,7 @@ def build_event_export_bundle(session: Session, event_id: int) -> dict[str, obje
         entity_observation_links=entity_observation_links,
         import_runs=import_runs,
         source_definitions=source_definitions,
+        source_runs=source_runs,
         products=products,
         export_log=log_bundle_export(
             session,
@@ -147,6 +148,7 @@ def filter_relevant_custody_logs(
     entity_observation_links: list[EntityObservationLinkORM],
     import_runs: list[LocalImportRunORM],
     source_definitions: list[SourceDefinitionORM],
+    source_runs: list[SourceRunORM],
     products: list[SituationProductORM],
     export_log: CustodyLogORM,
 ) -> list[CustodyLogORM]:
@@ -174,6 +176,10 @@ def filter_relevant_custody_logs(
     relevant_pairs.update(
         ("source_definition", str(source_definition.source_id))
         for source_definition in source_definitions
+    )
+    relevant_pairs.update(
+        ("source_run", str(source_run.source_run_id))
+        for source_run in source_runs
     )
     relevant_pairs.update(
         ("situation_product", str(product.product_id))

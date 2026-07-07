@@ -34,13 +34,17 @@ def create_scheduled_task(session: Session, payload: ScheduledTaskCreate) -> Sch
         next_run_at=compute_next_run(payload.interval_seconds),
     )
     session.add(record)
+    session.flush()
     session.add(
         CustodyLogORM(
             object_type="scheduled_task",
-            object_id=payload.name,
+            object_id=str(record.task_id),
             action="task_created",
             actor="system",
-            details_json=payload.model_dump(),
+            details_json={
+                **payload.model_dump(),
+                "task_id": record.task_id,
+            },
         )
     )
     session.commit()
@@ -69,6 +73,18 @@ def run_task(session: Session, task_id: int, actor: str = "scheduler") -> Schedu
     task_run = ScheduledTaskRunORM(task_id=task.task_id, status="running")
     session.add(task_run)
     session.flush()
+    session.add(
+        CustodyLogORM(
+            object_type="scheduled_task_run",
+            object_id=str(task_run.task_run_id),
+            action="task_run_started",
+            actor=actor,
+            details_json={
+                "task_id": task.task_id,
+                "task_type": task.task_type,
+            },
+        )
+    )
 
     try:
         records_affected, output_json = execute_task(session, task, actor=actor)
@@ -79,6 +95,19 @@ def run_task(session: Session, task_id: int, actor: str = "scheduler") -> Schedu
         task_run.finished_at = finished_at
         task.last_run_at = finished_at
         task.next_run_at = compute_next_run(task.interval_seconds, finished_at)
+        session.add(
+            CustodyLogORM(
+                object_type="scheduled_task_run",
+                object_id=str(task_run.task_run_id),
+                action="task_run_completed",
+                actor=actor,
+                details_json={
+                    "task_id": task.task_id,
+                    "task_type": task.task_type,
+                    "records_affected": records_affected,
+                },
+            )
+        )
         session.add(
             CustodyLogORM(
                 object_type="scheduled_task",
@@ -100,6 +129,19 @@ def run_task(session: Session, task_id: int, actor: str = "scheduler") -> Schedu
         task_run.finished_at = finished_at
         task.last_run_at = finished_at
         task.next_run_at = compute_next_run(task.interval_seconds, finished_at)
+        session.add(
+            CustodyLogORM(
+                object_type="scheduled_task_run",
+                object_id=str(task_run.task_run_id),
+                action="task_run_failed",
+                actor=actor,
+                details_json={
+                    "task_id": task.task_id,
+                    "task_type": task.task_type,
+                    "error_text": str(exc),
+                },
+            )
+        )
         session.add(
             CustodyLogORM(
                 object_type="scheduled_task",
