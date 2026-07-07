@@ -109,6 +109,7 @@ class LocalImportRunORM(TimestampMixin, Base):
     status: Mapped[str] = mapped_column(String(30), default="queued")
     records_seen: Mapped[int] = mapped_column(Integer, default=0)
     records_imported: Mapped[int] = mapped_column(Integer, default=0)
+    records_skipped: Mapped[int] = mapped_column(Integer, default=0)
     notes: Mapped[str] = mapped_column(Text, default="")
     chain_of_custody_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
 

@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from pathlib import Path
 
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.dialects import postgresql
 
+from src.config import reset_settings_cache
+from src.db import init_db, reset_db_state
 from src.db import get_session_factory
 from src.models import GeofenceORM, ObservationORM
 from src.services.geospatial_service import (
@@ -96,3 +99,83 @@ def test_postgis_contains_filter_compiles_to_spatial_sql() -> None:
     assert "ST_Contains" in compiled
     assert "POLYGON ((-96 29, -94 29, -94 31, -96 31, -96 29))" in compiled
     assert "ST_GeomFromText(observations.location_wkt, 4326)" in compiled
+
+
+def test_init_db_reconciles_additive_columns(tmp_path: Path, monkeypatch) -> None:
+    database_path = tmp_path / "legacy.db"
+    connection = sqlite3.connect(database_path)
+    try:
+        connection.executescript(
+            """
+            CREATE TABLE geofences (
+                geofence_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name VARCHAR(160) NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                geometry_geojson JSON NOT NULL,
+                rule_expression TEXT NOT NULL DEFAULT '',
+                enabled BOOLEAN NOT NULL DEFAULT 1,
+                created_at DATETIME,
+                updated_at DATETIME
+            );
+            CREATE TABLE observations (
+                observation_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                import_run_id INTEGER,
+                event_id INTEGER,
+                layer_key VARCHAR(80) NOT NULL,
+                source_domain VARCHAR(255),
+                source_type VARCHAR(40) NOT NULL DEFAULT 'local_import',
+                record_format VARCHAR(30) NOT NULL DEFAULT 'json',
+                trust_level VARCHAR(30) NOT NULL DEFAULT 'neutral',
+                approval_policy VARCHAR(40) NOT NULL DEFAULT 'manual_review',
+                confidence_score FLOAT NOT NULL DEFAULT 0.5,
+                location_geojson JSON,
+                content_text TEXT NOT NULL DEFAULT '',
+                content_json JSON NOT NULL,
+                raw_hash VARCHAR(64) NOT NULL,
+                created_at DATETIME,
+                updated_at DATETIME
+            );
+            CREATE TABLE local_import_runs (
+                import_run_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_path TEXT NOT NULL,
+                source_format VARCHAR(30) NOT NULL,
+                layer_key VARCHAR(80) NOT NULL DEFAULT 'unassigned',
+                status VARCHAR(30) NOT NULL DEFAULT 'queued',
+                records_seen INTEGER NOT NULL DEFAULT 0,
+                records_imported INTEGER NOT NULL DEFAULT 0,
+                notes TEXT NOT NULL DEFAULT '',
+                chain_of_custody_json JSON NOT NULL,
+                created_at DATETIME,
+                updated_at DATETIME
+            );
+            """
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    monkeypatch.setenv("ELEVENWRITER_DATABASE_URL", f"sqlite:///{database_path}")
+    monkeypatch.setenv("ELEVENWRITER_DATA_DIR", str(tmp_path / "var"))
+    reset_settings_cache()
+    reset_db_state()
+
+    init_db()
+
+    check_connection = sqlite3.connect(database_path)
+    try:
+        geofence_columns = {
+            row[1] for row in check_connection.execute("PRAGMA table_info(geofences)").fetchall()
+        }
+        observation_columns = {
+            row[1] for row in check_connection.execute("PRAGMA table_info(observations)").fetchall()
+        }
+        import_columns = {
+            row[1] for row in check_connection.execute("PRAGMA table_info(local_import_runs)").fetchall()
+        }
+        assert "geometry_wkt" in geofence_columns
+        assert "location_wkt" in observation_columns
+        assert "records_skipped" in import_columns
+    finally:
+        check_connection.close()
+        reset_db_state()
+        reset_settings_cache()

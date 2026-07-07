@@ -14,7 +14,7 @@ This repo intentionally removes the frontend runtime. The only operator-facing i
 - Managed source definitions with persisted source-run history and scheduler-driven sync hooks
 - SQLAlchemy storage foundation that runs on SQLite for local development and Postgres/PostGIS-oriented URLs for deployment
 - PostGIS-aware spatial query path that persists WKT alongside GeoJSON and automatically provisions spatial indexes on PostgreSQL
-- Local import pipeline for JSON, JSONL, TXT, and SQLite inputs
+- Local import pipeline for JSON, JSONL, TXT, and SQLite inputs with row-level dedupe inside each layer
 - Rule-based domain trust and integrity source seeding
 - Chain-of-custody logging for imports and system actions
 - Dockerized backend deployment path for Windows, macOS, and Linux hosts
@@ -97,3 +97,4 @@ By default the compose stack starts the API plus PostGIS-ready Postgres.
 - Managed sources provide a named catalog for repeatable ingestion; scheduler tasks can now sync those source definitions instead of only replaying raw file paths.
 - HTTP-managed sources support retry attempts, timeout controls, custom headers, cached payload materialization, and persisted fetch metadata so headless sync jobs have enough operational context to debug failures.
 - Managed source runs are idempotent by default: when the payload hash matches the most recent completed or skipped run for that source, the new run is marked `skipped` and does not create duplicate imports.
+- Local imports are dedupe-aware too: exact duplicate records in the same layer are skipped, and each import run reports `records_seen`, `records_imported`, and `records_skipped`.

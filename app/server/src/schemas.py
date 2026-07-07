@@ -284,6 +284,7 @@ class LocalImportRunRead(ForteModel):
     status: str
     records_seen: int
     records_imported: int
+    records_skipped: int
     notes: str
     chain_of_custody_json: list[dict[str, Any]]
     created_at: datetime
@@ -299,6 +300,7 @@ class LocalImportRunSummaryRead(ForteModel):
     status: str
     records_seen: int
     records_imported: int
+    records_skipped: int
     notes: str
     chain_of_custody_json: list[dict[str, Any]]
     created_at: datetime
