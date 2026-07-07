@@ -75,6 +75,8 @@ elevenwriter fuse-events --bbox "-96,29,-94,31" --distance-km 10
 elevenwriter show-event-products 1
 elevenwriter export-event-product 1 cited_summary ./exports/event-1-summary.txt --max-redaction-level public
 elevenwriter export-event-bundle 1 ./exports/event-1-bundle.json --max-redaction-level public
+elevenwriter export-runtime-snapshot ./exports/runtime-snapshot.json
+elevenwriter restore-runtime-snapshot ./exports/runtime-snapshot.json --replace-existing
 elevenwriter add-source-sync-schedule nightly-sync 1 300 --retry-attempts 3 --retry-backoff-seconds 5
 elevenwriter add-geofence-scan-schedule nightly-watch 300
 elevenwriter update-schedule 1 --enabled false --notes "Paused for maintenance"
@@ -104,6 +106,7 @@ By default the compose stack starts the API, a scheduler worker, and PostGIS-rea
 - SQLite remains supported for local ingestion inputs and lightweight runtime mode, but primary backend storage targets Postgres/PostGIS deployment.
 - Postgres runtime now auto-enables `postgis` plus GiST expression indexes for observation points and geofence geometries, while SQLite keeps the Python fallback path for local runs and tests.
 - The headless CLI now includes a `doctor` command and the API exposes `/api/operations/database`, so operators can audit connectivity, additive schema drift, table counts, and PostGIS readiness without freestyling SQL in production.
+- Runtime backup and recovery now have a first-class path too: `/api/operations/runtime/export`, `/api/operations/runtime/restore`, and matching CLI commands serialize the core backend state in dependency-safe order and log custody records for both export and restore.
 - Geofence scans create persisted alerts with dedupe keys so the same observation-hit pair does not spam duplicates.
 - Scheduler runs and import operations both write custody records so unattended execution still leaves an audit trail.
 - Cross-verification is rule-based today: it clusters nearby observations inside a time window and raises confidence when independent domains or layers corroborate the same occurrence.

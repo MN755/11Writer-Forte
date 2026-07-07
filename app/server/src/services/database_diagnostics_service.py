@@ -9,26 +9,40 @@ from src.config import get_settings
 from src.db import REQUIRED_ADDITIVE_COLUMNS, REQUIRED_POSTGIS_INDEX_DDLS
 from src.models import (
     AlertORM,
+    CustodyLogORM,
     DataLayerORM,
+    EntityObservationLinkORM,
     EntityORM,
+    EventObservationLinkORM,
     EventORM,
     GeofenceORM,
     LocalImportRunORM,
     ObservationORM,
     ScheduledTaskORM,
+    ScheduledTaskRunORM,
+    SituationProductORM,
     SourceDefinitionORM,
+    SourceRunORM,
+    SourceTrustProfileORM,
 )
 
 TABLE_COUNT_MODELS: tuple[tuple[str, object], ...] = (
     ("data_layers", DataLayerORM),
+    ("source_trust_profiles", SourceTrustProfileORM),
     ("source_definitions", SourceDefinitionORM),
     ("local_import_runs", LocalImportRunORM),
     ("observations", ObservationORM),
     ("events", EventORM),
     ("entities", EntityORM),
+    ("event_observation_links", EventObservationLinkORM),
+    ("entity_observation_links", EntityObservationLinkORM),
     ("geofences", GeofenceORM),
     ("alerts", AlertORM),
     ("scheduled_tasks", ScheduledTaskORM),
+    ("scheduled_task_runs", ScheduledTaskRunORM),
+    ("source_runs", SourceRunORM),
+    ("situation_products", SituationProductORM),
+    ("custody_logs", CustodyLogORM),
 )
 
 
