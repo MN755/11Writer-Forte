@@ -22,6 +22,7 @@ from src.config import get_settings
 from src.models import CustodyLogORM, SourceDefinitionORM, SourceRunORM
 from src.schemas import SourceDefinitionCreate
 from src.services.import_service import import_local_path
+from src.services.layer_service import ensure_data_layer
 
 
 @dataclass(frozen=True)
@@ -43,6 +44,7 @@ def source_now() -> datetime:
 
 
 def create_source_definition(session: Session, payload: SourceDefinitionCreate) -> SourceDefinitionORM:
+    ensure_data_layer(session, payload.layer_key, actor="source_registry")
     record = SourceDefinitionORM(**payload.model_dump())
     session.add(record)
     session.flush()

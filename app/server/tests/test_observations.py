@@ -58,6 +58,17 @@ def test_cross_verification_clusters_independent_observations(
     client: TestClient,
     tmp_path: Path,
 ) -> None:
+    client.post(
+        "/api/source-trust/profiles",
+        json={
+            "domain": "alpha.example.com",
+            "trust_level": "trusted",
+            "approval_policy": "auto_approve_stable",
+            "integrity_source": True,
+            "notes": "fixture",
+        },
+    )
+
     fixture_a = tmp_path / "alpha.json"
     fixture_a.write_text(
         json.dumps(
@@ -65,6 +76,8 @@ def test_cross_verification_clusters_independent_observations(
                 {
                     "title": "Port departure",
                     "url": "https://alpha.example.com/departure",
+                    "observed_at": "2026-07-06T20:00:00Z",
+                    "ground_truth": True,
                     "lat": 29.76,
                     "lon": -95.36,
                 }
@@ -79,6 +92,7 @@ def test_cross_verification_clusters_independent_observations(
                 {
                     "title": "Port departure confirmed",
                     "url": "https://beta.example.com/departure",
+                    "observed_at": "2026-07-06T20:05:00Z",
                     "lat": 29.77,
                     "lon": -95.35,
                 }
@@ -108,4 +122,12 @@ def test_cross_verification_clusters_independent_observations(
     assert cluster["observation_count"] == 2
     assert cluster["source_domain_count"] == 2
     assert cluster["layer_count"] == 2
+    assert cluster["source_domains"] == ["alpha.example.com", "beta.example.com"]
+    assert cluster["layer_keys"] == ["marine-track", "news-track"]
+    assert cluster["trusted_observation_count"] == 1
+    assert cluster["integrity_source_count"] == 1
+    assert cluster["ground_truth_count"] == 1
+    assert cluster["time_span_minutes"] == 5.0
+    assert cluster["started_at"] == "2026-07-06T20:00:00Z"
+    assert cluster["ended_at"] == "2026-07-06T20:05:00Z"
     assert cluster["verification_score"] > 0.5

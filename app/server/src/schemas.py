@@ -206,9 +206,15 @@ class CrossVerificationSummaryRead(ForteModel):
     observation_ids: list[int]
     observation_count: int
     source_domain_count: int
+    source_domains: list[str]
     layer_count: int
+    layer_keys: list[str]
     independent_signal_count: int
     verification_score: float
+    trusted_observation_count: int
+    integrity_source_count: int
+    ground_truth_count: int
+    time_span_minutes: float
     started_at: datetime
     ended_at: datetime
     centroid_geojson: dict[str, Any]
@@ -361,6 +367,35 @@ class ScheduledTaskRunRead(ForteModel):
 class SchedulerKickResponse(ForteModel):
     runs_created: int
     task_run_ids: list[int]
+
+
+class OperationsSummaryRead(ForteModel):
+    import_run_count: int
+    imported_record_count: int
+    skipped_record_count: int
+    source_run_count: int
+    source_run_failure_count: int
+    scheduled_task_run_count: int
+    scheduled_task_run_failure_count: int
+    alert_count: int
+    open_alert_count: int
+    acknowledged_alert_count: int
+    closed_alert_count: int
+    event_count: int
+    entity_count: int
+    observation_count: int
+
+
+class OperationsReportRead(ForteModel):
+    generated_at: datetime
+    scope_since: datetime | None
+    scope_until: datetime | None
+    summary: OperationsSummaryRead
+    import_runs: list[LocalImportRunSummaryRead]
+    source_runs: list[SourceRunRead]
+    scheduled_task_runs: list[ScheduledTaskRunRead]
+    alerts: list[AlertRead]
+    custody_logs: list[CustodyLogRead]
 
 
 class EventExportBundleRead(ForteModel):

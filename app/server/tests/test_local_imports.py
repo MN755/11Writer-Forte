@@ -45,6 +45,12 @@ def test_local_json_import_applies_trust_profile(client: TestClient, tmp_path: P
     assert payload["observations"][0]["approval_policy"] == "auto_approve_stable"
     assert payload["observations"][0]["location_geojson"]["type"] == "Point"
 
+    layers_response = client.get("/api/layers")
+    assert layers_response.status_code == 200
+    layers = layers_response.json()
+    assert layers[0]["key"] == "marine-track"
+    assert layers[0]["metadata_json"]["auto_created"] is True
+
 
 def test_local_import_skips_duplicate_observations(client: TestClient, tmp_path: Path) -> None:
     fixture = tmp_path / "duplicate.json"

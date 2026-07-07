@@ -165,6 +165,18 @@ def test_init_db_reconciles_additive_columns(tmp_path: Path, monkeypatch) -> Non
                 created_at DATETIME,
                 updated_at DATETIME
             );
+            CREATE TABLE alerts (
+                alert_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_id INTEGER,
+                geofence_id INTEGER,
+                severity VARCHAR(30) NOT NULL DEFAULT 'info',
+                status VARCHAR(30) NOT NULL DEFAULT 'open',
+                dedupe_key VARCHAR(160),
+                message TEXT NOT NULL,
+                trigger_basis_json JSON NOT NULL DEFAULT '{}',
+                created_at DATETIME,
+                updated_at DATETIME
+            );
             """
         )
         connection.commit()
@@ -192,11 +204,15 @@ def test_init_db_reconciles_additive_columns(tmp_path: Path, monkeypatch) -> Non
         scheduled_task_columns = {
             row[1] for row in check_connection.execute("PRAGMA table_info(scheduled_tasks)").fetchall()
         }
+        alert_columns = {
+            row[1] for row in check_connection.execute("PRAGMA table_info(alerts)").fetchall()
+        }
         assert "geometry_wkt" in geofence_columns
         assert "location_wkt" in observation_columns
         assert "records_skipped" in import_columns
         assert "retry_attempts" in scheduled_task_columns
         assert "retry_backoff_seconds" in scheduled_task_columns
+        assert "disposition_note" in alert_columns
     finally:
         check_connection.close()
         reset_db_state()

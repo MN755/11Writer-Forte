@@ -3,7 +3,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from src.db import get_db
-from src.models import DataLayerORM, EventORM, EventObservationLinkORM, SituationProductORM
+from src.models import EventORM, EventObservationLinkORM, SituationProductORM
 from src.schemas import (
     DataLayerCreate,
     DataLayerRead,
@@ -18,6 +18,7 @@ from src.schemas import (
 )
 from src.services.event_export_service import build_event_export_bundle
 from src.services.event_fusion_service import materialize_fused_events
+from src.services.layer_service import create_data_layer, list_data_layers
 
 router = APIRouter(prefix="/events", tags=["events"])
 layer_router = APIRouter(prefix="/layers", tags=["layers"])
@@ -83,14 +84,13 @@ def export_event_bundle(event_id: int, session: Session = Depends(get_db)) -> di
 
 
 @layer_router.get("", response_model=list[DataLayerRead])
-def list_layers(session: Session = Depends(get_db)) -> list[DataLayerORM]:
-    return list(session.scalars(select(DataLayerORM).order_by(DataLayerORM.name.asc())))
+def list_layers(session: Session = Depends(get_db)) -> list[object]:
+    return list_data_layers(session)
 
 
 @layer_router.post("", response_model=DataLayerRead)
-def create_layer(payload: DataLayerCreate, session: Session = Depends(get_db)) -> DataLayerORM:
-    record = DataLayerORM(**payload.model_dump())
-    session.add(record)
-    session.commit()
-    session.refresh(record)
-    return record
+def create_layer(payload: DataLayerCreate, session: Session = Depends(get_db)) -> object:
+    try:
+        return create_data_layer(session, payload, actor="api")
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
