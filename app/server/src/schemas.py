@@ -236,6 +236,20 @@ class LocalImportRunRead(ForteModel):
     observations: list[ObservationRead] = Field(default_factory=list)
 
 
+class LocalImportRunSummaryRead(ForteModel):
+    import_run_id: int
+    source_path: str
+    source_format: str
+    layer_key: str
+    status: str
+    records_seen: int
+    records_imported: int
+    notes: str
+    chain_of_custody_json: list[dict[str, Any]]
+    created_at: datetime
+    updated_at: datetime
+
+
 class CustodyLogRead(ForteModel):
     custody_log_id: int
     object_type: str
@@ -281,3 +295,16 @@ class ScheduledTaskRunRead(ForteModel):
 class SchedulerKickResponse(ForteModel):
     runs_created: int
     task_run_ids: list[int]
+
+
+class EventExportBundleRead(ForteModel):
+    exported_at: datetime
+    event: EventRead
+    observation_links: list[EventObservationLinkRead]
+    observations: list[ObservationRead]
+    import_runs: list[LocalImportRunSummaryRead]
+    source_runs: list[SourceRunRead]
+    source_definitions: list[SourceDefinitionRead]
+    products: list[SituationProductRead]
+    custody_logs: list[CustodyLogRead]
+    citations_json: list[dict[str, Any]]

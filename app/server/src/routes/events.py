@@ -8,6 +8,7 @@ from src.schemas import (
     DataLayerCreate,
     DataLayerRead,
     EventCreate,
+    EventExportBundleRead,
     EventFusionRequest,
     EventFusionResponse,
     EventFusionResultRead,
@@ -15,6 +16,7 @@ from src.schemas import (
     EventRead,
     SituationProductRead,
 )
+from src.services.event_export_service import build_event_export_bundle
 from src.services.event_fusion_service import materialize_fused_events
 
 router = APIRouter(prefix="/events", tags=["events"])
@@ -70,6 +72,14 @@ def list_event_products(event_id: int, session: Session = Depends(get_db)) -> li
         raise HTTPException(status_code=404, detail=f"Event {event_id} does not exist.")
     statement = select(SituationProductORM).where(SituationProductORM.event_id == event_id)
     return list(session.scalars(statement.order_by(SituationProductORM.product_id.asc())))
+
+
+@router.get("/{event_id}/export", response_model=EventExportBundleRead)
+def export_event_bundle(event_id: int, session: Session = Depends(get_db)) -> dict[str, object]:
+    try:
+        return build_event_export_bundle(session, event_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @layer_router.get("", response_model=list[DataLayerRead])
