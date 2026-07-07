@@ -533,6 +533,41 @@ class ScheduledTaskRunRead(ForteModel):
     output_json: dict[str, Any]
 
 
+class CameraRefreshTaskRunRead(ForteModel):
+    task_run_id: int
+    task_id: int
+    task_name: str
+    layer_key: str | None
+    source_domain: str | None
+    status: str
+    started_at: datetime
+    finished_at: datetime | None
+    records_affected: int
+    error_text: str | None
+    output_json: dict[str, Any]
+
+
+class CameraOpsReportIndexRead(ForteModel):
+    generated_at: datetime
+    stale_after_hours: float
+    latest_materialization_at: datetime | None
+    inventory_summary: CameraInventorySummaryRead
+    refresh_task_count: int
+    refresh_run_count: int
+    refresh_failure_count: int
+    refresh_tasks: list[ScheduledTaskRead]
+    recent_refresh_runs: list[CameraRefreshTaskRunRead]
+    recent_materializations: list[CustodyLogRead]
+    stale_cameras: list[CameraInventoryRead]
+
+
+class CameraOpsExportSummaryRead(ForteModel):
+    generated_at: datetime
+    filters_json: dict[str, Any]
+    report_index: CameraOpsReportIndexRead
+    cameras: list[CameraInventoryRead]
+
+
 class SchedulerKickResponse(ForteModel):
     runs_created: int
     task_run_ids: list[int]

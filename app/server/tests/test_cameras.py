@@ -169,6 +169,33 @@ def test_camera_inventory_materialization_and_update(client: TestClient, tmp_pat
     assert ops_payload["refresh_tasks"][0]["task_type"] == "camera_inventory_refresh"
     assert any(log["action"] == "camera_updated" for log in ops_payload["custody_logs"])
 
+    report_index_response = client.get(
+        "/api/cameras/report-index",
+        params={
+            "layer_key": "traffic-camera-feed",
+            "source_domain": "cams.example.com",
+            "limit": 10,
+            "stale_after_hours": 0,
+        },
+    )
+    assert report_index_response.status_code == 200
+    report_index = report_index_response.json()
+    assert report_index["refresh_task_count"] == 1
+    assert report_index["refresh_run_count"] == 0
+    assert report_index["inventory_summary"]["total_count"] == 2
+    assert report_index["stale_cameras"][0]["camera_inventory_id"] == camera_id
+    assert report_index["recent_materializations"][0]["action"] == "camera_materialization_completed"
+
+    export_summary_response = client.get(
+        "/api/cameras/export/summary",
+        params={"layer_key": "traffic-camera-feed", "camera_limit": 10, "report_limit": 10},
+    )
+    assert export_summary_response.status_code == 200
+    export_summary = export_summary_response.json()
+    assert export_summary["filters_json"]["layer_key"] == "traffic-camera-feed"
+    assert len(export_summary["cameras"]) == 2
+    assert export_summary["report_index"]["inventory_summary"]["total_count"] == 2
+
     custody_response = client.get("/api/custody/logs")
     assert custody_response.status_code == 200
     custody_rows = custody_response.json()

@@ -14,6 +14,7 @@ from src.models import (
     LocalImportRunORM,
     ObservationORM,
     ScheduledTaskORM,
+    ScheduledTaskRunORM,
 )
 from src.services.geospatial_service import build_bbox_sql_filter, geometry_to_wkt, uses_postgis
 from src.services.observation_service import (
@@ -360,6 +361,177 @@ def build_camera_inventory_ops_detail(
     }
 
 
+def build_camera_ops_report_index(
+    session: Session,
+    *,
+    layer_key: str | None = None,
+    source_domain: str | None = None,
+    status: str | None = None,
+    active: bool | None = None,
+    min_lon: float | None = None,
+    min_lat: float | None = None,
+    max_lon: float | None = None,
+    max_lat: float | None = None,
+    stale_after_hours: float = 24.0,
+    limit: int = 25,
+    stale_camera_limit: int = 25,
+) -> dict[str, object]:
+    generated_at = datetime.now(timezone.utc)
+    summary = build_camera_inventory_summary(
+        session,
+        layer_key=layer_key,
+        source_domain=source_domain,
+        status=status,
+        active=active,
+        min_lon=min_lon,
+        min_lat=min_lat,
+        max_lon=max_lon,
+        max_lat=max_lat,
+        stale_after_hours=stale_after_hours,
+    )
+    stale_before = summary["stale_before"]
+    scoped_cameras = query_camera_inventory(
+        session,
+        layer_key=layer_key,
+        source_domain=source_domain,
+        status=status,
+        active=active,
+        min_lon=min_lon,
+        min_lat=min_lat,
+        max_lon=max_lon,
+        max_lat=max_lat,
+        limit=None,
+    )
+    stale_cameras = [
+        camera
+        for camera in scoped_cameras
+        if is_stale_camera(camera, stale_before)
+    ][:stale_camera_limit]
+
+    refresh_tasks = list(
+        session.scalars(
+            select(ScheduledTaskORM)
+            .where(ScheduledTaskORM.task_type == "camera_inventory_refresh")
+            .order_by(ScheduledTaskORM.task_id.asc())
+        )
+    )
+    matching_refresh_tasks = [
+        task
+        for task in refresh_tasks
+        if refresh_task_matches_scope(task, layer_key=layer_key, source_domain=source_domain)
+    ]
+    task_lookup = {task.task_id: task for task in matching_refresh_tasks}
+    task_ids = list(task_lookup)
+
+    all_refresh_runs: list[ScheduledTaskRunORM] = []
+    recent_refresh_runs: list[dict[str, object]] = []
+    if task_ids:
+        all_refresh_runs = list(
+            session.scalars(
+                select(ScheduledTaskRunORM)
+                .where(ScheduledTaskRunORM.task_id.in_(task_ids))
+                .order_by(ScheduledTaskRunORM.task_run_id.desc())
+            )
+        )
+        recent_refresh_runs = [
+            serialize_refresh_run(task_lookup[run.task_id], run)
+            for run in all_refresh_runs[:limit]
+            if run.task_id in task_lookup
+        ]
+
+    materialization_logs = list(
+        session.scalars(
+            select(CustodyLogORM)
+            .where(CustodyLogORM.object_type == "camera_inventory_materialization")
+            .order_by(CustodyLogORM.created_at.desc())
+            .limit(max(limit * 5, 50))
+        )
+    )
+    recent_materializations = [
+        log
+        for log in materialization_logs
+        if materialization_matches_scope(log, layer_key=layer_key, source_domain=source_domain)
+    ][:limit]
+    latest_materialization_at = recent_materializations[0].created_at if recent_materializations else None
+
+    return {
+        "generated_at": generated_at,
+        "stale_after_hours": stale_after_hours,
+        "latest_materialization_at": latest_materialization_at,
+        "inventory_summary": summary,
+        "refresh_task_count": len(matching_refresh_tasks),
+        "refresh_run_count": len(all_refresh_runs),
+        "refresh_failure_count": sum(1 for run in all_refresh_runs if run.status == "failed"),
+        "refresh_tasks": matching_refresh_tasks,
+        "recent_refresh_runs": recent_refresh_runs,
+        "recent_materializations": recent_materializations,
+        "stale_cameras": stale_cameras,
+    }
+
+
+def build_camera_ops_export_summary(
+    session: Session,
+    *,
+    layer_key: str | None = None,
+    source_domain: str | None = None,
+    status: str | None = None,
+    active: bool | None = None,
+    min_lon: float | None = None,
+    min_lat: float | None = None,
+    max_lon: float | None = None,
+    max_lat: float | None = None,
+    stale_after_hours: float = 24.0,
+    camera_limit: int = 500,
+    report_limit: int = 25,
+    stale_camera_limit: int = 25,
+) -> dict[str, object]:
+    generated_at = datetime.now(timezone.utc)
+    cameras = query_camera_inventory(
+        session,
+        layer_key=layer_key,
+        source_domain=source_domain,
+        status=status,
+        active=active,
+        min_lon=min_lon,
+        min_lat=min_lat,
+        max_lon=max_lon,
+        max_lat=max_lat,
+        limit=camera_limit,
+    )
+    return {
+        "generated_at": generated_at,
+        "filters_json": {
+            "layer_key": layer_key,
+            "source_domain": source_domain,
+            "status": status,
+            "active": active,
+            "min_lon": min_lon,
+            "min_lat": min_lat,
+            "max_lon": max_lon,
+            "max_lat": max_lat,
+            "stale_after_hours": stale_after_hours,
+            "camera_limit": camera_limit,
+            "report_limit": report_limit,
+            "stale_camera_limit": stale_camera_limit,
+        },
+        "report_index": build_camera_ops_report_index(
+            session,
+            layer_key=layer_key,
+            source_domain=source_domain,
+            status=status,
+            active=active,
+            min_lon=min_lon,
+            min_lat=min_lat,
+            max_lon=max_lon,
+            max_lat=max_lat,
+            stale_after_hours=stale_after_hours,
+            limit=report_limit,
+            stale_camera_limit=stale_camera_limit,
+        ),
+        "cameras": cameras,
+    }
+
+
 def extract_camera_candidate(observation: ObservationORM) -> CameraCandidate | None:
     payload = observation.content_json if isinstance(observation.content_json, dict) else {}
     external_id = first_string(payload, ("camera_id", "cameraId", "siteId", "device_id", "id"))
@@ -616,6 +788,74 @@ def camera_matches_refresh_task(camera: CameraInventoryORM, task: ScheduledTaskO
         or normalized_camera_domain.endswith(f".{normalized_task_domain}")
         or normalized_task_domain.endswith(f".{normalized_camera_domain}")
     )
+
+
+def refresh_task_matches_scope(
+    task: ScheduledTaskORM,
+    *,
+    layer_key: str | None,
+    source_domain: str | None,
+) -> bool:
+    if layer_key is not None and task.layer_key is not None and task.layer_key != layer_key:
+        return False
+    payload = task.payload_json if isinstance(task.payload_json, dict) else {}
+    task_source_domain = payload.get("source_domain")
+    if source_domain is None:
+        return True
+    if not isinstance(task_source_domain, str) or not task_source_domain.strip():
+        return True
+    normalized_scope_domain = normalize_domain(source_domain)
+    normalized_task_domain = normalize_domain(task_source_domain)
+    if not normalized_scope_domain or not normalized_task_domain:
+        return False
+    return (
+        normalized_scope_domain == normalized_task_domain
+        or normalized_scope_domain.endswith(f".{normalized_task_domain}")
+        or normalized_task_domain.endswith(f".{normalized_scope_domain}")
+    )
+
+
+def materialization_matches_scope(
+    log: CustodyLogORM,
+    *,
+    layer_key: str | None,
+    source_domain: str | None,
+) -> bool:
+    details = log.details_json if isinstance(log.details_json, dict) else {}
+    detail_layer = details.get("layer_key")
+    detail_source_domain = details.get("source_domain")
+    if layer_key is not None and detail_layer is not None and detail_layer != layer_key:
+        return False
+    if source_domain is None:
+        return True
+    if not isinstance(detail_source_domain, str) or not detail_source_domain.strip():
+        return True
+    normalized_scope_domain = normalize_domain(source_domain)
+    normalized_detail_domain = normalize_domain(detail_source_domain)
+    if not normalized_scope_domain or not normalized_detail_domain:
+        return False
+    return (
+        normalized_scope_domain == normalized_detail_domain
+        or normalized_scope_domain.endswith(f".{normalized_detail_domain}")
+        or normalized_detail_domain.endswith(f".{normalized_scope_domain}")
+    )
+
+
+def serialize_refresh_run(task: ScheduledTaskORM, run: ScheduledTaskRunORM) -> dict[str, object]:
+    payload = task.payload_json if isinstance(task.payload_json, dict) else {}
+    return {
+        "task_run_id": run.task_run_id,
+        "task_id": task.task_id,
+        "task_name": task.name,
+        "layer_key": task.layer_key,
+        "source_domain": payload.get("source_domain") if isinstance(payload.get("source_domain"), str) else None,
+        "status": run.status,
+        "started_at": run.started_at,
+        "finished_at": run.finished_at,
+        "records_affected": run.records_affected,
+        "error_text": run.error_text,
+        "output_json": run.output_json,
+    }
 
 
 def to_json_safe(value: Any) -> Any:
