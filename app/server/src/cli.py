@@ -10,11 +10,14 @@ from src.db import get_session_factory, init_db
 from src.models import (
     AlertORM,
     CustodyLogORM,
+    EventORM,
     LocalImportRunORM,
     ScheduledTaskORM,
+    SituationProductORM,
     SourceTrustProfileORM,
 )
-from src.schemas import ScheduledTaskCreate
+from src.schemas import EventFusionRequest, ScheduledTaskCreate
+from src.services.event_fusion_service import materialize_fused_events
 from src.services.import_service import import_local_path
 from src.services.observation_service import build_cross_verification_summaries, query_observations
 from src.services.scheduler_service import create_scheduled_task, run_due_tasks, run_task
@@ -117,6 +120,95 @@ def list_imports() -> None:
             typer.echo(
                 f"{run.import_run_id} | {run.source_format} | {run.layer_key} | {run.records_imported} | {run.source_path}"
             )
+    finally:
+        session.close()
+
+
+@app.command("fuse-events")
+def fuse_events_command(
+    bbox: str | None = None,
+    layer: str | None = None,
+    limit: int = 500,
+    time_window_minutes: int = 60,
+    distance_km: float = 25.0,
+    redaction_level: str = "public",
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        min_lon, min_lat, max_lon, max_lat = parse_bbox(bbox)
+        results = materialize_fused_events(
+            session,
+            EventFusionRequest(
+                layer_key=layer,
+                min_lon=min_lon,
+                min_lat=min_lat,
+                max_lon=max_lon,
+                max_lat=max_lat,
+                limit=limit,
+                time_window_minutes=time_window_minutes,
+                distance_km=distance_km,
+                redaction_level=redaction_level,
+            ),
+        )
+        print_banner()
+        for result in results:
+            typer.echo(
+                f"{result.event.event_id} | {result.event.slug} | new={result.created_new} | observations={result.observation_count} | products={result.product_count} | score={result.verification_score:.2f}"
+            )
+    finally:
+        session.close()
+
+
+@app.command("list-events")
+def list_events() -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        rows = list(session.scalars(select(EventORM).order_by(EventORM.created_at.desc())))
+        print_banner()
+        for row in rows:
+            typer.echo(f"{row.event_id} | {row.slug} | {row.title} | {row.redaction_level}")
+    finally:
+        session.close()
+
+
+@app.command("show-event-products")
+def show_event_products(event_id: int) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        rows = list(
+            session.scalars(
+                select(SituationProductORM).where(SituationProductORM.event_id == event_id)
+            )
+        )
+        print_banner()
+        for row in rows:
+            typer.echo(f"{row.product_id} | {row.product_type} | {row.redaction_level} | {row.title}")
+    finally:
+        session.close()
+
+
+@app.command("export-event-product")
+def export_event_product(event_id: int, product_type: str, output_path: Path) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        product = session.scalar(
+            select(SituationProductORM).where(
+                SituationProductORM.event_id == event_id,
+                SituationProductORM.product_type == product_type,
+            )
+        )
+        if product is None:
+            raise typer.BadParameter(
+                f"No product '{product_type}' exists for event {event_id}."
+            )
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(product.body_text, encoding="utf-8")
+        print_banner()
+        typer.echo(f"exported {product.product_type} to {output_path}")
     finally:
         session.close()
 

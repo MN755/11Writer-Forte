@@ -52,6 +52,28 @@ class EventRead(EventCreate):
     updated_at: datetime
 
 
+class EventObservationLinkRead(ForteModel):
+    event_observation_link_id: int
+    event_id: int
+    observation_id: int
+    relationship_type: str
+    confidence_contribution: float
+    created_at: datetime
+
+
+class SituationProductRead(ForteModel):
+    product_id: int
+    event_id: int
+    product_type: str
+    redaction_level: str
+    title: str
+    body_text: str
+    citations_json: list[dict[str, Any]]
+    generated_by: str
+    created_at: datetime
+    updated_at: datetime
+
+
 class GeofenceCreate(ForteModel):
     name: str
     description: str = ""
@@ -131,6 +153,37 @@ class CrossVerificationSummaryRead(ForteModel):
     started_at: datetime
     ended_at: datetime
     centroid_geojson: dict[str, Any]
+
+
+class EventFusionRequest(ForteModel):
+    layer_key: str | None = None
+    source_domain: str | None = None
+    trust_level: str | None = None
+    min_lon: float | None = None
+    min_lat: float | None = None
+    max_lon: float | None = None
+    max_lat: float | None = None
+    since: datetime | None = None
+    until: datetime | None = None
+    limit: int = Field(default=500, ge=1, le=2000)
+    time_window_minutes: int = Field(default=60, ge=1, le=1440)
+    distance_km: float = Field(default=25.0, gt=0.0, le=500.0)
+    min_independent_signals: int = Field(default=2, ge=2, le=10)
+    redaction_level: str = "public"
+
+
+class EventFusionResultRead(ForteModel):
+    event_id: int
+    slug: str
+    title: str
+    observation_count: int
+    product_count: int
+    verification_score: float
+
+
+class EventFusionResponse(ForteModel):
+    created_event_count: int
+    event_results: list[EventFusionResultRead]
 
 
 class LocalImportRequest(ForteModel):
