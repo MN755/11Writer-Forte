@@ -76,6 +76,7 @@ from src.services.scheduler_runtime_service import run_scheduler_worker
 from src.services.scheduler_service import create_scheduled_task, run_due_tasks, run_task, update_scheduled_task
 from src.services.storage_service import create_storage_object, list_storage_objects, promote_storage_object, transition_storage_object
 from src.services.source_service import (
+    build_source_ops_detail,
     create_source_definition,
     list_source_definitions,
     list_source_runs,
@@ -688,6 +689,37 @@ def list_source_runs_command() -> None:
             typer.echo(
                 f"{row.source_run_id} | source={row.source_id} | status={row.status} | records={row.records_imported}"
             )
+    finally:
+        session.close()
+
+
+@app.command("show-source-ops")
+def show_source_ops_command(source_id: int) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        detail = build_source_ops_detail(session, source_id)
+        source = detail["source"]
+        print_banner()
+        typer.echo(
+            f"source={source.source_id} name={source.name} kind={source.source_kind} enabled={source.enabled} layer={source.layer_key}"
+        )
+        typer.echo(f"target_uri={source.target_uri}")
+        typer.echo("recent_runs:")
+        for row in detail["recent_runs"][:10]:
+            typer.echo(
+                f"  {row.source_run_id} | {row.status} | import_run={row.import_run_id} | records={row.records_imported} | started={row.started_at}"
+            )
+        typer.echo("storage_objects:")
+        for row in detail["storage_objects"][:10]:
+            typer.echo(
+                f"  {row.storage_object_id} | {row.object_kind} | tier={row.storage_tier} | retention={row.retention_class} | {row.object_uri}"
+            )
+        typer.echo("custody_logs:")
+        for row in detail["custody_logs"][:10]:
+            typer.echo(f"  {row.custody_log_id} | {row.object_type} | {row.action} | {row.actor}")
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
     finally:
         session.close()
 

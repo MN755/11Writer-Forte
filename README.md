@@ -69,6 +69,7 @@ elevenwriter list-sources
 elevenwriter update-source 1 --enabled false --notes "Disabled for review"
 elevenwriter run-source 1
 elevenwriter list-source-runs
+elevenwriter show-source-ops 1
 elevenwriter materialize-cameras --layer traffic-camera-feed
 elevenwriter list-cameras --layer traffic-camera-feed --active true
 elevenwriter show-camera-summary --layer traffic-camera-feed --stale-after-hours 24
@@ -147,6 +148,7 @@ ELEVENWRITER_CLICKHOUSE_R2_ARCHIVE_PREFIX=11writer-archive
 - Runtime backup and recovery now have a first-class path too: `/api/operations/runtime/export`, `/api/operations/runtime/restore`, and matching CLI commands serialize the core backend state in dependency-safe order and log custody records for both export and restore.
 - The storage-core slice is real now, not a manifesto: `/api/storage/objects` plus the `list-storage-objects`, `add-storage-object`, `promote-storage-object`, and `transition-storage-object` CLI commands expose a first-class artifact ledger with retention classes, tiering, and lifecycle controls.
 - Imports and camera materialization now auto-register storage manifests, so raw local files plus camera image/stream/page references get tracked as storage objects with expiration windows and custody events instead of disappearing into the void.
+- Managed sources now participate in that same storage/provenance model too: each source run materialization is tracked as a storage object, and `/api/sources/{id}/ops` plus `show-source-ops` expose recent runs, stored payload artifacts, and related custody logs in one place.
 - ClickHouse is now an optional secondary backend instead of a hand-wavy future idea: `/api/operations/clickhouse` exposes diagnostics, provisioning, runtime sync, R2 archive export, and R2 storage-config preview, while the CLI mirrors those same flows for headless ops.
 - Forte still keeps PostgreSQL/SQLite as the primary operational store. ClickHouse is wired for analytics, cold archive, and large-scale query workloads; pretending it fully replaces the relational runtime here would be unserious.
 - Cloudflare R2 support follows the S3-compatible path: set the R2 endpoint, bucket, and HMAC creds, then use `sync-clickhouse` to mirror runtime facts into ClickHouse and `archive-clickhouse-observations` to write Parquet archives toward R2.

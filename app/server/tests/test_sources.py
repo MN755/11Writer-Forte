@@ -121,6 +121,16 @@ def test_source_definition_run_creates_import_and_history(client: TestClient, tm
     assert imports_response.status_code == 200
     assert imports_response.json()[0]["records_imported"] == 1
 
+    ops_response = client.get(f"/api/sources/{source_id}/ops")
+    assert ops_response.status_code == 200
+    ops_payload = ops_response.json()
+    assert ops_payload["source"]["source_id"] == source_id
+    assert ops_payload["recent_runs"][0]["source_run_id"] == payload["source_run_id"]
+    assert len(ops_payload["storage_objects"]) == 1
+    assert ops_payload["storage_objects"][0]["object_kind"] == "source_local_payload"
+    assert ops_payload["storage_objects"][0]["source_uri"] == str(fixture)
+    assert ops_payload["storage_objects"][0]["metadata_json"]["import_run_id"] == payload["import_run_id"]
+
     layers_response = client.get("/api/layers")
     assert layers_response.status_code == 200
     assert any(layer["key"] == "marine-track" for layer in layers_response.json())
@@ -142,6 +152,11 @@ def test_source_definition_run_creates_import_and_history(client: TestClient, tm
     assert any(
         row["object_type"] == "source_run"
         and row["action"] == "source_run_completed"
+        for row in custody_rows
+    )
+    assert any(
+        row["object_type"] == "storage_object"
+        and row["action"] in {"storage_registered", "storage_refreshed"}
         for row in custody_rows
     )
 
@@ -248,6 +263,13 @@ def test_http_source_retries_and_records_fetch_metadata(client: TestClient) -> N
         assert state["last_header"] == "forte"
         assert state["last_user_agent"] == "11Writer-Forte/0.1 (+headless-source-fetch)"
 
+        ops_response = client.get(f"/api/sources/{source_id}/ops")
+        assert ops_response.status_code == 200
+        ops_payload = ops_response.json()
+        assert ops_payload["storage_objects"][0]["object_kind"] == "source_cached_payload"
+        assert ops_payload["storage_objects"][0]["object_uri"].endswith(".json")
+        assert ops_payload["storage_objects"][0]["metadata_json"]["attempt_count"] == 2
+
         custody_response = client.get("/api/custody/logs")
         assert custody_response.status_code == 200
         custody_rows = custody_response.json()
@@ -311,6 +333,15 @@ def test_source_run_skips_unchanged_payloads(client: TestClient, tmp_path: Path)
     source_runs = source_runs_response.json()
     assert source_runs[0]["status"] == "skipped"
     assert source_runs[1]["status"] == "completed"
+
+    ops_response = client.get(f"/api/sources/{source_id}/ops")
+    assert ops_response.status_code == 200
+    ops_payload = ops_response.json()
+    assert len(ops_payload["storage_objects"]) == 2
+    assert {row["metadata_json"]["run_status"] for row in ops_payload["storage_objects"]} == {
+        "skipped",
+        "completed",
+    }
 
     custody_response = client.get("/api/custody/logs")
     assert custody_response.status_code == 200

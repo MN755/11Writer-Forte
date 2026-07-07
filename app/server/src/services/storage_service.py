@@ -8,7 +8,14 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from src.models import CameraInventoryORM, CustodyLogORM, LocalImportRunORM, StorageObjectORM
+from src.models import (
+    CameraInventoryORM,
+    CustodyLogORM,
+    LocalImportRunORM,
+    SourceDefinitionORM,
+    SourceRunORM,
+    StorageObjectORM,
+)
 from src.schemas import (
     StorageObjectCreate,
     StorageObjectPromoteRequest,
@@ -371,6 +378,58 @@ def register_camera_storage_objects(
     return registered
 
 
+def register_source_run_storage_object(
+    session: Session,
+    source: SourceDefinitionORM,
+    run: SourceRunORM,
+    materialized_path: str,
+    materialization_metadata: dict[str, Any],
+    *,
+    import_run_id: int | None = None,
+    run_status: str,
+    actor: str,
+) -> StorageObjectORM:
+    materialization_kind = str(materialization_metadata.get("materialization_kind") or "unknown")
+    byte_size = (
+        int(materialization_metadata["byte_count"])
+        if isinstance(materialization_metadata.get("byte_count"), (int, float))
+        else None
+    )
+    if materialization_kind == "local_file":
+        object_kind = "source_local_payload"
+    else:
+        object_kind = "source_cached_payload"
+    metadata_json = {
+        "source_id": source.source_id,
+        "source_name": source.name,
+        "source_kind": source.source_kind,
+        "layer_key": source.layer_key,
+        "materialization_kind": materialization_kind,
+        "run_status": run_status,
+        **materialization_metadata,
+    }
+    if import_run_id is not None:
+        metadata_json["import_run_id"] = import_run_id
+    return register_storage_object(
+        session,
+        object_key=f"source_run:{run.source_run_id}:payload",
+        object_kind=object_kind,
+        owner_type="source_run",
+        owner_id=str(run.source_run_id),
+        object_uri=materialized_path,
+        source_uri=source.target_uri,
+        content_hash=as_optional_string(materialization_metadata.get("payload_sha256")),
+        media_type=resolve_source_materialization_media_type(source, materialization_metadata),
+        storage_tier="warm",
+        retention_class="investigative",
+        lifecycle_status="active",
+        byte_size=byte_size,
+        observed_at=run.started_at,
+        metadata_json=metadata_json,
+        actor=actor,
+    )
+
+
 def resolve_expiration(
     retention_class: str,
     *,
@@ -442,3 +501,27 @@ def serialize_storage_values(value: Any) -> Any:
     if isinstance(value, list):
         return [serialize_storage_values(item) for item in value]
     return value
+
+
+def resolve_source_materialization_media_type(
+    source: SourceDefinitionORM,
+    metadata: dict[str, Any],
+) -> str:
+    materialized_content_type = as_optional_string(metadata.get("materialized_content_type"))
+    if materialized_content_type:
+        return materialized_content_type
+    content_type = as_optional_string(metadata.get("content_type"))
+    if content_type:
+        return content_type.split(";", 1)[0].strip()
+    return {
+        "local_file": "application/octet-stream",
+        "http_json": "application/json",
+        "http_text": "text/plain",
+        "http_xml": "application/json",
+    }.get(source.source_kind, "application/octet-stream")
+
+
+def as_optional_string(value: Any) -> str | None:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None

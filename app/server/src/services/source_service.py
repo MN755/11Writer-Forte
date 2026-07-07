@@ -15,14 +15,15 @@ from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 from xml.etree import ElementTree
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from src.config import get_settings
-from src.models import CustodyLogORM, SourceDefinitionORM, SourceRunORM
+from src.models import CustodyLogORM, SourceDefinitionORM, SourceRunORM, StorageObjectORM
 from src.schemas import SourceDefinitionCreate, SourceDefinitionUpdate
 from src.services.import_service import import_local_path
 from src.services.layer_service import ensure_data_layer
+from src.services.storage_service import register_source_run_storage_object
 
 
 @dataclass(frozen=True)
@@ -113,6 +114,61 @@ def list_source_runs(session: Session) -> list[SourceRunORM]:
     return list(session.scalars(statement))
 
 
+def build_source_ops_detail(session: Session, source_id: int) -> dict[str, object]:
+    source = session.get(SourceDefinitionORM, source_id)
+    if source is None:
+        raise ValueError(f"Source {source_id} does not exist.")
+
+    recent_runs = list(
+        session.scalars(
+            select(SourceRunORM)
+            .where(SourceRunORM.source_id == source.source_id)
+            .order_by(SourceRunORM.source_run_id.desc())
+            .limit(25)
+        )
+    )
+    run_ids = [str(run.source_run_id) for run in recent_runs]
+    storage_objects = (
+        list(
+            session.scalars(
+                select(StorageObjectORM)
+                .where(
+                    StorageObjectORM.owner_type == "source_run",
+                    StorageObjectORM.owner_id.in_(run_ids),
+                )
+                .order_by(
+                    StorageObjectORM.observed_at.desc().nullslast(),
+                    StorageObjectORM.storage_object_id.desc(),
+                )
+            )
+        )
+        if run_ids
+        else []
+    )
+    storage_object_ids = [str(row.storage_object_id) for row in storage_objects]
+    custody_filters = [(CustodyLogORM.object_type == "source_definition") & (CustodyLogORM.object_id == str(source.source_id))]
+    if run_ids:
+        custody_filters.append((CustodyLogORM.object_type == "source_run") & CustodyLogORM.object_id.in_(run_ids))
+    if storage_object_ids:
+        custody_filters.append(
+            (CustodyLogORM.object_type == "storage_object") & CustodyLogORM.object_id.in_(storage_object_ids)
+        )
+    custody_logs = list(
+        session.scalars(
+            select(CustodyLogORM)
+            .where(or_(*custody_filters))
+            .order_by(CustodyLogORM.created_at.desc())
+            .limit(100)
+        )
+    )
+    return {
+        "source": source,
+        "recent_runs": recent_runs,
+        "storage_objects": storage_objects,
+        "custody_logs": custody_logs,
+    }
+
+
 def run_source_definition(session: Session, source_id: int, actor: str = "source_runner") -> SourceRunORM:
     source = session.get(SourceDefinitionORM, source_id)
     if source is None:
@@ -139,6 +195,15 @@ def run_source_definition(session: Session, source_id: int, actor: str = "source
 
     try:
         materialized = materialize_source_payload(source)
+        register_source_run_storage_object(
+            session,
+            source,
+            run,
+            materialized.path,
+            materialized.metadata,
+            run_status="materialized",
+            actor=actor,
+        )
         session.add(
             CustodyLogORM(
                 object_type="source_run",
@@ -184,6 +249,15 @@ def run_source_definition(session: Session, source_id: int, actor: str = "source
                         "payload_sha256": materialized.metadata.get("payload_sha256"),
                     },
                 )
+            )
+            register_source_run_storage_object(
+                session,
+                source,
+                run,
+                materialized.path,
+                materialized.metadata,
+                run_status="skipped",
+                actor=actor,
             )
             session.commit()
             session.refresh(run)
@@ -232,6 +306,16 @@ def run_source_definition(session: Session, source_id: int, actor: str = "source
                 },
             )
         )
+        register_source_run_storage_object(
+            session,
+            source,
+            run,
+            materialized.path,
+            materialized.metadata,
+            import_run_id=import_run.import_run_id,
+            run_status="completed",
+            actor=actor,
+        )
         session.commit()
     except Exception as exc:
         run.status = "failed"
@@ -261,6 +345,16 @@ def run_source_definition(session: Session, source_id: int, actor: str = "source
                 },
             )
         )
+        if "materialized" in locals():
+            register_source_run_storage_object(
+                session,
+                source,
+                run,
+                materialized.path,
+                materialized.metadata,
+                run_status="failed",
+                actor=actor,
+            )
         session.commit()
         raise
 
