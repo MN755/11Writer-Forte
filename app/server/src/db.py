@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Generator
 
+from sqlalchemy import inspect
 from sqlalchemy import text
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
@@ -52,7 +53,32 @@ def init_db() -> None:
 
     engine = get_engine()
     Base.metadata.create_all(engine)
+    reconcile_additive_schema(engine)
     initialize_spatial_backend(engine)
+
+
+def reconcile_additive_schema(engine: Engine) -> None:
+    table_columns = {
+        "geofences": {
+            "geometry_wkt": "TEXT",
+        },
+        "observations": {
+            "location_wkt": "TEXT",
+        },
+        "local_import_runs": {
+            "records_skipped": "INTEGER NOT NULL DEFAULT 0",
+        },
+    }
+    inspector = inspect(engine)
+    with engine.begin() as connection:
+        for table_name, required_columns in table_columns.items():
+            existing = {column["name"] for column in inspector.get_columns(table_name)}
+            for column_name, ddl_type in required_columns.items():
+                if column_name in existing:
+                    continue
+                connection.execute(
+                    text(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {ddl_type}")
+                )
 
 
 def initialize_spatial_backend(engine: Engine) -> None:

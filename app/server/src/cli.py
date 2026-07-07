@@ -143,7 +143,7 @@ def import_local(source_path: Path, layer: str = "unassigned", notes: str = "") 
         run = import_local_path(session, str(source_path), layer, notes)
         print_banner()
         typer.echo(
-            f"import_run={run.import_run_id} format={run.source_format} records={run.records_imported}"
+            f"import_run={run.import_run_id} format={run.source_format} imported={run.records_imported} skipped={run.records_skipped}"
         )
     finally:
         session.close()
@@ -160,7 +160,7 @@ def list_imports() -> None:
         print_banner()
         for run in runs:
             typer.echo(
-                f"{run.import_run_id} | {run.source_format} | {run.layer_key} | {run.records_imported} | {run.source_path}"
+                f"{run.import_run_id} | {run.source_format} | {run.layer_key} | imported={run.records_imported} | skipped={run.records_skipped} | {run.source_path}"
             )
     finally:
         session.close()

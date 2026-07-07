@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from src.config import get_settings
@@ -22,6 +23,7 @@ class ParsedObservation:
     content_text: str
     content_json: dict[str, Any]
     location_geojson: dict[str, Any] | None
+    raw_hash: str
 
 
 def import_local_path(
@@ -61,18 +63,16 @@ def import_local_path(
         run.notes = f"{notes} Import truncated at {row_limit} records.".strip()
 
     run.records_seen = len(parsed)
-    run.records_imported = len(parsed)
     run.status = "completed"
-    run.chain_of_custody_json.append(
-        {
-            "step": "parsed",
-            "records_seen": run.records_seen,
-            "records_imported": run.records_imported,
-            "actor": actor,
-        }
-    )
+    imported_count = 0
+    skipped_count = 0
+    existing_hashes = existing_observation_hashes(session, layer_key, {item.raw_hash for item in parsed})
+    seen_hashes: set[str] = set()
 
     for item in parsed:
+        if item.raw_hash in existing_hashes or item.raw_hash in seen_hashes:
+            skipped_count += 1
+            continue
         trust_level, approval_policy, confidence_score = resolve_trust(session, item.source_domain)
         observation = ObservationORM(
             import_run_id=run.import_run_id,
@@ -87,11 +87,23 @@ def import_local_path(
             location_wkt=geometry_to_wkt(item.location_geojson),
             content_text=item.content_text,
             content_json=item.content_json,
-            raw_hash=hashlib.sha256(
-                json.dumps(item.content_json, sort_keys=True, default=str).encode("utf-8")
-            ).hexdigest(),
+            raw_hash=item.raw_hash,
         )
         session.add(observation)
+        seen_hashes.add(item.raw_hash)
+        imported_count += 1
+
+    run.records_imported = imported_count
+    run.records_skipped = skipped_count
+    run.chain_of_custody_json.append(
+        {
+            "step": "parsed",
+            "records_seen": run.records_seen,
+            "records_imported": run.records_imported,
+            "records_skipped": run.records_skipped,
+            "actor": actor,
+        }
+    )
 
     session.add(
         CustodyLogORM(
@@ -102,7 +114,9 @@ def import_local_path(
             details_json={
                 "source_path": str(path),
                 "source_format": source_format,
+                "records_seen": run.records_seen,
                 "records_imported": run.records_imported,
+                "records_skipped": run.records_skipped,
             },
         )
     )
@@ -191,12 +205,16 @@ def parse_sqlite_observations(path: Path) -> list[ParsedObservation]:
 def normalize_payload(payload: dict[str, Any], record_format: str) -> ParsedObservation:
     source_domain = extract_domain(payload)
     content_text = payload.get("text") or payload.get("title") or json.dumps(payload, default=str)
+    raw_hash = hashlib.sha256(
+        json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()
     return ParsedObservation(
         record_format=record_format,
         source_domain=source_domain,
         content_text=str(content_text),
         content_json=payload,
         location_geojson=extract_location(payload),
+        raw_hash=raw_hash,
     )
 
 
@@ -220,3 +238,17 @@ def extract_location(payload: dict[str, Any]) -> dict[str, Any] | None:
     if isinstance(geometry, dict) and geometry.get("type") and geometry.get("coordinates"):
         return geometry
     return None
+
+
+def existing_observation_hashes(
+    session: Session,
+    layer_key: str,
+    hashes: set[str],
+) -> set[str]:
+    if not hashes:
+        return set()
+    statement = select(ObservationORM.raw_hash).where(
+        ObservationORM.layer_key == layer_key,
+        ObservationORM.raw_hash.in_(hashes),
+    )
+    return set(session.scalars(statement))
