@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import threading
 from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -202,6 +203,71 @@ def test_local_import_schedule_runs_manually(client: TestClient, tmp_path: Path)
         and row["object_id"] == str(task_id)
         and row["action"] == "task_created"
         for row in custody_response.json()
+    )
+
+
+def test_storage_lifecycle_schedule_expires_due_objects(client: TestClient) -> None:
+    expired_at = datetime.now(timezone.utc) - timedelta(hours=3)
+    create_response = client.post(
+        "/api/storage/objects",
+        json={
+            "object_key": "scheduled:expired:1",
+            "object_kind": "raw_payload",
+            "owner_type": "source_run",
+            "owner_id": "811",
+            "object_uri": "file:///tmp/source-run-811.json",
+            "storage_tier": "warm",
+            "retention_class": "operational",
+            "lifecycle_status": "active",
+            "expires_at": expired_at.isoformat(),
+        },
+    )
+    assert create_response.status_code == 200
+    storage_object_id = create_response.json()["storage_object_id"]
+
+    schedule_response = client.post(
+        "/api/scheduler/tasks",
+        json={
+            "name": "storage-lifecycle-schedule",
+            "task_type": "storage_lifecycle",
+            "interval_seconds": 300,
+            "payload_json": {"retention_class": "operational", "limit": 25},
+        },
+    )
+    assert schedule_response.status_code == 200
+    task_id = schedule_response.json()["task_id"]
+
+    run_response = client.post(f"/api/scheduler/tasks/{task_id}/run")
+    assert run_response.status_code == 200
+    run_payload = run_response.json()
+    assert run_payload["status"] == "completed"
+    assert run_payload["records_affected"] >= 1
+    assert run_payload["output_json"]["transitioned_count"] >= 1
+    assert storage_object_id in run_payload["output_json"]["storage_object_ids"]
+
+    storage_response = client.get(
+        "/api/storage/objects",
+        params={"owner_type": "source_run", "owner_id": "811", "lifecycle_status": "expired"},
+    )
+    assert storage_response.status_code == 200
+    storage_rows = storage_response.json()
+    assert len(storage_rows) == 1
+    assert storage_rows[0]["storage_object_id"] == storage_object_id
+
+    custody_response = client.get("/api/custody/logs")
+    assert custody_response.status_code == 200
+    custody_rows = custody_response.json()
+    assert any(
+        row["object_type"] == "storage_object"
+        and row["object_id"] == str(storage_object_id)
+        and row["action"] == "storage_expired"
+        for row in custody_rows
+    )
+    assert any(
+        row["object_type"] == "scheduled_task_run"
+        and row["action"] == "task_run_completed"
+        and row["details_json"]["task_id"] == task_id
+        for row in custody_rows
     )
 
 

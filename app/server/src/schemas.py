@@ -274,6 +274,37 @@ class StorageObjectTransitionRequest(ForteModel):
     metadata_json: dict[str, Any] = Field(default_factory=dict)
 
 
+class StorageInventoryBucketRead(ForteModel):
+    key: str
+    total_count: int
+    expired_count: int
+    active_count: int
+
+
+class StorageReportRead(ForteModel):
+    generated_at: datetime
+    total_count: int
+    active_count: int
+    expired_count: int
+    promoted_count: int
+    archived_count: int
+    next_expiration_at: datetime | None
+    oldest_expired_at: datetime | None
+    retention_class_counts: list[StorageInventoryBucketRead]
+    storage_tier_counts: list[StorageInventoryBucketRead]
+    lifecycle_status_counts: list[StorageInventoryBucketRead]
+    expiring_objects: list[StorageObjectRead]
+
+
+class StorageLifecycleSweepResultRead(ForteModel):
+    swept_at: datetime
+    dry_run: bool
+    filters_json: dict[str, Any]
+    expired_candidate_count: int
+    transitioned_count: int
+    candidates: list[StorageObjectRead]
+
+
 class CameraMaterializationRequest(ForteModel):
     layer_key: str | None = None
     source_domain: str | None = None
@@ -595,6 +626,7 @@ class ScheduledTaskCreate(ForteModel):
         "geofence_scan",
         "integrity_seed",
         "source_sync",
+        "storage_lifecycle",
         "camera_inventory_refresh",
         "entity_resolution_refresh",
         "event_fusion_refresh",

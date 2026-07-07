@@ -3,15 +3,19 @@ from sqlalchemy.orm import Session
 
 from src.db import get_db
 from src.schemas import (
+    StorageLifecycleSweepResultRead,
     StorageObjectCreate,
     StorageObjectPromoteRequest,
     StorageObjectRead,
     StorageObjectTransitionRequest,
+    StorageReportRead,
 )
 from src.services.storage_service import (
+    build_storage_report,
     create_storage_object,
     list_storage_objects,
     promote_storage_object,
+    sweep_expired_storage_objects,
     transition_storage_object,
 )
 
@@ -45,6 +49,29 @@ def create_storage_object_route(
     session: Session = Depends(get_db),
 ) -> object:
     return create_storage_object(session, payload)
+
+
+@router.get("/report", response_model=StorageReportRead)
+def get_storage_report_route(
+    limit: int = Query(default=25, ge=1, le=250),
+    session: Session = Depends(get_db),
+) -> object:
+    return build_storage_report(session, limit=limit)
+
+
+@router.post("/sweep", response_model=StorageLifecycleSweepResultRead)
+def run_storage_sweep_route(
+    retention_class: str | None = None,
+    limit: int = Query(default=100, ge=1, le=1000),
+    dry_run: bool = False,
+    session: Session = Depends(get_db),
+) -> object:
+    return sweep_expired_storage_objects(
+        session,
+        retention_class=retention_class,
+        limit=limit,
+        dry_run=dry_run,
+    )
 
 
 @router.patch("/objects/{storage_object_id}/promote", response_model=StorageObjectRead)
