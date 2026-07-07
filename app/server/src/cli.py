@@ -16,6 +16,7 @@ from src.models import (
 )
 from src.schemas import ScheduledTaskCreate
 from src.services.import_service import import_local_path
+from src.services.observation_service import build_cross_verification_summaries, query_observations
 from src.services.scheduler_service import create_scheduled_task, run_due_tasks, run_task
 from src.services.trust_service import seed_default_integrity_sources
 
@@ -34,6 +35,16 @@ BANNER = r"""
 
 def print_banner() -> None:
     typer.echo(BANNER)
+
+
+def parse_bbox(value: str | None) -> tuple[float | None, float | None, float | None, float | None]:
+    if not value:
+        return (None, None, None, None)
+    parts = [part.strip() for part in value.split(",")]
+    if len(parts) != 4:
+        raise typer.BadParameter("bbox must be 'min_lon,min_lat,max_lon,max_lat'")
+    min_lon, min_lat, max_lon, max_lat = (float(part) for part in parts)
+    return (min_lon, min_lat, max_lon, max_lat)
 
 
 @app.command("status")
@@ -105,6 +116,73 @@ def list_imports() -> None:
         for run in runs:
             typer.echo(
                 f"{run.import_run_id} | {run.source_format} | {run.layer_key} | {run.records_imported} | {run.source_path}"
+            )
+    finally:
+        session.close()
+
+
+@app.command("query-observations")
+def query_observations_command(
+    bbox: str | None = None,
+    layer: str | None = None,
+    source_domain: str | None = None,
+    trust_level: str | None = None,
+    limit: int = 50,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        min_lon, min_lat, max_lon, max_lat = parse_bbox(bbox)
+        rows = query_observations(
+            session,
+            layer_key=layer,
+            source_domain=source_domain,
+            trust_level=trust_level,
+            min_lon=min_lon,
+            min_lat=min_lat,
+            max_lon=max_lon,
+            max_lat=max_lat,
+            limit=limit,
+        )
+        print_banner()
+        for row in rows:
+            typer.echo(
+                f"{row.observation_id} | {row.layer_key} | {row.source_domain} | {row.confidence_score:.2f} | {row.created_at.isoformat()}"
+            )
+    finally:
+        session.close()
+
+
+@app.command("cross-verify")
+def cross_verify_command(
+    bbox: str | None = None,
+    layer: str | None = None,
+    limit: int = 200,
+    time_window_minutes: int = 60,
+    distance_km: float = 25.0,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        min_lon, min_lat, max_lon, max_lat = parse_bbox(bbox)
+        rows = query_observations(
+            session,
+            layer_key=layer,
+            min_lon=min_lon,
+            min_lat=min_lat,
+            max_lon=max_lon,
+            max_lat=max_lat,
+            limit=limit,
+        )
+        summaries = build_cross_verification_summaries(
+            rows,
+            time_window_minutes=time_window_minutes,
+            distance_km=distance_km,
+        )
+        print_banner()
+        for summary in summaries:
+            typer.echo(
+                f"{summary['cluster_id']} | observations={summary['observation_count']} | domains={summary['source_domain_count']} | layers={summary['layer_count']} | score={summary['verification_score']:.2f}"
             )
     finally:
         session.close()
