@@ -74,6 +74,7 @@ from src.services.camera_service import build_camera_inventory_ops_detail
 from src.services.camera_service import build_camera_inventory_summary
 from src.services.database_diagnostics_service import build_database_diagnostics
 from src.services.entity_resolution_service import materialize_entities
+from src.services.export_artifact_service import write_json_export_artifact, write_text_export_artifact
 from src.services.event_export_service import build_event_export_bundle
 from src.services.event_fusion_service import materialize_fused_events
 from src.services.import_service import import_local_path
@@ -1119,8 +1120,18 @@ def export_camera_summary_command(
             stale_camera_limit=stale_camera_limit,
         )
         serializable = TypeAdapter(CameraOpsExportSummaryRead).validate_python(report).model_dump(mode="json")
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(json.dumps(serializable, indent=2), encoding="utf-8")
+        write_json_export_artifact(
+            session,
+            payload=serializable,
+            object_kind="camera_summary_export",
+            owner_type="camera_export",
+            owner_id=layer or source_domain or "scoped",
+            output_path=output_path,
+            source_uri="/api/cameras/export/summary",
+            observed_at=report["generated_at"],
+            metadata_json=serializable["filters_json"],
+            actor="cli_export",
+        )
         print_banner()
         typer.echo(f"exported camera summary to {output_path}")
     finally:
@@ -1298,8 +1309,23 @@ def export_event_product(
             enforce_export_redaction(product, max_redaction_level)
         except ValueError as exc:
             raise typer.BadParameter(str(exc)) from exc
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(product.body_text, encoding="utf-8")
+        write_text_export_artifact(
+            session,
+            body_text=product.body_text,
+            object_kind="situation_product_export",
+            owner_type="situation_product",
+            owner_id=str(product.product_id),
+            output_path=output_path,
+            source_uri=f"/api/events/{event_id}/products",
+            observed_at=product.updated_at,
+            metadata_json={
+                "event_id": event_id,
+                "product_type": product.product_type,
+                "redaction_level": product.redaction_level,
+                "requested_redaction_level": max_redaction_level,
+            },
+            actor="cli_export",
+        )
         print_banner()
         typer.echo(f"exported {product.product_type} to {output_path}")
     finally:
@@ -1320,8 +1346,23 @@ def export_event_bundle(
         except ValueError as exc:
             raise typer.BadParameter(str(exc)) from exc
         serializable = TypeAdapter(EventExportBundleRead).validate_python(bundle).model_dump(mode="json")
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(json.dumps(serializable, indent=2), encoding="utf-8")
+        write_json_export_artifact(
+            session,
+            payload=serializable,
+            object_kind="event_bundle_export",
+            owner_type="event",
+            owner_id=str(event_id),
+            output_path=output_path,
+            source_uri=f"/api/events/{event_id}/export",
+            observed_at=bundle["exported_at"],
+            metadata_json={
+                "requested_redaction_level": max_redaction_level,
+                "observation_count": len(serializable["observations"]),
+                "entity_count": len(serializable["entities"]),
+                "product_count": len(serializable["products"]),
+            },
+            actor="cli_export",
+        )
         print_banner()
         typer.echo(f"exported event bundle to {output_path}")
     finally:
@@ -1713,8 +1754,23 @@ def export_operations_report(output_path: Path, hours: float | None = 24.0, limi
         since = resolve_report_since(hours)
         report = build_operations_report(session, since=since, limit=limit)
         serializable = TypeAdapter(OperationsReportRead).validate_python(report).model_dump(mode="json")
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(json.dumps(serializable, indent=2), encoding="utf-8")
+        write_json_export_artifact(
+            session,
+            payload=serializable,
+            object_kind="operations_report_export",
+            owner_type="operations_report",
+            owner_id="scoped",
+            output_path=output_path,
+            source_uri="/api/operations/report",
+            observed_at=report["generated_at"],
+            metadata_json={
+                "scope_since": serializable["scope_since"],
+                "scope_until": serializable["scope_until"],
+                "limit": limit,
+                "hours": hours,
+            },
+            actor="cli_export",
+        )
         print_banner()
         typer.echo(f"exported operations report to {output_path}")
     finally:
@@ -1728,8 +1784,21 @@ def export_runtime_snapshot_command(output_path: Path) -> None:
     try:
         snapshot = build_runtime_snapshot(session)
         serializable = TypeAdapter(RuntimeSnapshotRead).validate_python(snapshot).model_dump(mode="json")
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(json.dumps(serializable, indent=2), encoding="utf-8")
+        write_json_export_artifact(
+            session,
+            payload=serializable,
+            object_kind="runtime_snapshot_export",
+            owner_type="runtime_snapshot",
+            owner_id=serializable["exported_at"],
+            output_path=output_path,
+            source_uri="/api/operations/runtime/export",
+            observed_at=snapshot["exported_at"],
+            metadata_json={
+                "database_backend": serializable["database_backend"],
+                "spatial_backend": serializable["spatial_backend"],
+            },
+            actor="cli_export",
+        )
         print_banner()
         typer.echo(f"exported runtime snapshot to {output_path}")
     finally:
