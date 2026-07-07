@@ -23,6 +23,8 @@ from src.models import (
     SourceTrustProfileORM,
 )
 from src.schemas import (
+    CameraOpsExportSummaryRead,
+    CameraOpsReportIndexRead,
     CameraMaterializationResponse,
     DataLayerCreate,
     DatabaseDiagnosticsRead,
@@ -39,6 +41,8 @@ from src.schemas import (
 )
 from src.services.camera_service import list_cameras
 from src.services.camera_service import materialize_camera_inventory
+from src.services.camera_service import build_camera_ops_export_summary
+from src.services.camera_service import build_camera_ops_report_index
 from src.services.camera_service import build_camera_inventory_ops_detail
 from src.services.camera_service import build_camera_inventory_summary
 from src.services.database_diagnostics_service import build_database_diagnostics
@@ -694,6 +698,102 @@ def show_camera_ops_command(camera_inventory_id: int) -> None:
             typer.echo(f"  {log.custody_log_id} | {log.action} | {log.actor} | {log.created_at}")
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.command("show-camera-report-index")
+def show_camera_report_index_command(
+    layer: str | None = None,
+    source_domain: str | None = None,
+    status: str | None = None,
+    active: bool | None = typer.Option(default=None),
+    bbox: str | None = None,
+    stale_after_hours: float = 24.0,
+    limit: int = 25,
+    stale_camera_limit: int = 25,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        min_lon, min_lat, max_lon, max_lat = parse_bbox(bbox)
+        report = build_camera_ops_report_index(
+            session,
+            layer_key=layer,
+            source_domain=source_domain,
+            status=status,
+            active=active,
+            min_lon=min_lon,
+            min_lat=min_lat,
+            max_lon=max_lon,
+            max_lat=max_lat,
+            stale_after_hours=stale_after_hours,
+            limit=limit,
+            stale_camera_limit=stale_camera_limit,
+        )
+        serializable = TypeAdapter(CameraOpsReportIndexRead).validate_python(report).model_dump(mode="json")
+        print_banner()
+        typer.echo(
+            f"refresh_tasks={serializable['refresh_task_count']} refresh_runs={serializable['refresh_run_count']} failures={serializable['refresh_failure_count']}"
+        )
+        typer.echo(
+            f"latest_materialization_at={serializable['latest_materialization_at']} stale_after_hours={serializable['stale_after_hours']}"
+        )
+        inventory = serializable["inventory_summary"]
+        typer.echo(
+            f"inventory total={inventory['total_count']} active={inventory['active_count']} inactive={inventory['inactive_count']} stale={inventory['stale_count']}"
+        )
+        typer.echo("recent_refresh_runs:")
+        for row in serializable["recent_refresh_runs"]:
+            typer.echo(
+                f"  {row['task_run_id']} | task={row['task_name']} | status={row['status']} | records={row['records_affected']} | started={row['started_at']}"
+            )
+        typer.echo("stale_cameras:")
+        for row in serializable["stale_cameras"]:
+            typer.echo(
+                f"  {row['camera_inventory_id']} | {row['name']} | source={row['source_domain']} | last_observed_at={row['last_observed_at']}"
+            )
+    finally:
+        session.close()
+
+
+@app.command("export-camera-summary")
+def export_camera_summary_command(
+    output_path: Path,
+    layer: str | None = None,
+    source_domain: str | None = None,
+    status: str | None = None,
+    active: bool | None = typer.Option(default=None),
+    bbox: str | None = None,
+    stale_after_hours: float = 24.0,
+    camera_limit: int = 500,
+    report_limit: int = 25,
+    stale_camera_limit: int = 25,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        min_lon, min_lat, max_lon, max_lat = parse_bbox(bbox)
+        report = build_camera_ops_export_summary(
+            session,
+            layer_key=layer,
+            source_domain=source_domain,
+            status=status,
+            active=active,
+            min_lon=min_lon,
+            min_lat=min_lat,
+            max_lon=max_lon,
+            max_lat=max_lat,
+            stale_after_hours=stale_after_hours,
+            camera_limit=camera_limit,
+            report_limit=report_limit,
+            stale_camera_limit=stale_camera_limit,
+        )
+        serializable = TypeAdapter(CameraOpsExportSummaryRead).validate_python(report).model_dump(mode="json")
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json.dumps(serializable, indent=2), encoding="utf-8")
+        print_banner()
+        typer.echo(f"exported camera summary to {output_path}")
     finally:
         session.close()
 

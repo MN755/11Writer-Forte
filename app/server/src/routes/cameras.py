@@ -3,6 +3,8 @@ from sqlalchemy.orm import Session
 
 from src.db import get_db
 from src.schemas import (
+    CameraOpsExportSummaryRead,
+    CameraOpsReportIndexRead,
     CameraInventoryOpsDetailRead,
     CameraInventoryRead,
     CameraInventorySummaryRead,
@@ -10,6 +12,8 @@ from src.schemas import (
     CameraMaterializationResponse,
 )
 from src.services.camera_service import (
+    build_camera_ops_export_summary,
+    build_camera_ops_report_index,
     build_camera_inventory_ops_detail,
     build_camera_inventory_summary,
     list_cameras,
@@ -84,6 +88,70 @@ def summarize_cameras(
         max_lon=max_lon,
         max_lat=max_lat,
         stale_after_hours=stale_after_hours,
+    )
+
+
+@router.get("/report-index", response_model=CameraOpsReportIndexRead)
+def camera_report_index(
+    layer_key: str | None = None,
+    source_domain: str | None = None,
+    status: str | None = None,
+    active: bool | None = None,
+    min_lon: float | None = None,
+    min_lat: float | None = None,
+    max_lon: float | None = None,
+    max_lat: float | None = None,
+    stale_after_hours: float = 24.0,
+    limit: int = 25,
+    stale_camera_limit: int = 25,
+    session: Session = Depends(get_db),
+) -> dict[str, object]:
+    return build_camera_ops_report_index(
+        session,
+        layer_key=layer_key,
+        source_domain=source_domain,
+        status=status,
+        active=active,
+        min_lon=min_lon,
+        min_lat=min_lat,
+        max_lon=max_lon,
+        max_lat=max_lat,
+        stale_after_hours=stale_after_hours,
+        limit=limit,
+        stale_camera_limit=stale_camera_limit,
+    )
+
+
+@router.get("/export/summary", response_model=CameraOpsExportSummaryRead)
+def export_camera_summary(
+    layer_key: str | None = None,
+    source_domain: str | None = None,
+    status: str | None = None,
+    active: bool | None = None,
+    min_lon: float | None = None,
+    min_lat: float | None = None,
+    max_lon: float | None = None,
+    max_lat: float | None = None,
+    stale_after_hours: float = 24.0,
+    camera_limit: int = 500,
+    report_limit: int = 25,
+    stale_camera_limit: int = 25,
+    session: Session = Depends(get_db),
+) -> dict[str, object]:
+    return build_camera_ops_export_summary(
+        session,
+        layer_key=layer_key,
+        source_domain=source_domain,
+        status=status,
+        active=active,
+        min_lon=min_lon,
+        min_lat=min_lat,
+        max_lon=max_lon,
+        max_lat=max_lat,
+        stale_after_hours=stale_after_hours,
+        camera_limit=camera_limit,
+        report_limit=report_limit,
+        stale_camera_limit=stale_camera_limit,
     )
 
 
