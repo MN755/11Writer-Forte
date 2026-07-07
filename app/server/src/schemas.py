@@ -120,6 +120,19 @@ class ObservationRead(ForteModel):
     updated_at: datetime
 
 
+class CrossVerificationSummaryRead(ForteModel):
+    cluster_id: str
+    observation_ids: list[int]
+    observation_count: int
+    source_domain_count: int
+    layer_count: int
+    independent_signal_count: int
+    verification_score: float
+    started_at: datetime
+    ended_at: datetime
+    centroid_geojson: dict[str, Any]
+
+
 class LocalImportRequest(ForteModel):
     source_path: str
     layer_key: str = "unassigned"

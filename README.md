@@ -7,6 +7,8 @@ This repo intentionally removes the frontend runtime. The only operator-facing i
 ## What exists here
 
 - FastAPI runtime for event, layer, geofence, alert, import, and trust-management workflows
+- Persisted scheduler runtime for unattended imports, geofence scans, and integrity-source seed tasks
+- Observation query and rule-based cross-verification surfaces for spatial filtering and corroboration
 - SQLAlchemy storage foundation that runs on SQLite for local development and Postgres/PostGIS-oriented URLs for deployment
 - Local import pipeline for JSON, JSONL, TXT, and SQLite inputs
 - Rule-based domain trust and integrity source seeding
@@ -45,6 +47,12 @@ elevenwriter init-db
 elevenwriter seed-integrity
 elevenwriter import-local path/to/file.json --layer incident-feed
 elevenwriter list-imports
+elevenwriter query-observations --bbox "-96,29,-94,31"
+elevenwriter cross-verify --bbox "-96,29,-94,31" --distance-km 10
+elevenwriter add-geofence-scan-schedule nightly-watch 300
+elevenwriter list-schedules
+elevenwriter run-due-schedules
+elevenwriter list-custody
 ```
 
 ## Docker
@@ -62,4 +70,6 @@ By default the compose stack starts the API plus PostGIS-ready Postgres.
 - Observations preserve raw text or raw structured content alongside extracted location and trust metadata.
 - Trust scoring is rule-based first, seeded with starter integrity sources such as the New York Times, NPR, BBC, and Smithsonian.
 - SQLite remains supported for local ingestion inputs and lightweight runtime mode, but primary backend storage targets Postgres/PostGIS deployment.
-
+- Geofence scans create persisted alerts with dedupe keys so the same observation-hit pair does not spam duplicates.
+- Scheduler runs and import operations both write custody records so unattended execution still leaves an audit trail.
+- Cross-verification is rule-based today: it clusters nearby observations inside a time window and raises confidence when independent domains or layers corroborate the same occurrence.
