@@ -595,6 +595,8 @@ class OperationsReportRead(ForteModel):
     scope_since: datetime | None
     scope_until: datetime | None
     summary: OperationsSummaryRead
+    camera_inventory_summary: CameraInventorySummaryRead
+    camera_report_index: CameraOpsReportIndexRead
     import_runs: list[LocalImportRunSummaryRead]
     source_runs: list[SourceRunRead]
     scheduled_task_runs: list[ScheduledTaskRunRead]

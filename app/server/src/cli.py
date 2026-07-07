@@ -1164,6 +1164,14 @@ def show_operations_report(hours: float | None = 24.0, limit: int = 10) -> None:
         typer.echo(
             f"events={summary['event_count']} entities={summary['entity_count']} observations={summary['observation_count']}"
         )
+        camera_summary = report["camera_inventory_summary"]
+        typer.echo(
+            f"cameras={camera_summary['total_count']} active={camera_summary['active_count']} inactive={camera_summary['inactive_count']} stale={camera_summary['stale_count']}"
+        )
+        camera_report = report["camera_report_index"]
+        typer.echo(
+            f"camera_refresh_tasks={camera_report['refresh_task_count']} refresh_runs={camera_report['refresh_run_count']} refresh_failures={camera_report['refresh_failure_count']}"
+        )
     finally:
         session.close()
 
