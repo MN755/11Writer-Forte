@@ -2,6 +2,8 @@
 
 11Writer Forte is the backend-only continuation of 11Writer: a geospatial-first OSINT data platform for ingesting intersecting public-source data, preserving provenance, and supporting headless collection, fusion, alerting, and export workflows.
 
+The upstream `MN755/11Writer` repository does contain a much larger camera/webcam stack. This local Forte workspace does not currently carry that upstream subsystem wholesale. See [UPSTREAM_CAMERA_INVENTORY.md](UPSTREAM_CAMERA_INVENTORY.md) for the exact upstream camera paths and the current local gap.
+
 This repo intentionally removes the frontend runtime. The only operator-facing interface is a custom CLI plus the API surface.
 
 ## What exists here
@@ -45,10 +47,13 @@ uvicorn src.main:app --reload --port 8000
 
 MnDOT live-feed notes and source-ingestion examples live in [MNDOT_FEEDS.md](MNDOT_FEEDS.md).
 
+Upstream camera/webcam inventory and local parity notes live in [UPSTREAM_CAMERA_INVENTORY.md](UPSTREAM_CAMERA_INVENTORY.md).
+
 ## CLI
 
 ```bash
 elevenwriter status
+elevenwriter doctor
 elevenwriter init-db
 elevenwriter seed-integrity
 elevenwriter add-layer marine-track "Marine Track" --temporal-resolution live --data-latency low
@@ -98,6 +103,7 @@ By default the compose stack starts the API, a scheduler worker, and PostGIS-rea
 - Trust scoring is rule-based first, seeded with starter integrity sources such as the New York Times, NPR, BBC, and Smithsonian.
 - SQLite remains supported for local ingestion inputs and lightweight runtime mode, but primary backend storage targets Postgres/PostGIS deployment.
 - Postgres runtime now auto-enables `postgis` plus GiST expression indexes for observation points and geofence geometries, while SQLite keeps the Python fallback path for local runs and tests.
+- The headless CLI now includes a `doctor` command and the API exposes `/api/operations/database`, so operators can audit connectivity, additive schema drift, table counts, and PostGIS readiness without freestyling SQL in production.
 - Geofence scans create persisted alerts with dedupe keys so the same observation-hit pair does not spam duplicates.
 - Scheduler runs and import operations both write custody records so unattended execution still leaves an audit trail.
 - Cross-verification is rule-based today: it clusters nearby observations inside a time window and raises confidence when independent domains or layers corroborate the same occurrence.

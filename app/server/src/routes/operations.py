@@ -4,7 +4,9 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from src.db import get_db
+from src.schemas import DatabaseDiagnosticsRead
 from src.schemas import OperationsReportRead
+from src.services.database_diagnostics_service import build_database_diagnostics
 from src.services.operations_report_service import build_operations_report
 
 router = APIRouter(prefix="/operations", tags=["operations"])
@@ -18,3 +20,8 @@ def operations_report(
     session: Session = Depends(get_db),
 ) -> dict[str, object]:
     return build_operations_report(session, since=since, until=until, limit=limit)
+
+
+@router.get("/database", response_model=DatabaseDiagnosticsRead)
+def database_diagnostics(session: Session = Depends(get_db)) -> dict[str, object]:
+    return build_database_diagnostics(session)

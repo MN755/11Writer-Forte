@@ -19,7 +19,45 @@ class HealthResponse(ForteModel):
     app_name: str
     app_version: str
     database_url: str
+    database_backend: str
+    database_connected: bool
     spatial_backend: str
+    postgis_ready: bool
+    warning_count: int
+
+
+class DatabaseColumnAuditRead(ForteModel):
+    table_name: str
+    column_name: str
+    present: bool
+
+
+class DatabaseIndexAuditRead(ForteModel):
+    index_name: str
+    present: bool
+
+
+class DatabaseTableCountRead(ForteModel):
+    table_name: str
+    row_count: int
+
+
+class DatabaseDiagnosticsRead(ForteModel):
+    status: str
+    database_backend: str
+    database_url: str
+    database_connected: bool
+    spatial_backend: str
+    scheduler_poll_seconds: float
+    postgis_expected: bool
+    postgis_extension_installed: bool | None
+    postgis_version: str | None
+    warning_count: int
+    warnings: list[str]
+    notes: list[str]
+    required_columns: list[DatabaseColumnAuditRead]
+    spatial_indexes: list[DatabaseIndexAuditRead]
+    table_counts: list[DatabaseTableCountRead]
 
 
 class DataLayerCreate(ForteModel):

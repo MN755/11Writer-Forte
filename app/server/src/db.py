@@ -13,6 +13,38 @@ from src.config import get_settings
 _engine: Engine | None = None
 _session_factory: sessionmaker[Session] | None = None
 
+REQUIRED_ADDITIVE_COLUMNS: dict[str, dict[str, str]] = {
+    "geofences": {
+        "geometry_wkt": "TEXT",
+    },
+    "observations": {
+        "location_wkt": "TEXT",
+    },
+    "local_import_runs": {
+        "records_skipped": "INTEGER NOT NULL DEFAULT 0",
+    },
+    "scheduled_tasks": {
+        "retry_attempts": "INTEGER NOT NULL DEFAULT 1",
+        "retry_backoff_seconds": "FLOAT NOT NULL DEFAULT 0.0",
+    },
+    "alerts": {
+        "disposition_note": "TEXT NOT NULL DEFAULT ''",
+    },
+}
+
+REQUIRED_POSTGIS_INDEX_DDLS: dict[str, str] = {
+    "idx_observations_location_wkt_gist": (
+        "CREATE INDEX IF NOT EXISTS idx_observations_location_wkt_gist "
+        "ON observations USING GIST (ST_GeomFromText(location_wkt, 4326)) "
+        "WHERE location_wkt IS NOT NULL"
+    ),
+    "idx_geofences_geometry_wkt_gist": (
+        "CREATE INDEX IF NOT EXISTS idx_geofences_geometry_wkt_gist "
+        "ON geofences USING GIST (ST_GeomFromText(geometry_wkt, 4326)) "
+        "WHERE geometry_wkt IS NOT NULL"
+    ),
+}
+
 
 def get_engine() -> Engine:
     global _engine
@@ -58,27 +90,9 @@ def init_db() -> None:
 
 
 def reconcile_additive_schema(engine: Engine) -> None:
-    table_columns = {
-        "geofences": {
-            "geometry_wkt": "TEXT",
-        },
-        "observations": {
-            "location_wkt": "TEXT",
-        },
-        "local_import_runs": {
-            "records_skipped": "INTEGER NOT NULL DEFAULT 0",
-        },
-        "scheduled_tasks": {
-            "retry_attempts": "INTEGER NOT NULL DEFAULT 1",
-            "retry_backoff_seconds": "FLOAT NOT NULL DEFAULT 0.0",
-        },
-        "alerts": {
-            "disposition_note": "TEXT NOT NULL DEFAULT ''",
-        },
-    }
     inspector = inspect(engine)
     with engine.begin() as connection:
-        for table_name, required_columns in table_columns.items():
+        for table_name, required_columns in REQUIRED_ADDITIVE_COLUMNS.items():
             existing = {column["name"] for column in inspector.get_columns(table_name)}
             for column_name, ddl_type in required_columns.items():
                 if column_name in existing:
@@ -94,20 +108,8 @@ def initialize_spatial_backend(engine: Engine) -> None:
         return
     with engine.begin() as connection:
         connection.execute(text("CREATE EXTENSION IF NOT EXISTS postgis"))
-        connection.execute(
-            text(
-                "CREATE INDEX IF NOT EXISTS idx_observations_location_wkt_gist "
-                "ON observations USING GIST (ST_GeomFromText(location_wkt, 4326)) "
-                "WHERE location_wkt IS NOT NULL"
-            )
-        )
-        connection.execute(
-            text(
-                "CREATE INDEX IF NOT EXISTS idx_geofences_geometry_wkt_gist "
-                "ON geofences USING GIST (ST_GeomFromText(geometry_wkt, 4326)) "
-                "WHERE geometry_wkt IS NOT NULL"
-            )
-        )
+        for ddl in REQUIRED_POSTGIS_INDEX_DDLS.values():
+            connection.execute(text(ddl))
 
 
 def reset_db_state() -> None:

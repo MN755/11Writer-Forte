@@ -24,6 +24,7 @@ from src.models import (
 )
 from src.schemas import (
     DataLayerCreate,
+    DatabaseDiagnosticsRead,
     EventExportBundleRead,
     EventFusionRequest,
     EntityResolutionRequest,
@@ -33,6 +34,7 @@ from src.schemas import (
     SourceDefinitionCreate,
     SourceDefinitionUpdate,
 )
+from src.services.database_diagnostics_service import build_database_diagnostics
 from src.services.entity_resolution_service import materialize_entities
 from src.services.event_export_service import build_event_export_bundle
 from src.services.event_fusion_service import materialize_fused_events
@@ -144,6 +146,46 @@ def status() -> None:
     typer.echo(f"database: {settings.database_url}")
     typer.echo(f"spatial backend: {settings.spatial_backend}")
     typer.echo(f"data dir: {settings.data_dir}")
+
+
+@app.command("doctor")
+def doctor(output_path: Path | None = None) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        report = build_database_diagnostics(session)
+        serializable = TypeAdapter(DatabaseDiagnosticsRead).validate_python(report).model_dump(mode="json")
+        print_banner()
+        typer.echo(
+            "status="
+            f"{serializable['status']} backend={serializable['database_backend']} "
+            f"connected={serializable['database_connected']} spatial={serializable['spatial_backend']} "
+            f"warnings={serializable['warning_count']}"
+        )
+        typer.echo(
+            "postgis_expected="
+            f"{serializable['postgis_expected']} "
+            f"postgis_installed={serializable['postgis_extension_installed']} "
+            f"postgis_version={serializable['postgis_version']}"
+        )
+        typer.echo(f"scheduler_poll_seconds={serializable['scheduler_poll_seconds']}")
+        typer.echo("table_counts:")
+        for item in serializable["table_counts"]:
+            typer.echo(f"  {item['table_name']}: {item['row_count']}")
+        if serializable["warnings"]:
+            typer.echo("warnings:")
+            for warning in serializable["warnings"]:
+                typer.echo(f"  - {warning}")
+        if serializable["notes"]:
+            typer.echo("notes:")
+            for note in serializable["notes"]:
+                typer.echo(f"  - {note}")
+        if output_path is not None:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(json.dumps(serializable, indent=2), encoding="utf-8")
+            typer.echo(f"wrote diagnostics to {output_path}")
+    finally:
+        session.close()
 
 
 @app.command("init-db")
