@@ -648,6 +648,17 @@ def test_source_summary_and_report_index_capture_stale_failing_and_unscheduled_s
     )
     assert healthy_status["status"] == "completed"
 
+    export_response = client.get(
+        "/api/sources/export/summary",
+        params={"stale_after_hours": 24, "source_limit": 10, "report_limit": 10, "stale_source_limit": 10},
+    )
+    assert export_response.status_code == 200
+    export_payload = export_response.json()
+    assert export_payload["filters_json"]["source_limit"] == 10
+    assert export_payload["report_index"]["inventory_summary"]["total_count"] == 4
+    assert len(export_payload["sources"]) == 4
+    assert any(row["source_id"] == healthy_source_id for row in export_payload["sources"])
+
     healthy_ops = client.get(f"/api/sources/{healthy_source_id}/ops")
     assert healthy_ops.status_code == 200
     assert healthy_ops.json()["storage_objects"]

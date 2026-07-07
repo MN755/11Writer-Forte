@@ -6,6 +6,7 @@ from src.schemas import (
     SourceDefinitionCreate,
     SourceDefinitionRead,
     SourceInventorySummaryRead,
+    SourceOpsExportSummaryRead,
     SourceOpsReportIndexRead,
     SourceDefinitionUpdate,
     SourceOpsDetailRead,
@@ -14,6 +15,7 @@ from src.schemas import (
 from src.services.source_service import (
     build_source_inventory_summary,
     build_source_ops_detail,
+    build_source_ops_export_summary,
     build_source_ops_report_index,
     create_source_definition,
     list_source_definitions,
@@ -70,6 +72,23 @@ def source_report_index(
         session,
         stale_after_hours=stale_after_hours,
         limit=limit,
+        stale_source_limit=stale_source_limit,
+    )
+
+
+@router.get("/export/summary", response_model=SourceOpsExportSummaryRead)
+def source_export_summary(
+    stale_after_hours: float = 24.0,
+    source_limit: int = 500,
+    report_limit: int = 25,
+    stale_source_limit: int = 25,
+    session: Session = Depends(get_db),
+) -> dict[str, object]:
+    return build_source_ops_export_summary(
+        session,
+        stale_after_hours=stale_after_hours,
+        source_limit=source_limit,
+        report_limit=report_limit,
         stale_source_limit=stale_source_limit,
     )
 

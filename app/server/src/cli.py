@@ -57,6 +57,7 @@ from src.schemas import (
     SourceDefinitionCreate,
     SourceDefinitionUpdate,
     SourceInventorySummaryRead,
+    SourceOpsExportSummaryRead,
     SourceOpsReportIndexRead,
 )
 from src.services.camera_source_service import (
@@ -113,6 +114,7 @@ from src.services.storage_service import (
 from src.services.source_service import (
     build_source_inventory_summary,
     build_source_ops_detail,
+    build_source_ops_export_summary,
     build_source_ops_report_index,
     create_source_definition,
     list_source_definitions,
@@ -894,6 +896,43 @@ def show_source_report_index_command(
             typer.echo(
                 f"  {row['source']['source_id']} | {row['source']['name']} | enabled={row['source']['enabled']}"
             )
+    finally:
+        session.close()
+
+
+@app.command("export-source-summary")
+def export_source_summary_command(
+    output_path: Path,
+    stale_after_hours: float = 24.0,
+    source_limit: int = 500,
+    report_limit: int = 25,
+    stale_source_limit: int = 25,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        report = build_source_ops_export_summary(
+            session,
+            stale_after_hours=stale_after_hours,
+            source_limit=source_limit,
+            report_limit=report_limit,
+            stale_source_limit=stale_source_limit,
+        )
+        serializable = TypeAdapter(SourceOpsExportSummaryRead).validate_python(report).model_dump(mode="json")
+        write_json_export_artifact(
+            session,
+            payload=serializable,
+            object_kind="source_summary_export",
+            owner_type="source_export",
+            owner_id="scoped",
+            output_path=output_path,
+            source_uri="/api/sources/export/summary",
+            observed_at=report["generated_at"],
+            metadata_json=serializable["filters_json"],
+            actor="cli_export",
+        )
+        print_banner()
+        typer.echo(f"exported source summary to {output_path}")
     finally:
         session.close()
 

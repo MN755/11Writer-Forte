@@ -610,6 +610,13 @@ class SourceOpsReportIndexRead(ForteModel):
     unscheduled_sources: list[SourceOpsStatusRead]
 
 
+class SourceOpsExportSummaryRead(ForteModel):
+    generated_at: datetime
+    filters_json: dict[str, Any]
+    report_index: SourceOpsReportIndexRead
+    sources: list[SourceDefinitionRead]
+
+
 class IntegritySeedResponse(ForteModel):
     created: int
     domains: list[str]

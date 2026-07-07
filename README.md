@@ -73,6 +73,7 @@ elevenwriter list-source-runs
 elevenwriter show-source-ops 1
 elevenwriter show-source-summary --stale-after-hours 24
 elevenwriter show-source-report-index --stale-after-hours 24
+elevenwriter export-source-summary ./exports/source-summary.json --source-limit 500 --report-limit 25
 elevenwriter materialize-cameras --layer traffic-camera-feed
 elevenwriter list-cameras --layer traffic-camera-feed --active true
 elevenwriter materialize-camera-sources --layer traffic-camera-feed
@@ -178,6 +179,7 @@ ELEVENWRITER_CLICKHOUSE_R2_CACHE_SIZE=10Gi
 - Imports and camera materialization now auto-register storage manifests, so raw local files plus camera image/stream/page references get tracked as storage objects with expiration windows and custody events instead of disappearing into the void.
 - Managed sources now participate in that same storage/provenance model too: each source run materialization is tracked as a storage object, and `/api/sources/{id}/ops` plus `show-source-ops` expose recent runs, stored payload artifacts, and related custody logs in one place.
 - Managed sources now have a fleet-level ops surface too: `/api/sources/summary` and `/api/sources/report-index` expose stale sources, failing runs, schedule coverage, and recent sync activity so operators can see source health across the whole catalog instead of auditing one source at a time.
+- Source fleet reporting is exportable now too: `/api/sources/export/summary` and `export-source-summary` package the source catalog plus fleet health report into a JSON artifact that registers in the storage/provenance ledger like the camera and scheduler exports.
 - Operator exports now participate in that same storage/provenance model too: event bundles, exported products, camera summary exports, operations reports, and runtime snapshots all register as storage objects when written through the headless export path instead of falling off the ledger.
 - ClickHouse is now an optional secondary backend instead of a hand-wavy future idea: `/api/operations/clickhouse` exposes diagnostics, provisioning, runtime sync, R2 archive export, R2 rehydration, and R2 storage-config preview, while the CLI mirrors those same flows for headless ops.
 - Forte still keeps PostgreSQL/SQLite as the primary operational store. ClickHouse is wired for analytics, cold archive, and large-scale query workloads; pretending it fully replaces the relational runtime here would be unserious.
