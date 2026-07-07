@@ -450,7 +450,15 @@ class CustodyLogRead(ForteModel):
 
 class ScheduledTaskCreate(ForteModel):
     name: str
-    task_type: Literal["local_import", "geofence_scan", "integrity_seed", "source_sync", "camera_inventory_refresh"]
+    task_type: Literal[
+        "local_import",
+        "geofence_scan",
+        "integrity_seed",
+        "source_sync",
+        "camera_inventory_refresh",
+        "entity_resolution_refresh",
+        "event_fusion_refresh",
+    ]
     interval_seconds: int = Field(ge=60)
     enabled: bool = True
     retry_attempts: int = Field(default=1, ge=1, le=10)

@@ -288,6 +288,166 @@ def test_camera_inventory_refresh_schedule_rejects_invalid_payload(client: TestC
     assert "Camera inventory refresh" in response.json()["detail"]
 
 
+def test_entity_resolution_refresh_schedule_materializes_entities(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    fixture_a = tmp_path / "scheduled-entity-a.json"
+    fixture_a.write_text(
+        json.dumps(
+            [
+                {
+                    "title": "Vessel sighting",
+                    "url": "https://alpha.example.com/vessel",
+                    "lat": 29.76,
+                    "lon": -95.36,
+                    "vessel_name": "MV Example",
+                    "mmsi": "123456789",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    fixture_b = tmp_path / "scheduled-entity-b.json"
+    fixture_b.write_text(
+        json.dumps(
+            [
+                {
+                    "title": "Port departure mention",
+                    "url": "https://beta.example.com/vessel",
+                    "lat": 29.77,
+                    "lon": -95.35,
+                    "vessel_name": "MV Example",
+                    "mmsi": "123456789",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    client.post("/api/imports/local", json={"source_path": str(fixture_a), "layer_key": "marine-track"})
+    client.post("/api/imports/local", json={"source_path": str(fixture_b), "layer_key": "news-track"})
+
+    schedule_response = client.post(
+        "/api/scheduler/tasks",
+        json={
+            "name": "scheduled-entity-refresh",
+            "task_type": "entity_resolution_refresh",
+            "interval_seconds": 300,
+            "payload_json": {
+                "min_lon": -96.0,
+                "min_lat": 29.0,
+                "max_lon": -94.0,
+                "max_lat": 31.0,
+                "min_observations": 2,
+                "redaction_level": "public",
+            },
+        },
+    )
+    assert schedule_response.status_code == 200
+    task_id = schedule_response.json()["task_id"]
+
+    run_response = client.post(f"/api/scheduler/tasks/{task_id}/run")
+    assert run_response.status_code == 200
+    payload = run_response.json()
+    assert payload["status"] == "completed"
+    assert payload["records_affected"] == 1
+    assert payload["output_json"]["created_entity_count"] == 1
+    assert len(payload["output_json"]["entity_ids"]) == 1
+
+    entities_response = client.get("/api/entities")
+    assert entities_response.status_code == 200
+    entities = entities_response.json()
+    assert len(entities) == 1
+    assert entities[0]["entity_type"] == "vessel"
+    assert entities[0]["canonical_name"] == "MV Example"
+
+
+def test_event_fusion_refresh_schedule_materializes_events(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    client.post(
+        "/api/source-trust/profiles",
+        json={
+            "domain": "alpha.example.com",
+            "trust_level": "trusted",
+            "approval_policy": "auto_approve_stable",
+            "integrity_source": True,
+            "notes": "fixture",
+        },
+    )
+
+    fixture_a = tmp_path / "scheduled-fusion-a.json"
+    fixture_a.write_text(
+        json.dumps(
+            [
+                {
+                    "title": "Departure sighting",
+                    "url": "https://alpha.example.com/departure",
+                    "observed_at": "2026-07-06T20:00:00Z",
+                    "ground_truth": True,
+                    "lat": 29.76,
+                    "lon": -95.36,
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    fixture_b = tmp_path / "scheduled-fusion-b.json"
+    fixture_b.write_text(
+        json.dumps(
+            [
+                {
+                    "title": "Departure confirmation",
+                    "url": "https://beta.example.com/departure",
+                    "observed_at": "2026-07-06T20:05:00Z",
+                    "lat": 29.77,
+                    "lon": -95.35,
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    client.post("/api/imports/local", json={"source_path": str(fixture_a), "layer_key": "marine-track"})
+    client.post("/api/imports/local", json={"source_path": str(fixture_b), "layer_key": "news-track"})
+
+    schedule_response = client.post(
+        "/api/scheduler/tasks",
+        json={
+            "name": "scheduled-fusion-refresh",
+            "task_type": "event_fusion_refresh",
+            "interval_seconds": 300,
+            "payload_json": {
+                "min_lon": -96.0,
+                "min_lat": 29.0,
+                "max_lon": -94.0,
+                "max_lat": 31.0,
+                "distance_km": 10,
+                "time_window_minutes": 120,
+                "redaction_level": "public",
+            },
+        },
+    )
+    assert schedule_response.status_code == 200
+    task_id = schedule_response.json()["task_id"]
+
+    run_response = client.post(f"/api/scheduler/tasks/{task_id}/run")
+    assert run_response.status_code == 200
+    payload = run_response.json()
+    assert payload["status"] == "completed"
+    assert payload["records_affected"] == 1
+    assert payload["output_json"]["created_event_count"] == 1
+    assert len(payload["output_json"]["event_ids"]) == 1
+
+    events_response = client.get("/api/events")
+    assert events_response.status_code == 200
+    events = events_response.json()
+    assert len(events) == 1
+    assert events[0]["redaction_level"] == "public"
+
+
 def test_source_sync_schedule_skips_unchanged_payloads(client: TestClient, tmp_path: Path) -> None:
     fixture = tmp_path / "scheduled-stable.json"
     fixture.write_text(

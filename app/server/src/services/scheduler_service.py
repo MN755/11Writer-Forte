@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 from datetime import datetime, timedelta, timezone
 
+from pydantic import ValidationError
 from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
 
@@ -14,8 +15,10 @@ from src.models import (
     ScheduledTaskORM,
     ScheduledTaskRunORM,
 )
-from src.schemas import ScheduledTaskCreate, ScheduledTaskUpdate
+from src.schemas import EntityResolutionRequest, EventFusionRequest, ScheduledTaskCreate, ScheduledTaskUpdate
 from src.services.camera_service import materialize_camera_inventory
+from src.services.entity_resolution_service import materialize_entities
+from src.services.event_fusion_service import materialize_fused_events
 from src.services.geospatial_service import build_contains_geometry_sql_filter, point_in_geometry, uses_postgis
 from src.services.import_service import import_local_path
 from src.services.layer_service import ensure_data_layer
@@ -38,6 +41,7 @@ def create_scheduled_task(session: Session, payload: ScheduledTaskCreate) -> Sch
         source_id=payload.source_id,
         target_path=payload.target_path,
         geofence_id=payload.geofence_id,
+        layer_key=payload.layer_key,
         payload_json=payload.payload_json,
     )
     if payload.layer_key:
@@ -97,6 +101,9 @@ def update_scheduled_task(
         source_id=source_id,
         target_path=target_path,
         geofence_id=geofence_id,
+        layer_key=str(changes["layer_key"]) if "layer_key" in changes and changes["layer_key"] is not None else (
+            None if "layer_key" in changes else record.layer_key
+        ),
         payload_json=changes["payload_json"] if "payload_json" in changes else record.payload_json,
     )
 
@@ -370,6 +377,33 @@ def execute_task(
                 "camera_keys": [camera.camera_key for camera in cameras],
             },
         )
+    if task.task_type == "entity_resolution_refresh":
+        request = build_entity_resolution_request(layer_key=task.layer_key, payload_json=task.payload_json)
+        results = materialize_entities(session, request, actor=actor)
+        return (
+            len(results),
+            {
+                "layer_key": request.layer_key,
+                "entity_type": request.entity_type,
+                "redaction_level": request.redaction_level,
+                "created_entity_count": sum(1 for result in results if result.created_new),
+                "entity_ids": [result.entity.entity_id for result in results],
+                "entity_slugs": [result.entity.slug for result in results],
+            },
+        )
+    if task.task_type == "event_fusion_refresh":
+        request = build_event_fusion_request(layer_key=task.layer_key, payload_json=task.payload_json)
+        results = materialize_fused_events(session, request, actor=actor)
+        return (
+            len(results),
+            {
+                "layer_key": request.layer_key,
+                "redaction_level": request.redaction_level,
+                "created_event_count": sum(1 for result in results if result.created_new),
+                "event_ids": [result.event.event_id for result in results],
+                "event_slugs": [result.event.slug for result in results],
+            },
+        )
     raise ValueError(f"Unsupported task type: {task.task_type}")
 
 
@@ -515,6 +549,7 @@ def validate_task_configuration(
     source_id: int | None,
     target_path: str | None,
     geofence_id: int | None,
+    layer_key: str | None,
     payload_json: dict[str, object] | None,
 ) -> None:
     if task_type == "local_import" and not target_path:
@@ -529,6 +564,18 @@ def validate_task_configuration(
                 "Camera inventory refresh task does not accept source_id, target_path, or geofence_id."
             )
         resolve_camera_inventory_refresh_payload(payload_json)
+    if task_type == "entity_resolution_refresh":
+        if any(value is not None for value in (source_id, target_path, geofence_id)):
+            raise ValueError(
+                "Entity resolution refresh task does not accept source_id, target_path, or geofence_id."
+            )
+        build_entity_resolution_request(layer_key=layer_key, payload_json=payload_json)
+    if task_type == "event_fusion_refresh":
+        if any(value is not None for value in (source_id, target_path, geofence_id)):
+            raise ValueError(
+                "Event fusion refresh task does not accept source_id, target_path, or geofence_id."
+            )
+        build_event_fusion_request(layer_key=layer_key, payload_json=payload_json)
 
 
 def ensure_unique_task_name(
@@ -595,3 +642,52 @@ def resolve_camera_inventory_refresh_payload(
         raise ValueError("Camera inventory refresh payload limit must be between 1 and 5000.")
 
     return source_domain, limit_value
+
+
+def build_entity_resolution_request(
+    *,
+    layer_key: str | None,
+    payload_json: dict[str, object] | None,
+) -> EntityResolutionRequest:
+    payload = resolve_scheduler_payload_json("Entity resolution refresh", payload_json)
+    request_data = dict(payload)
+    if layer_key is not None:
+        request_data["layer_key"] = layer_key
+    try:
+        return EntityResolutionRequest(**request_data)
+    except ValidationError as exc:
+        raise ValueError(format_validation_error("Entity resolution refresh", exc)) from exc
+
+
+def build_event_fusion_request(
+    *,
+    layer_key: str | None,
+    payload_json: dict[str, object] | None,
+) -> EventFusionRequest:
+    payload = resolve_scheduler_payload_json("Event fusion refresh", payload_json)
+    request_data = dict(payload)
+    if layer_key is not None:
+        request_data["layer_key"] = layer_key
+    try:
+        return EventFusionRequest(**request_data)
+    except ValidationError as exc:
+        raise ValueError(format_validation_error("Event fusion refresh", exc)) from exc
+
+
+def resolve_scheduler_payload_json(
+    task_label: str,
+    payload_json: dict[str, object] | None,
+) -> dict[str, object]:
+    payload = payload_json or {}
+    if not isinstance(payload, dict):
+        raise ValueError(f"{task_label} payload_json must be a JSON object.")
+    return dict(payload)
+
+
+def format_validation_error(task_label: str, exc: ValidationError) -> str:
+    issue = exc.errors()[0]
+    location = ".".join(str(part) for part in issue.get("loc", ()))
+    detail = issue.get("msg", "invalid payload")
+    if location:
+        return f"{task_label} payload {location}: {detail}."
+    return f"{task_label} payload invalid: {detail}."

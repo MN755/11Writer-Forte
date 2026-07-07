@@ -9,7 +9,7 @@ This repo intentionally removes the frontend runtime. The only operator-facing i
 ## What exists here
 
 - FastAPI runtime for event, layer, geofence, alert, import, and trust-management workflows
-- Persisted scheduler runtime for unattended imports, geofence scans, source syncs, camera inventory refresh, and integrity-source seed tasks
+- Persisted scheduler runtime for unattended imports, geofence scans, source syncs, camera inventory refresh, entity resolution, event fusion, and integrity-source seed tasks
 - Observation query and rule-based cross-verification surfaces for spatial filtering and corroboration
 - Rule-based entity resolution that links observations into reusable entity records
 - Event fusion materialization plus exportable cited summaries and rule-based reports
@@ -70,6 +70,8 @@ elevenwriter list-source-runs
 elevenwriter materialize-cameras --layer traffic-camera-feed
 elevenwriter list-cameras --layer traffic-camera-feed --active true
 elevenwriter add-camera-refresh-schedule mndot-camera-refresh 300 --layer traffic-camera-feed --source-domain 511mn.org --limit 1000
+elevenwriter add-entity-resolution-schedule nightly-entities 600 --bbox "-96,29,-94,31" --min-observations 2
+elevenwriter add-event-fusion-schedule nightly-fusion 600 --bbox "-96,29,-94,31" --distance-km 10 --time-window-minutes 120
 elevenwriter query-observations --bbox "-96,29,-94,31"
 elevenwriter cross-verify --bbox "-96,29,-94,31" --distance-km 10
 elevenwriter resolve-entities --bbox "-96,29,-94,31" --min-observations 2
@@ -113,6 +115,7 @@ By default the compose stack starts the API, a scheduler worker, and PostGIS-rea
 - Runtime backup and recovery now have a first-class path too: `/api/operations/runtime/export`, `/api/operations/runtime/restore`, and matching CLI commands serialize the core backend state in dependency-safe order and log custody records for both export and restore.
 - Camera/webcam work is no longer just notes: `/api/cameras` and `/api/cameras/materialize` now persist camera inventory from imported observations, including MnDOT-style feeds that expose image or stream endpoints plus geospatial coordinates.
 - Camera inventory upkeep is scheduler-native now too, so the registry can be refreshed headlessly with `camera_inventory_refresh` tasks instead of waiting for an operator to remember the manual materialization command.
+- Entity resolution and event fusion are scheduler-native too, so the backend can keep promoting raw observations into reusable entities, linked events, and generated products without a human sitting there pressing the button like it’s 2009.
 - Geofence scans create persisted alerts with dedupe keys so the same observation-hit pair does not spam duplicates.
 - Scheduler runs and import operations both write custody records so unattended execution still leaves an audit trail.
 - Cross-verification is rule-based today: it clusters nearby observations inside a time window and raises confidence when independent domains or layers corroborate the same occurrence.

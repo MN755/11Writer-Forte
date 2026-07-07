@@ -1176,6 +1176,120 @@ def add_camera_refresh_schedule(
         session.close()
 
 
+@app.command("add-entity-resolution-schedule")
+def add_entity_resolution_schedule(
+    name: str,
+    interval_seconds: int,
+    bbox: str | None = None,
+    layer: str | None = None,
+    source_domain: str | None = None,
+    trust_level: str | None = None,
+    limit: int = 500,
+    min_observations: int = 2,
+    entity_type: str | None = None,
+    redaction_level: str = "public",
+    notes: str = "",
+    retry_attempts: int = 1,
+    retry_backoff_seconds: float = 0.0,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        min_lon, min_lat, max_lon, max_lat = parse_bbox(bbox)
+        payload_json: dict[str, object] = {
+            "limit": limit,
+            "min_observations": min_observations,
+            "redaction_level": redaction_level,
+        }
+        optional_values = {
+            "source_domain": source_domain,
+            "trust_level": trust_level,
+            "entity_type": entity_type,
+            "min_lon": min_lon,
+            "min_lat": min_lat,
+            "max_lon": max_lon,
+            "max_lat": max_lat,
+        }
+        for key, value in optional_values.items():
+            if value is not None:
+                payload_json[key] = value
+        task = create_scheduled_task(
+            session,
+            ScheduledTaskCreate(
+                name=name,
+                task_type="entity_resolution_refresh",
+                interval_seconds=interval_seconds,
+                retry_attempts=retry_attempts,
+                retry_backoff_seconds=retry_backoff_seconds,
+                layer_key=layer,
+                notes=notes,
+                payload_json=payload_json,
+            ),
+        )
+        print_banner()
+        typer.echo(f"scheduled task {task.task_id} created for entity resolution refresh")
+    finally:
+        session.close()
+
+
+@app.command("add-event-fusion-schedule")
+def add_event_fusion_schedule(
+    name: str,
+    interval_seconds: int,
+    bbox: str | None = None,
+    layer: str | None = None,
+    source_domain: str | None = None,
+    trust_level: str | None = None,
+    limit: int = 500,
+    time_window_minutes: int = 60,
+    distance_km: float = 25.0,
+    min_independent_signals: int = 2,
+    redaction_level: str = "public",
+    notes: str = "",
+    retry_attempts: int = 1,
+    retry_backoff_seconds: float = 0.0,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        min_lon, min_lat, max_lon, max_lat = parse_bbox(bbox)
+        payload_json: dict[str, object] = {
+            "limit": limit,
+            "time_window_minutes": time_window_minutes,
+            "distance_km": distance_km,
+            "min_independent_signals": min_independent_signals,
+            "redaction_level": redaction_level,
+        }
+        optional_values = {
+            "source_domain": source_domain,
+            "trust_level": trust_level,
+            "min_lon": min_lon,
+            "min_lat": min_lat,
+            "max_lon": max_lon,
+            "max_lat": max_lat,
+        }
+        for key, value in optional_values.items():
+            if value is not None:
+                payload_json[key] = value
+        task = create_scheduled_task(
+            session,
+            ScheduledTaskCreate(
+                name=name,
+                task_type="event_fusion_refresh",
+                interval_seconds=interval_seconds,
+                retry_attempts=retry_attempts,
+                retry_backoff_seconds=retry_backoff_seconds,
+                layer_key=layer,
+                notes=notes,
+                payload_json=payload_json,
+            ),
+        )
+        print_banner()
+        typer.echo(f"scheduled task {task.task_id} created for event fusion refresh")
+    finally:
+        session.close()
+
+
 @app.command("list-schedules")
 def list_schedules() -> None:
     init_db()
