@@ -1232,3 +1232,14 @@ def test_scheduler_summary_and_report_index_capture_overdue_failing_and_maintena
     assert any(row["task"]["task_id"] == failing_task_id for row in report["failing_tasks"])
     assert any(row["task"]["task_id"] == maintenance_task_id for row in report["maintenance_tasks"])
     assert any(bucket["key"] == "source_sync" and bucket["failure_count"] == 1 for bucket in report["task_type_run_counts"])
+
+    export_response = client.get(
+        "/api/scheduler/export/summary",
+        params={"task_limit": 10, "report_limit": 10, "overdue_task_limit": 10},
+    )
+    assert export_response.status_code == 200
+    export_payload = export_response.json()
+    assert export_payload["filters_json"]["task_limit"] == 10
+    assert export_payload["report_index"]["inventory_summary"]["total_count"] == 4
+    assert len(export_payload["tasks"]) == 4
+    assert any(row["task_type"] == "storage_lifecycle" for row in export_payload["tasks"])

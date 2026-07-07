@@ -13,6 +13,7 @@ from src.services.event_export_service import build_event_export_bundle
 from src.services.export_artifact_service import write_json_export_artifact, write_text_export_artifact
 from src.services.operations_report_service import build_operations_report
 from src.services.runtime_snapshot_service import build_runtime_snapshot
+from src.services.scheduler_service import build_scheduler_ops_export_summary
 
 
 def test_export_artifact_service_registers_storage_objects(
@@ -199,6 +200,20 @@ def test_export_artifact_service_registers_storage_objects(
                 "spatial_backend": runtime_payload["spatial_backend"],
             },
         )
+
+        scheduler_summary = build_scheduler_ops_export_summary(session, task_limit=50, report_limit=25, overdue_task_limit=25)
+        scheduler_payload = json.loads(json.dumps(scheduler_summary, default=str))
+        write_json_export_artifact(
+            session,
+            output_path=exports_dir / "scheduler-summary.json",
+            payload=scheduler_payload,
+            object_kind="scheduler_summary_export",
+            owner_type="scheduler_export",
+            owner_id="scoped",
+            source_uri="/api/scheduler/export/summary",
+            observed_at=scheduler_summary["generated_at"],
+            metadata_json=scheduler_payload["filters_json"],
+        )
     finally:
         session.close()
 
@@ -236,3 +251,10 @@ def test_export_artifact_service_registers_storage_objects(
     ).json()
     assert len(runtime_rows) == 1
     assert runtime_rows[0]["metadata_json"]["database_backend"] == "sqlite"
+
+    scheduler_rows = client.get(
+        "/api/storage/objects",
+        params={"owner_type": "scheduler_export", "object_kind": "scheduler_summary_export"},
+    ).json()
+    assert len(scheduler_rows) == 1
+    assert scheduler_rows[0]["metadata_json"]["task_limit"] == 50

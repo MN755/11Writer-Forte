@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from src.db import get_db
 from src.models import ScheduledTaskORM, ScheduledTaskRunORM
 from src.schemas import (
+    SchedulerOpsExportSummaryRead,
     SchedulerInventorySummaryRead,
     SchedulerOpsReportIndexRead,
     SchedulerKickResponse,
@@ -15,6 +16,7 @@ from src.schemas import (
 )
 from src.services.scheduler_service import (
     build_scheduler_inventory_summary,
+    build_scheduler_ops_export_summary,
     build_scheduler_ops_report_index,
     create_scheduled_task,
     run_due_tasks,
@@ -45,6 +47,21 @@ def scheduler_report_index(
     return build_scheduler_ops_report_index(
         session,
         limit=limit,
+        overdue_task_limit=overdue_task_limit,
+    )
+
+
+@router.get("/export/summary", response_model=SchedulerOpsExportSummaryRead)
+def scheduler_export_summary(
+    task_limit: int = 500,
+    report_limit: int = 25,
+    overdue_task_limit: int = 25,
+    session: Session = Depends(get_db),
+) -> dict[str, object]:
+    return build_scheduler_ops_export_summary(
+        session,
+        task_limit=task_limit,
+        report_limit=report_limit,
         overdue_task_limit=overdue_task_limit,
     )
 
