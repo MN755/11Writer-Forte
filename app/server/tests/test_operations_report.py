@@ -111,6 +111,11 @@ def test_operations_report_summarizes_runtime_activity(client: TestClient, tmp_p
     assert len(payload["alerts"]) == 2
     assert payload["alerts"][0]["status"] in {"open", "acknowledged"}
     assert payload["custody_logs"]
+    assert payload["storage_report"]["total_count"] >= 2
+    assert payload["storage_report"]["active_count"] >= 2
+    assert payload["clickhouse_diagnostics"]["status"] == "disabled"
+    assert payload["clickhouse_diagnostics"]["enabled"] is False
+    assert payload["clickhouse_diagnostics"]["storage_mode"] == "archive_only"
     assert payload["source_inventory_summary"]["total_count"] == 1
     assert payload["source_inventory_summary"]["scheduled_count"] == 0
     assert payload["source_report_index"]["sync_task_count"] == 0
@@ -161,6 +166,10 @@ def test_operations_report_summarizes_runtime_activity(client: TestClient, tmp_p
     camera_report_response = client.get("/api/operations/report", params={"limit": 5})
     assert camera_report_response.status_code == 200
     camera_payload = camera_report_response.json()
+    assert camera_payload["storage_report"]["total_count"] >= 5
+    assert any(
+        bucket["key"] == "operational" for bucket in camera_payload["storage_report"]["retention_class_counts"]
+    )
     assert camera_payload["source_inventory_summary"]["total_count"] == 1
     assert camera_payload["camera_inventory_summary"]["total_count"] == 1
     assert camera_payload["camera_inventory_summary"]["inactive_count"] == 1

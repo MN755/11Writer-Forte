@@ -882,6 +882,8 @@ class OperationsReportRead(ForteModel):
     scope_since: datetime | None
     scope_until: datetime | None
     summary: OperationsSummaryRead
+    storage_report: StorageReportRead
+    clickhouse_diagnostics: ClickHouseDiagnosticsRead
     source_inventory_summary: SourceInventorySummaryRead
     source_report_index: SourceOpsReportIndexRead
     camera_inventory_summary: CameraInventorySummaryRead

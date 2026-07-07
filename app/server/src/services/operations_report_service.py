@@ -15,8 +15,10 @@ from src.models import (
     ScheduledTaskRunORM,
     SourceRunORM,
 )
+from src.services.clickhouse_service import build_clickhouse_diagnostics
 from src.services.camera_service import build_camera_inventory_summary, build_camera_ops_report_index
 from src.services.source_service import build_source_inventory_summary, build_source_ops_report_index
+from src.services.storage_service import build_storage_report
 
 
 def report_now() -> datetime:
@@ -82,6 +84,8 @@ def build_operations_report(
     )
     camera_inventory_summary = build_camera_inventory_summary(session)
     camera_report_index = build_camera_ops_report_index(session, limit=limit)
+    storage_report = build_storage_report(session, limit=limit)
+    clickhouse_diagnostics = build_clickhouse_diagnostics()
     source_inventory_summary = build_source_inventory_summary(session)
     source_report_index = build_source_ops_report_index(session, limit=limit)
 
@@ -165,6 +169,8 @@ def build_operations_report(
             "entity_count": count_records(session, EntityORM, EntityORM.created_at, since, until),
             "observation_count": count_records(session, ObservationORM, ObservationORM.created_at, since, until),
         },
+        "storage_report": storage_report,
+        "clickhouse_diagnostics": clickhouse_diagnostics,
         "source_inventory_summary": source_inventory_summary,
         "source_report_index": source_report_index,
         "camera_inventory_summary": camera_inventory_summary,
