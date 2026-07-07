@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from src.models import (
+    AlertORM,
     CustodyLogORM,
     EntityORM,
     EntityObservationLinkORM,
@@ -13,6 +14,8 @@ from src.models import (
     EventObservationLinkORM,
     LocalImportRunORM,
     ObservationORM,
+    ScheduledTaskORM,
+    ScheduledTaskRunORM,
     SituationProductORM,
     SourceDefinitionORM,
     SourceRunORM,
@@ -98,6 +101,36 @@ def build_event_export_bundle(session: Session, event_id: int) -> dict[str, obje
             .order_by(SituationProductORM.product_id.asc())
         )
     )
+    alerts = filter_relevant_alerts(session, event_id=event_id, observation_ids=observation_ids)
+    geofence_ids = sorted({alert.geofence_id for alert in alerts if alert.geofence_id is not None})
+    scheduled_tasks = list(
+        session.scalars(
+            select(ScheduledTaskORM)
+            .where(
+                ScheduledTaskORM.source_id.in_(source_ids) if source_ids else False
+            )
+            .order_by(ScheduledTaskORM.task_id.asc())
+        )
+    ) if source_ids else []
+    geofence_tasks = list(
+        session.scalars(
+            select(ScheduledTaskORM)
+            .where(
+                ScheduledTaskORM.geofence_id.in_(geofence_ids) if geofence_ids else False
+            )
+            .order_by(ScheduledTaskORM.task_id.asc())
+        )
+    ) if geofence_ids else []
+    scheduled_task_map = {task.task_id: task for task in [*scheduled_tasks, *geofence_tasks]}
+    scheduled_tasks = list(sorted(scheduled_task_map.values(), key=lambda task: task.task_id))
+    task_ids = [task.task_id for task in scheduled_tasks]
+    scheduled_task_runs = list(
+        session.scalars(
+            select(ScheduledTaskRunORM)
+            .where(ScheduledTaskRunORM.task_id.in_(task_ids))
+            .order_by(ScheduledTaskRunORM.task_run_id.asc())
+        )
+    ) if task_ids else []
 
     custody_logs = filter_relevant_custody_logs(
         session,
@@ -106,9 +139,13 @@ def build_event_export_bundle(session: Session, event_id: int) -> dict[str, obje
         observations=observations,
         entities=entities,
         entity_observation_links=entity_observation_links,
+        alerts=alerts,
         import_runs=import_runs,
         source_definitions=source_definitions,
         source_runs=source_runs,
+        scheduled_tasks=scheduled_tasks,
+        scheduled_task_runs=scheduled_task_runs,
+        geofence_ids=geofence_ids,
         products=products,
         export_log=log_bundle_export(
             session,
@@ -129,9 +166,12 @@ def build_event_export_bundle(session: Session, event_id: int) -> dict[str, obje
         "observations": observations,
         "entities": entities,
         "entity_observation_links": entity_observation_links,
+        "alerts": alerts,
         "import_runs": import_runs,
         "source_runs": source_runs,
         "source_definitions": source_definitions,
+        "scheduled_tasks": scheduled_tasks,
+        "scheduled_task_runs": scheduled_task_runs,
         "products": products,
         "custody_logs": custody_logs,
         "citations_json": citations_json,
@@ -146,9 +186,13 @@ def filter_relevant_custody_logs(
     observations: list[ObservationORM],
     entities: list[EntityORM],
     entity_observation_links: list[EntityObservationLinkORM],
+    alerts: list[AlertORM],
     import_runs: list[LocalImportRunORM],
     source_definitions: list[SourceDefinitionORM],
     source_runs: list[SourceRunORM],
+    scheduled_tasks: list[ScheduledTaskORM],
+    scheduled_task_runs: list[ScheduledTaskRunORM],
+    geofence_ids: list[int],
     products: list[SituationProductORM],
     export_log: CustodyLogORM,
 ) -> list[CustodyLogORM]:
@@ -166,6 +210,10 @@ def filter_relevant_custody_logs(
         for entity in entities
     )
     relevant_pairs.update(
+        ("alert", str(alert.alert_id))
+        for alert in alerts
+    )
+    relevant_pairs.update(
         ("observation", str(observation.observation_id))
         for observation in observations
     )
@@ -180,6 +228,18 @@ def filter_relevant_custody_logs(
     relevant_pairs.update(
         ("source_run", str(source_run.source_run_id))
         for source_run in source_runs
+    )
+    relevant_pairs.update(
+        ("scheduled_task", str(task.task_id))
+        for task in scheduled_tasks
+    )
+    relevant_pairs.update(
+        ("scheduled_task_run", str(task_run.task_run_id))
+        for task_run in scheduled_task_runs
+    )
+    relevant_pairs.update(
+        ("geofence_scan", str(geofence_id))
+        for geofence_id in geofence_ids
     )
     relevant_pairs.update(
         ("situation_product", str(product.product_id))
@@ -202,6 +262,25 @@ def filter_relevant_custody_logs(
     if export_log not in filtered_logs:
         filtered_logs.append(export_log)
     return filtered_logs
+
+
+def filter_relevant_alerts(
+    session: Session,
+    *,
+    event_id: int,
+    observation_ids: list[int],
+) -> list[AlertORM]:
+    observation_id_set = set(observation_ids)
+    rows = list(session.scalars(select(AlertORM).order_by(AlertORM.created_at.asc())))
+    relevant: list[AlertORM] = []
+    for alert in rows:
+        trigger_observation_id = alert.trigger_basis_json.get("observation_id")
+        if alert.event_id == event_id:
+            relevant.append(alert)
+            continue
+        if trigger_observation_id in observation_id_set:
+            relevant.append(alert)
+    return relevant
 
 
 def log_bundle_export(

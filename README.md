@@ -43,6 +43,8 @@ elevenwriter seed-integrity
 uvicorn src.main:app --reload --port 8000
 ```
 
+MnDOT live-feed notes and source-ingestion examples live in [MNDOT_FEEDS.md](MNDOT_FEEDS.md).
+
 ## CLI
 
 ```bash
@@ -68,6 +70,8 @@ elevenwriter export-event-bundle 1 ./exports/event-1-bundle.json
 elevenwriter add-source-sync-schedule nightly-sync 1 300 --retry-attempts 3 --retry-backoff-seconds 5
 elevenwriter add-geofence-scan-schedule nightly-watch 300
 elevenwriter list-schedules
+elevenwriter list-schedule-runs
+elevenwriter update-alert 1 acknowledged --disposition-note "Reviewed by operator"
 elevenwriter run-due-schedules
 elevenwriter list-custody
 ```
@@ -94,6 +98,7 @@ By default the compose stack starts the API plus PostGIS-ready Postgres.
 - Entity resolution is rule-based today: it extracts stable identifiers such as vessel MMSI values, handles, emails, and registrations, then merges co-occurring identifiers into reusable entity records with linked evidence rows.
 - Event fusion is rule-based today: corroborated clusters materialize into events, linked evidence rows, a cited summary, and a longer report so the headless runtime can emit usable products before LLM narrative generation exists.
 - Event export bundles package the event, linked observations, resolved entities, import/source context, generated products, citations, and relevant custody records into one JSON artifact for downstream systems or archival.
+- Event export bundles now also carry relevant alerts plus scheduled task and scheduled run history, so downstream review can see not just the evidence but the operational path that produced and monitored it.
 - Managed sources provide a named catalog for repeatable ingestion; scheduler tasks can now sync those source definitions instead of only replaying raw file paths.
 - HTTP-managed sources support retry attempts, timeout controls, custom headers, cached payload materialization, and persisted fetch metadata so headless sync jobs have enough operational context to debug failures.
 - Managed source runs are idempotent by default: when the payload hash matches the most recent completed or skipped run for that source, the new run is marked `skipped` and does not create duplicate imports.

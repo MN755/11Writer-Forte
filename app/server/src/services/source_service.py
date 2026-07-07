@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import base64
 import hashlib
+import json
+import os
 import time
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -9,6 +13,7 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
+from xml.etree import ElementTree
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -238,13 +243,22 @@ def materialize_source_payload(source: SourceDefinitionORM) -> MaterializedSourc
             },
         )
 
-    if source.source_kind in {"http_json", "http_text"}:
-        parsed = urlparse(source.target_uri)
-        suffix = ".json" if source.source_kind == "http_json" else ".txt"
+    if source.source_kind in {"http_json", "http_text", "http_xml"}:
+        suffix = ".json" if source.source_kind in {"http_json", "http_xml"} else ".txt"
         destination = build_cached_path(source.source_id, suffix)
         fetch_config = parse_fetch_config(source)
         payload, fetch_metadata = fetch_http_source(source, fetch_config)
-        destination.write_bytes(payload)
+        if source.source_kind == "http_xml":
+            records = parse_http_xml_payload(payload, source.target_uri)
+            destination.write_text(json.dumps(records), encoding="utf-8")
+            fetch_metadata = {
+                **fetch_metadata,
+                "cached_record_count": len(records),
+                "materialized_content_type": "application/json",
+                "original_content_type": fetch_metadata.get("content_type"),
+            }
+        else:
+            destination.write_bytes(payload)
         return MaterializedSourcePayload(
             path=str(destination),
             metadata={
@@ -272,10 +286,17 @@ def parse_fetch_config(source: SourceDefinitionORM) -> SourceFetchConfig:
     user_headers = metadata.get("headers", {})
     headers = {
         "User-Agent": str(metadata.get("user_agent", "11Writer-Forte/0.1 (+headless-source-fetch)")),
-        "Accept": "application/json" if source.source_kind == "http_json" else "text/plain, */*",
+        "Accept": (
+            "application/json"
+            if source.source_kind == "http_json"
+            else "application/xml, text/xml, */*"
+            if source.source_kind == "http_xml"
+            else "text/plain, */*"
+        ),
     }
     if isinstance(user_headers, dict):
         headers.update({str(key): str(value) for key, value in user_headers.items()})
+    apply_basic_auth_headers(metadata, headers)
     return SourceFetchConfig(
         timeout_seconds=timeout_seconds,
         retry_attempts=retry_attempts,
@@ -362,3 +383,209 @@ def apply_retry_backoff(fetch_config: SourceFetchConfig, attempt: int) -> None:
     if fetch_config.retry_backoff_seconds <= 0:
         return
     time.sleep(fetch_config.retry_backoff_seconds * attempt)
+
+
+def apply_basic_auth_headers(metadata: dict[str, Any], headers: dict[str, str]) -> None:
+    username = metadata.get("basic_auth_username")
+    password_env = metadata.get("basic_auth_password_env")
+    if username is None and password_env is None:
+        return
+    if not isinstance(username, str) or not username:
+        raise RuntimeError("HTTP source basic auth username is missing.")
+    if not isinstance(password_env, str) or not password_env:
+        raise RuntimeError("HTTP source basic auth password env var is missing.")
+    password = os.getenv(password_env)
+    if password is None:
+        raise RuntimeError(f"HTTP source basic auth password env var '{password_env}' is not set.")
+    token = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode("ascii")
+    headers.setdefault("Authorization", f"Basic {token}")
+
+
+def parse_http_xml_payload(payload: bytes, source_uri: str) -> list[dict[str, Any]]:
+    root = ElementTree.fromstring(payload)
+    root_tag = strip_xml_namespace(root.tag)
+    records: list[dict[str, Any]] = []
+    for child in root:
+        if not isinstance(child.tag, str):
+            continue
+        child_payload = xml_element_to_data(child)
+        if not isinstance(child_payload, dict):
+            child_payload = {"value": child_payload}
+        record_type = strip_xml_namespace(child.tag)
+        headline = extract_xml_headline(child_payload)
+        route_designator = first_nested_value(child_payload, "route-designator")
+        event_id = first_nested_value(child_payload, "event-id")
+        status = first_nested_value(child_payload, "status")
+        observed_at = first_feu_timestamp(child_payload)
+        latitude = normalize_coordinate(first_nested_value(child_payload, "latitude"))
+        longitude = normalize_coordinate(first_nested_value(child_payload, "longitude"))
+
+        record: dict[str, Any] = {
+            "source_url": source_uri,
+            "feed_type": root_tag,
+            "record_type": record_type,
+            "title": headline or event_id or record_type,
+            "text": " | ".join(
+                part
+                for part in (
+                    event_id,
+                    headline,
+                    route_designator,
+                    f"status={status}" if status else None,
+                )
+                if part
+            ),
+            "event_id": event_id,
+            "status": status,
+            "route_designator": route_designator,
+            "observed_at": observed_at,
+            "raw_xml": child_payload,
+        }
+        if latitude is not None and longitude is not None:
+            record["latitude"] = latitude
+            record["longitude"] = longitude
+        records.append(record)
+    return records
+
+
+def strip_xml_namespace(tag: str) -> str:
+    if "}" in tag:
+        return tag.rsplit("}", 1)[-1]
+    if ":" in tag:
+        return tag.rsplit(":", 1)[-1]
+    return tag
+
+
+def xml_element_to_data(element: ElementTree.Element) -> Any:
+    children = list(element)
+    text = (element.text or "").strip()
+    if not children and not element.attrib:
+        return text
+
+    node: dict[str, Any] = {}
+    for key, value in element.attrib.items():
+        node[f"@{strip_xml_namespace(key)}"] = value
+
+    grouped: dict[str, list[Any]] = defaultdict(list)
+    for child in children:
+        grouped[strip_xml_namespace(child.tag)].append(xml_element_to_data(child))
+
+    for key, values in grouped.items():
+        node[key] = values[0] if len(values) == 1 else values
+
+    if text:
+        node["text"] = text
+    return node
+
+
+def first_nested_value(payload: Any, key: str) -> str | None:
+    if isinstance(payload, dict):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        if isinstance(value, (int, float)):
+            return str(value)
+        for child_value in payload.values():
+            nested = first_nested_value(child_value, key)
+            if nested:
+                return nested
+        return None
+    if isinstance(payload, list):
+        for item in payload:
+            nested = first_nested_value(item, key)
+            if nested:
+                return nested
+    return None
+
+
+def collect_scalar_strings(payload: Any, limit: int = 6) -> list[str]:
+    values: list[str] = []
+    if isinstance(payload, dict):
+        for item in payload.values():
+            if len(values) >= limit:
+                break
+            values.extend(collect_scalar_strings(item, limit=limit - len(values)))
+    elif isinstance(payload, list):
+        for item in payload:
+            if len(values) >= limit:
+                break
+            values.extend(collect_scalar_strings(item, limit=limit - len(values)))
+    elif isinstance(payload, str):
+        stripped = payload.strip()
+        if stripped:
+            values.append(stripped)
+    elif isinstance(payload, (int, float)):
+        values.append(str(payload))
+    return values[:limit]
+
+
+def extract_xml_headline(payload: dict[str, Any]) -> str | None:
+    headline_payload = payload.get("headline")
+    if headline_payload is None:
+        return None
+    parts = [part for part in collect_scalar_strings(headline_payload, limit=4) if not part.isdigit()]
+    if not parts:
+        return None
+    return " | ".join(parts)
+
+
+def first_feu_timestamp(payload: dict[str, Any]) -> str | None:
+    candidates = [
+        payload.get("message-header"),
+        payload.get("times"),
+        payload.get("detail"),
+    ]
+    for candidate in candidates:
+        timestamp = find_timestamp_in_payload(candidate)
+        if timestamp:
+            return timestamp
+    return None
+
+
+def find_timestamp_in_payload(payload: Any) -> str | None:
+    if isinstance(payload, dict):
+        date_value = payload.get("date")
+        time_value = payload.get("time")
+        offset_value = payload.get("utc-offset")
+        if isinstance(date_value, str) and isinstance(time_value, str):
+            return format_feu_timestamp(date_value, time_value, offset_value if isinstance(offset_value, str) else None)
+        for value in payload.values():
+            timestamp = find_timestamp_in_payload(value)
+            if timestamp:
+                return timestamp
+    elif isinstance(payload, list):
+        for item in payload:
+            timestamp = find_timestamp_in_payload(item)
+            if timestamp:
+                return timestamp
+    return None
+
+
+def format_feu_timestamp(date_value: str, time_value: str, offset_value: str | None) -> str:
+    cleaned_date = date_value.strip()
+    cleaned_time = time_value.strip()
+    if len(cleaned_date) != 8 or len(cleaned_time) not in {4, 6}:
+        return f"{cleaned_date}T{cleaned_time}"
+    normalized_time = cleaned_time if len(cleaned_time) == 6 else f"{cleaned_time}00"
+    timestamp = (
+        f"{cleaned_date[0:4]}-{cleaned_date[4:6]}-{cleaned_date[6:8]}"
+        f"T{normalized_time[0:2]}:{normalized_time[2:4]}:{normalized_time[4:6]}"
+    )
+    if not offset_value:
+        return timestamp
+    cleaned_offset = offset_value.strip()
+    if len(cleaned_offset) == 5:
+        return f"{timestamp}{cleaned_offset[0:3]}:{cleaned_offset[3:5]}"
+    return f"{timestamp}{cleaned_offset}"
+
+
+def normalize_coordinate(value: str | None) -> float | None:
+    if value is None:
+        return None
+    try:
+        parsed = float(value)
+    except ValueError:
+        return None
+    if abs(parsed) > 1000:
+        return parsed / 1_000_000.0
+    return parsed

@@ -72,6 +72,9 @@ def reconcile_additive_schema(engine: Engine) -> None:
             "retry_attempts": "INTEGER NOT NULL DEFAULT 1",
             "retry_backoff_seconds": "FLOAT NOT NULL DEFAULT 0.0",
         },
+        "alerts": {
+            "disposition_note": "TEXT NOT NULL DEFAULT ''",
+        },
     }
     inspector = inspect(engine)
     with engine.begin() as connection:
