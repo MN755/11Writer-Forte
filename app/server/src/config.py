@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./var/11writer_forte.db"
     data_dir: Path = Field(default=Path("./var"))
     import_row_limit: int = 5000
+    scheduler_poll_seconds: float = 30.0
     allowed_origins: list[str] = Field(default_factory=list)
 
     model_config = SettingsConfigDict(

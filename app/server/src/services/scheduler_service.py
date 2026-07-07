@@ -130,7 +130,20 @@ def run_due_tasks(session: Session, actor: str = "scheduler") -> list[ScheduledT
         )
     )
     tasks = list(session.scalars(statement.order_by(ScheduledTaskORM.task_id.asc())))
-    return [run_task(session, task.task_id, actor=actor) for task in tasks]
+    runs: list[ScheduledTaskRunORM] = []
+    for task in tasks:
+        try:
+            runs.append(run_task(session, task.task_id, actor=actor))
+        except Exception:
+            failed_run = session.scalar(
+                select(ScheduledTaskRunORM)
+                .where(ScheduledTaskRunORM.task_id == task.task_id)
+                .order_by(ScheduledTaskRunORM.task_run_id.desc())
+                .limit(1)
+            )
+            if failed_run is not None:
+                runs.append(failed_run)
+    return runs
 
 
 def run_task(session: Session, task_id: int, actor: str = "scheduler") -> ScheduledTaskRunORM:

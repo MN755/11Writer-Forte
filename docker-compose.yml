@@ -16,12 +16,23 @@ services:
     environment:
       ELEVENWRITER_DATABASE_URL: postgresql+psycopg://elevenwriter:elevenwriter@db:5432/elevenwriter
       ELEVENWRITER_APP_ENV: docker
+      ELEVENWRITER_SCHEDULER_POLL_SECONDS: 5
     depends_on:
       - db
     ports:
       - "8000:8000"
     command: uvicorn src.main:app --host 0.0.0.0 --port 8000
 
+  worker:
+    build:
+      context: ./app/server
+    environment:
+      ELEVENWRITER_DATABASE_URL: postgresql+psycopg://elevenwriter:elevenwriter@db:5432/elevenwriter
+      ELEVENWRITER_APP_ENV: docker
+      ELEVENWRITER_SCHEDULER_POLL_SECONDS: 5
+    depends_on:
+      - db
+    command: elevenwriter scheduler-worker
+
 volumes:
   postgres-data:
-
