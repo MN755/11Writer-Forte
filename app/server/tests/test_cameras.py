@@ -122,6 +122,18 @@ def test_camera_inventory_materialization_and_update(client: TestClient, tmp_pat
     assert second_payload["created_count"] == 0
     assert second_payload["updated_count"] == 1
 
+    schedule_response = client.post(
+        "/api/scheduler/tasks",
+        json={
+            "name": "camera-refresh-ops",
+            "task_type": "camera_inventory_refresh",
+            "interval_seconds": 300,
+            "layer_key": "traffic-camera-feed",
+            "payload_json": {"limit": 50, "source_domain": "cams.example.com"},
+        },
+    )
+    assert schedule_response.status_code == 200
+
     status_response = client.get(
         "/api/cameras",
         params={"source_domain": "cams.example.com", "status": "offline"},
@@ -129,6 +141,33 @@ def test_camera_inventory_materialization_and_update(client: TestClient, tmp_pat
     assert status_response.status_code == 200
     offline_cameras = status_response.json()
     assert any(camera["external_id"] == "mndot-i35w-001" and camera["active"] is False for camera in offline_cameras)
+
+    summary_response = client.get(
+        "/api/cameras/summary",
+        params={"layer_key": "traffic-camera-feed", "stale_after_hours": 0},
+    )
+    assert summary_response.status_code == 200
+    summary = summary_response.json()
+    assert summary["total_count"] == 2
+    assert summary["active_count"] == 0
+    assert summary["inactive_count"] == 2
+    assert summary["stale_count"] == 2
+    assert summary["layer_counts"][0]["key"] == "traffic-camera-feed"
+    assert summary["provider_counts"][0]["key"] == "MnDOT"
+
+    camera_id = next(
+        camera["camera_inventory_id"]
+        for camera in offline_cameras
+        if camera["external_id"] == "mndot-i35w-001"
+    )
+    ops_response = client.get(f"/api/cameras/{camera_id}/ops")
+    assert ops_response.status_code == 200
+    ops_payload = ops_response.json()
+    assert ops_payload["camera"]["camera_inventory_id"] == camera_id
+    assert ops_payload["latest_observation"]["observation_id"] == second_payload["cameras"][0]["observation_id"]
+    assert ops_payload["latest_import_run"]["status"] == "completed"
+    assert ops_payload["refresh_tasks"][0]["task_type"] == "camera_inventory_refresh"
+    assert any(log["action"] == "camera_updated" for log in ops_payload["custody_logs"])
 
     custody_response = client.get("/api/custody/logs")
     assert custody_response.status_code == 200

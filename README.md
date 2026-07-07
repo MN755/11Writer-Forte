@@ -69,6 +69,8 @@ elevenwriter run-source 1
 elevenwriter list-source-runs
 elevenwriter materialize-cameras --layer traffic-camera-feed
 elevenwriter list-cameras --layer traffic-camera-feed --active true
+elevenwriter show-camera-summary --layer traffic-camera-feed --stale-after-hours 24
+elevenwriter show-camera-ops 1
 elevenwriter add-camera-refresh-schedule mndot-camera-refresh 300 --layer traffic-camera-feed --source-domain 511mn.org --limit 1000
 elevenwriter add-entity-resolution-schedule nightly-entities 600 --bbox "-96,29,-94,31" --min-observations 2
 elevenwriter add-event-fusion-schedule nightly-fusion 600 --bbox "-96,29,-94,31" --distance-km 10 --time-window-minutes 120
@@ -114,8 +116,9 @@ By default the compose stack starts the API, a scheduler worker, and PostGIS-rea
 - The headless CLI now includes a `doctor` command and the API exposes `/api/operations/database`, so operators can audit connectivity, additive schema drift, table counts, and PostGIS readiness without freestyling SQL in production.
 - Runtime backup and recovery now have a first-class path too: `/api/operations/runtime/export`, `/api/operations/runtime/restore`, and matching CLI commands serialize the core backend state in dependency-safe order and log custody records for both export and restore.
 - Camera/webcam work is no longer just notes: `/api/cameras` and `/api/cameras/materialize` now persist camera inventory from imported observations, including MnDOT-style feeds that expose image or stream endpoints plus geospatial coordinates.
+- Camera ops now have a proper backend reporting surface too: `/api/cameras/summary` rolls up fleet health by layer, domain, provider, and status, while `/api/cameras/{id}/ops` exposes per-camera custody, latest observation/import context, and matching refresh schedules.
 - Camera inventory upkeep is scheduler-native now too, so the registry can be refreshed headlessly with `camera_inventory_refresh` tasks instead of waiting for an operator to remember the manual materialization command.
-- Entity resolution and event fusion are scheduler-native too, so the backend can keep promoting raw observations into reusable entities, linked events, and generated products without a human sitting there pressing the button like it’s 2009.
+- Entity resolution and event fusion are scheduler-native too, so the backend can keep promoting raw observations into reusable entities, linked events, and generated products without a human sitting there pressing the button like it's 2009.
 - Geofence scans create persisted alerts with dedupe keys so the same observation-hit pair does not spam duplicates.
 - Scheduler runs and import operations both write custody records so unattended execution still leaves an audit trail.
 - Cross-verification is rule-based today: it clusters nearby observations inside a time window and raises confidence when independent domains or layers corroborate the same occurrence.

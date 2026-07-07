@@ -1,9 +1,20 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from src.db import get_db
-from src.schemas import CameraInventoryRead, CameraMaterializationRequest, CameraMaterializationResponse
-from src.services.camera_service import list_cameras, materialize_camera_inventory
+from src.schemas import (
+    CameraInventoryOpsDetailRead,
+    CameraInventoryRead,
+    CameraInventorySummaryRead,
+    CameraMaterializationRequest,
+    CameraMaterializationResponse,
+)
+from src.services.camera_service import (
+    build_camera_inventory_ops_detail,
+    build_camera_inventory_summary,
+    list_cameras,
+    materialize_camera_inventory,
+)
 
 router = APIRouter(prefix="/cameras", tags=["cameras"])
 
@@ -47,3 +58,38 @@ def materialize_cameras(
         limit=payload.limit,
         actor="api_camera_registry",
     )
+
+
+@router.get("/summary", response_model=CameraInventorySummaryRead)
+def summarize_cameras(
+    layer_key: str | None = None,
+    source_domain: str | None = None,
+    status: str | None = None,
+    active: bool | None = None,
+    min_lon: float | None = None,
+    min_lat: float | None = None,
+    max_lon: float | None = None,
+    max_lat: float | None = None,
+    stale_after_hours: float = 24.0,
+    session: Session = Depends(get_db),
+) -> dict[str, object]:
+    return build_camera_inventory_summary(
+        session,
+        layer_key=layer_key,
+        source_domain=source_domain,
+        status=status,
+        active=active,
+        min_lon=min_lon,
+        min_lat=min_lat,
+        max_lon=max_lon,
+        max_lat=max_lat,
+        stale_after_hours=stale_after_hours,
+    )
+
+
+@router.get("/{camera_inventory_id}/ops", response_model=CameraInventoryOpsDetailRead)
+def camera_ops_detail(camera_inventory_id: int, session: Session = Depends(get_db)) -> dict[str, object]:
+    try:
+        return build_camera_inventory_ops_detail(session, camera_inventory_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
