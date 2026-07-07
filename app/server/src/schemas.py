@@ -440,6 +440,27 @@ class CameraSourceOpsDetailRead(ForteModel):
     custody_logs: list["CustodyLogRead"]
 
 
+class CameraSourceOpsReportIndexRead(ForteModel):
+    generated_at: datetime
+    stale_after_hours: float
+    latest_materialization_at: datetime | None
+    inventory_summary: CameraSourceSummaryRead
+    refresh_task_count: int
+    refresh_run_count: int
+    refresh_failure_count: int
+    refresh_tasks: list["ScheduledTaskRead"]
+    recent_refresh_runs: list["CameraRefreshTaskRunRead"]
+    recent_materializations: list["CustodyLogRead"]
+    stale_sources: list[CameraSourceInventoryRead]
+
+
+class CameraSourceOpsExportSummaryRead(ForteModel):
+    generated_at: datetime
+    filters_json: dict[str, Any]
+    report_index: CameraSourceOpsReportIndexRead
+    sources: list[CameraSourceInventoryRead]
+
+
 class EventObservationLinkRead(ForteModel):
     event_observation_link_id: int
     event_id: int
@@ -959,6 +980,8 @@ class OperationsReportRead(ForteModel):
     source_report_index: SourceOpsReportIndexRead
     camera_inventory_summary: CameraInventorySummaryRead
     camera_report_index: CameraOpsReportIndexRead
+    camera_source_inventory_summary: CameraSourceSummaryRead
+    camera_source_report_index: CameraSourceOpsReportIndexRead
     import_runs: list[LocalImportRunSummaryRead]
     source_runs: list[SourceRunRead]
     scheduled_task_runs: list[ScheduledTaskRunRead]
