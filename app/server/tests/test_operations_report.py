@@ -111,6 +111,10 @@ def test_operations_report_summarizes_runtime_activity(client: TestClient, tmp_p
     assert len(payload["alerts"]) == 2
     assert payload["alerts"][0]["status"] in {"open", "acknowledged"}
     assert payload["custody_logs"]
+    assert payload["source_inventory_summary"]["total_count"] == 1
+    assert payload["source_inventory_summary"]["scheduled_count"] == 0
+    assert payload["source_report_index"]["sync_task_count"] == 0
+    assert payload["source_report_index"]["recent_runs"][0]["source_id"] == source_id
     assert payload["camera_inventory_summary"]["total_count"] == 0
     assert payload["camera_report_index"]["refresh_task_count"] == 0
 
@@ -157,6 +161,7 @@ def test_operations_report_summarizes_runtime_activity(client: TestClient, tmp_p
     camera_report_response = client.get("/api/operations/report", params={"limit": 5})
     assert camera_report_response.status_code == 200
     camera_payload = camera_report_response.json()
+    assert camera_payload["source_inventory_summary"]["total_count"] == 1
     assert camera_payload["camera_inventory_summary"]["total_count"] == 1
     assert camera_payload["camera_inventory_summary"]["inactive_count"] == 1
     assert camera_payload["camera_report_index"]["refresh_task_count"] == 1

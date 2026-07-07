@@ -66,6 +66,9 @@ def test_clickhouse_sync_and_r2_archive_flow(
     monkeypatch.setenv("ELEVENWRITER_CLICKHOUSE_R2_ACCESS_KEY_ID", "r2-key")
     monkeypatch.setenv("ELEVENWRITER_CLICKHOUSE_R2_SECRET_ACCESS_KEY", "r2-secret")
     monkeypatch.setenv("ELEVENWRITER_CLICKHOUSE_R2_ARCHIVE_PREFIX", "forte-archive")
+    monkeypatch.setenv("ELEVENWRITER_CLICKHOUSE_R2_STORAGE_MODE", "r2_disk")
+    monkeypatch.setenv("ELEVENWRITER_CLICKHOUSE_R2_STORAGE_PREFIX", "forte-clickhouse")
+    monkeypatch.setenv("ELEVENWRITER_CLICKHOUSE_R2_CACHE_SIZE", "32Gi")
     reset_settings_cache()
 
     requests: list[dict[str, object]] = []
@@ -101,7 +104,10 @@ def test_clickhouse_sync_and_r2_archive_flow(
     assert status_payload["status"] == "ok"
     assert status_payload["reachable"] is True
     assert status_payload["r2_configured"] is True
+    assert status_payload["storage_mode"] == "r2_disk"
+    assert status_payload["storage_policy"] == "r2_main"
     assert status_payload["r2_archive_root"] == "https://acct.r2.cloudflarestorage.com/11writer-archive/forte-archive"
+    assert status_payload["r2_storage_root"] == "https://acct.r2.cloudflarestorage.com/11writer-archive/forte-clickhouse"
 
     provision_response = client.post("/api/operations/clickhouse/provision")
     assert provision_response.status_code == 200
@@ -122,8 +128,24 @@ def test_clickhouse_sync_and_r2_archive_flow(
     config_response = client.get("/api/operations/clickhouse/r2-config")
     assert config_response.status_code == 200
     config_payload = config_response.json()
-    assert "<type>s3</type>" in config_payload["storage_xml"]
+    assert "<type>object_storage</type>" in config_payload["storage_xml"]
     assert "storage_policy = 'r2_main'" in config_payload["create_table_sql"]
+    assert "INSERT INTO elevenwriter.observation_facts" in config_payload["rehydrate_example_sql"]
+    assert "FROM s3(" in config_payload["direct_query_example_sql"]
+
+    rehydrate_response = client.post(
+        "/api/operations/clickhouse/rehydrate",
+        params={
+            "archive_glob_url": (
+                "https://acct.r2.cloudflarestorage.com/11writer-archive/"
+                "forte-archive/observations/layer=*/date=*/*.parquet"
+            )
+        },
+    )
+    assert rehydrate_response.status_code == 200
+    rehydrate_payload = rehydrate_response.json()
+    assert rehydrate_payload["imported_row_count"] == 1
+    assert "FROM s3(" in rehydrate_payload["sql"]
 
     custody_response = client.get("/api/custody/logs")
     assert custody_response.status_code == 200
@@ -131,9 +153,11 @@ def test_clickhouse_sync_and_r2_archive_flow(
     assert any(row["action"] == "clickhouse_provisioned" for row in custody_rows)
     assert any(row["action"] == "clickhouse_synced" for row in custody_rows)
     assert any(row["action"] == "clickhouse_archived_to_r2" for row in custody_rows)
+    assert any(row["action"] == "clickhouse_rehydrated_from_r2" for row in custody_rows)
 
     assert any("/ping" in str(item["url"]) for item in requests)
     assert any("CREATE TABLE IF NOT EXISTS elevenwriter.observation_facts" in str(item["body"]) for item in requests)
     assert any("INSERT INTO elevenwriter.observation_facts FORMAT JSONEachRow" in str(item["body"]) for item in requests)
     assert any("INSERT INTO FUNCTION s3(" in str(item["body"]) for item in requests)
+    assert any("INSERT INTO elevenwriter.observation_facts" in str(item["body"]) and "FROM s3(" in str(item["body"]) for item in requests)
     reset_settings_cache()

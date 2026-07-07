@@ -5,12 +5,16 @@ from src.db import get_db
 from src.schemas import (
     SourceDefinitionCreate,
     SourceDefinitionRead,
+    SourceInventorySummaryRead,
+    SourceOpsReportIndexRead,
     SourceDefinitionUpdate,
     SourceOpsDetailRead,
     SourceRunRead,
 )
 from src.services.source_service import (
+    build_source_inventory_summary,
     build_source_ops_detail,
+    build_source_ops_report_index,
     create_source_definition,
     list_source_definitions,
     list_source_runs,
@@ -45,6 +49,29 @@ def update_source(source_id: int, payload: SourceDefinitionUpdate, session: Sess
 @router.get("/runs", response_model=list[SourceRunRead])
 def list_runs(session: Session = Depends(get_db)) -> list[object]:
     return list_source_runs(session)
+
+
+@router.get("/summary", response_model=SourceInventorySummaryRead)
+def source_summary(
+    stale_after_hours: float = 24.0,
+    session: Session = Depends(get_db),
+) -> dict[str, object]:
+    return build_source_inventory_summary(session, stale_after_hours=stale_after_hours)
+
+
+@router.get("/report-index", response_model=SourceOpsReportIndexRead)
+def source_report_index(
+    stale_after_hours: float = 24.0,
+    limit: int = 25,
+    stale_source_limit: int = 25,
+    session: Session = Depends(get_db),
+) -> dict[str, object]:
+    return build_source_ops_report_index(
+        session,
+        stale_after_hours=stale_after_hours,
+        limit=limit,
+        stale_source_limit=stale_source_limit,
+    )
 
 
 @router.get("/{source_id}/ops", response_model=SourceOpsDetailRead)
