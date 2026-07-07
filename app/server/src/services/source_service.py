@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 
 from src.config import get_settings
 from src.models import CustodyLogORM, SourceDefinitionORM, SourceRunORM
-from src.schemas import SourceDefinitionCreate
+from src.schemas import SourceDefinitionCreate, SourceDefinitionUpdate
 from src.services.import_service import import_local_path
 from src.services.layer_service import ensure_data_layer
 
@@ -44,6 +44,7 @@ def source_now() -> datetime:
 
 
 def create_source_definition(session: Session, payload: SourceDefinitionCreate) -> SourceDefinitionORM:
+    ensure_unique_source_name(session, payload.name)
     ensure_data_layer(session, payload.layer_key, actor="source_registry")
     record = SourceDefinitionORM(**payload.model_dump())
     session.add(record)
@@ -57,6 +58,43 @@ def create_source_definition(session: Session, payload: SourceDefinitionCreate) 
             details_json={
                 **payload.model_dump(),
                 "source_id": record.source_id,
+            },
+        )
+    )
+    session.commit()
+    session.refresh(record)
+    return record
+
+
+def update_source_definition(
+    session: Session,
+    source_id: int,
+    payload: SourceDefinitionUpdate,
+    actor: str = "system",
+) -> SourceDefinitionORM:
+    record = session.get(SourceDefinitionORM, source_id)
+    if record is None:
+        raise ValueError(f"Source {source_id} does not exist.")
+
+    changes = payload.model_dump(exclude_unset=True)
+    if not changes:
+        return record
+
+    if "name" in changes and changes["name"] != record.name:
+        ensure_unique_source_name(session, str(changes["name"]), source_id=source_id)
+    if "layer_key" in changes and changes["layer_key"]:
+        ensure_data_layer(session, str(changes["layer_key"]), actor=actor)
+
+    change_details = apply_changes(record, changes)
+    session.add(
+        CustodyLogORM(
+            object_type="source_definition",
+            object_id=str(record.source_id),
+            action="source_updated",
+            actor=actor,
+            details_json={
+                "source_id": record.source_id,
+                "changes": change_details,
             },
         )
     )
@@ -591,3 +629,32 @@ def normalize_coordinate(value: str | None) -> float | None:
     if abs(parsed) > 1000:
         return parsed / 1_000_000.0
     return parsed
+
+
+def ensure_unique_source_name(
+    session: Session,
+    name: str,
+    *,
+    source_id: int | None = None,
+) -> None:
+    statement = select(SourceDefinitionORM).where(SourceDefinitionORM.name == name)
+    existing = session.scalar(statement)
+    if existing is None:
+        return
+    if source_id is not None and existing.source_id == source_id:
+        return
+    raise ValueError(f"Source name '{name}' already exists.")
+
+
+def apply_changes(record: SourceDefinitionORM, changes: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    details: dict[str, dict[str, Any]] = {}
+    for field_name, new_value in changes.items():
+        old_value = getattr(record, field_name)
+        if old_value == new_value:
+            continue
+        setattr(record, field_name, new_value)
+        details[field_name] = {
+            "old": old_value,
+            "new": new_value,
+        }
+    return details

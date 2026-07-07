@@ -9,8 +9,9 @@ from src.schemas import (
     ScheduledTaskCreate,
     ScheduledTaskRead,
     ScheduledTaskRunRead,
+    ScheduledTaskUpdate,
 )
-from src.services.scheduler_service import create_scheduled_task, run_due_tasks, run_task
+from src.services.scheduler_service import create_scheduled_task, run_due_tasks, run_task, update_scheduled_task
 
 router = APIRouter(prefix="/scheduler", tags=["scheduler"])
 
@@ -23,7 +24,22 @@ def list_tasks(session: Session = Depends(get_db)) -> list[ScheduledTaskORM]:
 
 @router.post("/tasks", response_model=ScheduledTaskRead)
 def create_task(payload: ScheduledTaskCreate, session: Session = Depends(get_db)) -> ScheduledTaskORM:
-    return create_scheduled_task(session, payload)
+    try:
+        return create_scheduled_task(session, payload)
+    except ValueError as exc:
+        raise translate_task_error(exc) from exc
+
+
+@router.patch("/tasks/{task_id}", response_model=ScheduledTaskRead)
+def patch_task(
+    task_id: int,
+    payload: ScheduledTaskUpdate,
+    session: Session = Depends(get_db),
+) -> ScheduledTaskORM:
+    try:
+        return update_scheduled_task(session, task_id, payload)
+    except ValueError as exc:
+        raise translate_task_error(exc) from exc
 
 
 @router.get("/runs", response_model=list[ScheduledTaskRunRead])
@@ -46,4 +62,10 @@ def run_task_now(task_id: int, session: Session = Depends(get_db)) -> ScheduledT
     try:
         return run_task(session, task_id)
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise translate_task_error(exc) from exc
+
+
+def translate_task_error(exc: ValueError) -> HTTPException:
+    detail = str(exc)
+    status_code = 404 if "does not exist" in detail else 409
+    return HTTPException(status_code=status_code, detail=detail)

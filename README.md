@@ -58,6 +58,7 @@ elevenwriter list-imports
 elevenwriter add-source-file harbor-source ./feeds/harbor.json marine-track --skip-unchanged true
 elevenwriter add-source-http-json remote-feed https://example.com/feed.json remote-track --retry-attempts 3 --skip-unchanged true --header "Authorization: Bearer token"
 elevenwriter list-sources
+elevenwriter update-source 1 --enabled false --notes "Disabled for review"
 elevenwriter run-source 1
 elevenwriter list-source-runs
 elevenwriter query-observations --bbox "-96,29,-94,31"
@@ -71,6 +72,7 @@ elevenwriter export-event-product 1 cited_summary ./exports/event-1-summary.txt
 elevenwriter export-event-bundle 1 ./exports/event-1-bundle.json
 elevenwriter add-source-sync-schedule nightly-sync 1 300 --retry-attempts 3 --retry-backoff-seconds 5
 elevenwriter add-geofence-scan-schedule nightly-watch 300
+elevenwriter update-schedule 1 --enabled false --notes "Paused for maintenance"
 elevenwriter list-schedules
 elevenwriter list-schedule-runs
 elevenwriter update-alert 1 acknowledged --disposition-note "Reviewed by operator"
@@ -104,6 +106,7 @@ By default the compose stack starts the API plus PostGIS-ready Postgres.
 - Event export bundles package the event, linked observations, resolved entities, import/source context, generated products, citations, and relevant custody records into one JSON artifact for downstream systems or archival.
 - Event export bundles now also carry relevant alerts plus scheduled task and scheduled run history, so downstream review can see not just the evidence but the operational path that produced and monitored it.
 - Managed sources provide a named catalog for repeatable ingestion; scheduler tasks can now sync those source definitions instead of only replaying raw file paths.
+- Managed sources and scheduled tasks now support update/enable-disable lifecycle controls with custody logs, so operators can pause, retarget, and resume headless workflows without deleting history.
 - HTTP-managed sources support retry attempts, timeout controls, custom headers, cached payload materialization, and persisted fetch metadata so headless sync jobs have enough operational context to debug failures.
 - Managed source runs are idempotent by default: when the payload hash matches the most recent completed or skipped run for that source, the new run is marked `skipped` and does not create duplicate imports.
 - Local imports are dedupe-aware too: exact duplicate records in the same layer are skipped, and each import run reports `records_seen`, `records_imported`, and `records_skipped`.

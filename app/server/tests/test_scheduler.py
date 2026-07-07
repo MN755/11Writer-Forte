@@ -344,3 +344,86 @@ def test_source_sync_schedule_retries_transient_failure(client: TestClient) -> N
             and row["details_json"]["attempt_count"] == 2
             for row in custody_rows
         )
+
+
+def test_schedule_update_can_disable_then_reenable_task(client: TestClient, tmp_path: Path) -> None:
+    fixture = tmp_path / "updated-schedule.json"
+    fixture.write_text(
+        json.dumps(
+            [
+                {
+                    "title": "Updated schedule import",
+                    "url": "https://schedule.example.com/1",
+                    "lat": 30.1,
+                    "lon": -95.1,
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    schedule_response = client.post(
+        "/api/scheduler/tasks",
+        json={
+            "name": "updated-schedule",
+            "task_type": "local_import",
+            "interval_seconds": 300,
+            "target_path": str(fixture),
+            "layer_key": "ops-feed",
+        },
+    )
+    assert schedule_response.status_code == 200
+    task_id = schedule_response.json()["task_id"]
+    assert schedule_response.json()["next_run_at"] is not None
+
+    disable_response = client.patch(
+        f"/api/scheduler/tasks/{task_id}",
+        json={
+            "enabled": False,
+            "interval_seconds": 600,
+            "notes": "Paused for maintenance",
+        },
+    )
+    assert disable_response.status_code == 200
+    disabled_payload = disable_response.json()
+    assert disabled_payload["enabled"] is False
+    assert disabled_payload["interval_seconds"] == 600
+    assert disabled_payload["notes"] == "Paused for maintenance"
+    assert disabled_payload["next_run_at"] is None
+
+    due_response = client.post("/api/scheduler/run-due")
+    assert due_response.status_code == 200
+    assert due_response.json()["runs_created"] == 0
+
+    enable_response = client.patch(
+        f"/api/scheduler/tasks/{task_id}",
+        json={
+            "enabled": True,
+            "retry_attempts": 2,
+            "retry_backoff_seconds": 5,
+            "layer_key": "retargeted-ops-feed",
+        },
+    )
+    assert enable_response.status_code == 200
+    enabled_payload = enable_response.json()
+    assert enabled_payload["enabled"] is True
+    assert enabled_payload["retry_attempts"] == 2
+    assert enabled_payload["retry_backoff_seconds"] == 5
+    assert enabled_payload["layer_key"] == "retargeted-ops-feed"
+    assert enabled_payload["next_run_at"] is not None
+
+    layers_response = client.get("/api/layers")
+    assert layers_response.status_code == 200
+    assert any(layer["key"] == "retargeted-ops-feed" for layer in layers_response.json())
+
+    run_response = client.post(f"/api/scheduler/tasks/{task_id}/run")
+    assert run_response.status_code == 200
+    assert run_response.json()["records_affected"] == 1
+
+    custody_response = client.get("/api/custody/logs")
+    assert custody_response.status_code == 200
+    assert any(
+        row["object_type"] == "scheduled_task"
+        and row["object_id"] == str(task_id)
+        and row["action"] == "task_updated"
+        for row in custody_response.json()
+    )
