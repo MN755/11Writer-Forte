@@ -151,6 +151,38 @@ def build_scheduler_ops_report_index(
     }
 
 
+def build_scheduler_ops_export_summary(
+    session: Session,
+    *,
+    task_limit: int = 500,
+    report_limit: int = 25,
+    overdue_task_limit: int = 25,
+) -> dict[str, object]:
+    generated_at = scheduler_now()
+    tasks = list(
+        session.scalars(
+            select(ScheduledTaskORM)
+            .order_by(ScheduledTaskORM.task_id.asc())
+            .limit(task_limit)
+        )
+    )
+    return {
+        "generated_at": generated_at,
+        "filters_json": {
+            "task_limit": task_limit,
+            "report_limit": report_limit,
+            "overdue_task_limit": overdue_task_limit,
+        },
+        "report_index": build_scheduler_ops_report_index(
+            session,
+            limit=report_limit,
+            overdue_task_limit=overdue_task_limit,
+            reference_time=generated_at,
+        ),
+        "tasks": tasks,
+    }
+
+
 def update_scheduled_task(
     session: Session,
     task_id: int,

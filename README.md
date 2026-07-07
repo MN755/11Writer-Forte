@@ -121,6 +121,7 @@ elevenwriter run-due-schedules
 elevenwriter list-custody
 elevenwriter show-scheduler-summary
 elevenwriter show-scheduler-report-index --limit 25
+elevenwriter export-scheduler-summary ./exports/scheduler-summary.json --task-limit 500 --report-limit 25
 ```
 
 ## Docker
@@ -189,6 +190,7 @@ ELEVENWRITER_CLICKHOUSE_R2_CACHE_SIZE=10Gi
 - The platform-wide operations report now carries camera inventory and camera refresh sections too, so one headless report can show both event/alert activity and the current health of the camera subsystem.
 - The platform-wide operations report now also carries storage lifecycle inventory plus ClickHouse backend diagnostics, so one headless report can expose artifact retention state and optional analytics-backend health instead of making operators hop across multiple commands.
 - The scheduler finally has a fleet-level ops surface too: `/api/scheduler/summary`, `/api/scheduler/report-index`, `show-scheduler-summary`, and `show-scheduler-report-index` expose overdue tasks, failing latest runs, maintenance coverage, and task-type run/failure buckets instead of forcing operators to reverse-engineer health from raw run rows.
+- Scheduler reporting is exportable now too: `/api/scheduler/export/summary` and `export-scheduler-summary` package the scheduler fleet report plus task inventory into a JSON artifact that registers in the storage/provenance ledger like the rest of the backend exports.
 - Entity resolution and event fusion are scheduler-native too, so the backend can keep promoting raw observations into reusable entities, linked events, and generated products without a human sitting there pressing the button like it's 2009.
 - Geofence scans create persisted alerts with dedupe keys so the same observation-hit pair does not spam duplicates.
 - Scheduler runs and import operations both write custody records so unattended execution still leaves an audit trail.

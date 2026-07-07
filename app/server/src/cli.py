@@ -44,6 +44,7 @@ from src.schemas import (
     RuntimeRestoreResultRead,
     RuntimeSnapshotRead,
     SchedulerInventorySummaryRead,
+    SchedulerOpsExportSummaryRead,
     SchedulerOpsReportIndexRead,
     ScheduledTaskCreate,
     ScheduledTaskUpdate,
@@ -94,6 +95,7 @@ from src.services.runtime_snapshot_service import restore_runtime_snapshot
 from src.services.scheduler_runtime_service import run_scheduler_worker
 from src.services.scheduler_service import (
     build_scheduler_inventory_summary,
+    build_scheduler_ops_export_summary,
     build_scheduler_ops_report_index,
     create_scheduled_task,
     run_due_tasks,
@@ -2420,6 +2422,41 @@ def show_scheduler_report_index_command(limit: int = 25, overdue_task_limit: int
             typer.echo(
                 f"  {item['task']['task_id']} | {item['task']['task_type']} | enabled={item['task']['enabled']} | next={item['task']['next_run_at']}"
             )
+    finally:
+        session.close()
+
+
+@app.command("export-scheduler-summary")
+def export_scheduler_summary_command(
+    output_path: Path,
+    task_limit: int = 500,
+    report_limit: int = 25,
+    overdue_task_limit: int = 25,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        report = build_scheduler_ops_export_summary(
+            session,
+            task_limit=task_limit,
+            report_limit=report_limit,
+            overdue_task_limit=overdue_task_limit,
+        )
+        serializable = TypeAdapter(SchedulerOpsExportSummaryRead).validate_python(report).model_dump(mode="json")
+        write_json_export_artifact(
+            session,
+            payload=serializable,
+            object_kind="scheduler_summary_export",
+            owner_type="scheduler_export",
+            owner_id="scoped",
+            output_path=output_path,
+            source_uri="/api/scheduler/export/summary",
+            observed_at=report["generated_at"],
+            metadata_json=serializable["filters_json"],
+            actor="cli_export",
+        )
+        print_banner()
+        typer.echo(f"exported scheduler summary to {output_path}")
     finally:
         session.close()
 

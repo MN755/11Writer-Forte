@@ -875,6 +875,13 @@ class SchedulerOpsReportIndexRead(ForteModel):
     maintenance_tasks: list[ScheduledTaskOpsStatusRead]
 
 
+class SchedulerOpsExportSummaryRead(ForteModel):
+    generated_at: datetime
+    filters_json: dict[str, Any]
+    report_index: SchedulerOpsReportIndexRead
+    tasks: list[ScheduledTaskRead]
+
+
 class CameraRefreshTaskRunRead(ForteModel):
     task_run_id: int
     task_id: int
