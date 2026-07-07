@@ -52,6 +52,28 @@ class EventRead(EventCreate):
     updated_at: datetime
 
 
+class EntityRead(ForteModel):
+    entity_id: int
+    slug: str
+    entity_type: str
+    canonical_name: str
+    resolution_basis: str
+    confidence_score: float
+    redaction_level: str
+    metadata_json: dict[str, Any]
+    created_at: datetime
+    updated_at: datetime
+
+
+class EntityObservationLinkRead(ForteModel):
+    entity_observation_link_id: int
+    entity_id: int
+    observation_id: int
+    match_basis: str
+    confidence_contribution: float
+    created_at: datetime
+
+
 class EventObservationLinkRead(ForteModel):
     event_observation_link_id: int
     event_id: int
@@ -213,6 +235,38 @@ class EventFusionResultRead(ForteModel):
 class EventFusionResponse(ForteModel):
     created_event_count: int
     event_results: list[EventFusionResultRead]
+
+
+class EntityResolutionRequest(ForteModel):
+    layer_key: str | None = None
+    source_domain: str | None = None
+    trust_level: str | None = None
+    min_lon: float | None = None
+    min_lat: float | None = None
+    max_lon: float | None = None
+    max_lat: float | None = None
+    since: datetime | None = None
+    until: datetime | None = None
+    limit: int = Field(default=500, ge=1, le=2000)
+    min_observations: int = Field(default=2, ge=1, le=100)
+    entity_type: str | None = None
+    redaction_level: str = "public"
+
+
+class EntityResolutionResultRead(ForteModel):
+    entity_id: int
+    slug: str
+    entity_type: str
+    canonical_name: str
+    observation_count: int
+    signal_count: int
+    confidence_score: float
+    created_new: bool
+
+
+class EntityResolutionResponse(ForteModel):
+    created_entity_count: int
+    entity_results: list[EntityResolutionResultRead]
 
 
 class LocalImportRequest(ForteModel):

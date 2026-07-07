@@ -9,6 +9,7 @@ from src.config import get_settings
 from src.db import init_db
 from src.routes.alerts import router as alerts_router
 from src.routes.custody import router as custody_router
+from src.routes.entities import router as entities_router
 from src.routes.events import layer_router
 from src.routes.events import router as events_router
 from src.routes.geofences import router as geofences_router
@@ -36,6 +37,7 @@ def create_application() -> FastAPI:
     )
     application.include_router(health_router)
     application.include_router(events_router, prefix=settings.api_prefix)
+    application.include_router(entities_router, prefix=settings.api_prefix)
     application.include_router(layer_router, prefix=settings.api_prefix)
     application.include_router(geofences_router, prefix=settings.api_prefix)
     application.include_router(alerts_router, prefix=settings.api_prefix)

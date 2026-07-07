@@ -9,6 +9,7 @@ This repo intentionally removes the frontend runtime. The only operator-facing i
 - FastAPI runtime for event, layer, geofence, alert, import, and trust-management workflows
 - Persisted scheduler runtime for unattended imports, geofence scans, and integrity-source seed tasks
 - Observation query and rule-based cross-verification surfaces for spatial filtering and corroboration
+- Rule-based entity resolution that links observations into reusable entity records
 - Event fusion materialization plus exportable cited summaries and rule-based reports
 - Managed source definitions with persisted source-run history and scheduler-driven sync hooks
 - SQLAlchemy storage foundation that runs on SQLite for local development and Postgres/PostGIS-oriented URLs for deployment
@@ -55,6 +56,9 @@ elevenwriter run-source 1
 elevenwriter list-source-runs
 elevenwriter query-observations --bbox "-96,29,-94,31"
 elevenwriter cross-verify --bbox "-96,29,-94,31" --distance-km 10
+elevenwriter resolve-entities --bbox "-96,29,-94,31" --min-observations 2
+elevenwriter list-entities
+elevenwriter show-entity-observations 1
 elevenwriter fuse-events --bbox "-96,29,-94,31" --distance-km 10
 elevenwriter show-event-products 1
 elevenwriter export-event-product 1 cited_summary ./exports/event-1-summary.txt
@@ -84,6 +88,7 @@ By default the compose stack starts the API plus PostGIS-ready Postgres.
 - Geofence scans create persisted alerts with dedupe keys so the same observation-hit pair does not spam duplicates.
 - Scheduler runs and import operations both write custody records so unattended execution still leaves an audit trail.
 - Cross-verification is rule-based today: it clusters nearby observations inside a time window and raises confidence when independent domains or layers corroborate the same occurrence.
+- Entity resolution is rule-based today: it extracts stable identifiers such as vessel MMSI values, handles, emails, and registrations, then merges co-occurring identifiers into reusable entity records with linked evidence rows.
 - Event fusion is rule-based today: corroborated clusters materialize into events, linked evidence rows, a cited summary, and a longer report so the headless runtime can emit usable products before LLM narrative generation exists.
 - Event export bundles package the event, linked observations, import/source context, generated products, citations, and relevant custody records into one JSON artifact for downstream systems or archival.
 - Managed sources provide a named catalog for repeatable ingestion; scheduler tasks can now sync those source definitions instead of only replaying raw file paths.

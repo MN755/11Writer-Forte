@@ -12,6 +12,8 @@ from src.db import get_session_factory, init_db
 from src.models import (
     AlertORM,
     CustodyLogORM,
+    EntityObservationLinkORM,
+    EntityORM,
     EventORM,
     LocalImportRunORM,
     ScheduledTaskORM,
@@ -21,9 +23,11 @@ from src.models import (
 from src.schemas import (
     EventExportBundleRead,
     EventFusionRequest,
+    EntityResolutionRequest,
     ScheduledTaskCreate,
     SourceDefinitionCreate,
 )
+from src.services.entity_resolution_service import materialize_entities
 from src.services.event_export_service import build_event_export_bundle
 from src.services.event_fusion_service import materialize_fused_events
 from src.services.import_service import import_local_path
@@ -255,6 +259,87 @@ def list_events() -> None:
         print_banner()
         for row in rows:
             typer.echo(f"{row.event_id} | {row.slug} | {row.title} | {row.redaction_level}")
+    finally:
+        session.close()
+
+
+@app.command("resolve-entities")
+def resolve_entities_command(
+    bbox: str | None = None,
+    layer: str | None = None,
+    source_domain: str | None = None,
+    trust_level: str | None = None,
+    limit: int = 500,
+    min_observations: int = 2,
+    entity_type: str | None = None,
+    redaction_level: str = "public",
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        min_lon, min_lat, max_lon, max_lat = parse_bbox(bbox)
+        results = materialize_entities(
+            session,
+            EntityResolutionRequest(
+                layer_key=layer,
+                source_domain=source_domain,
+                trust_level=trust_level,
+                min_lon=min_lon,
+                min_lat=min_lat,
+                max_lon=max_lon,
+                max_lat=max_lat,
+                limit=limit,
+                min_observations=min_observations,
+                entity_type=entity_type,
+                redaction_level=redaction_level,
+            ),
+            actor="cli",
+        )
+        print_banner()
+        for result in results:
+            typer.echo(
+                f"{result.entity.entity_id} | {result.entity.entity_type} | {result.entity.canonical_name} | new={result.created_new} | observations={result.observation_count} | signals={result.signal_count} | score={result.confidence_score:.2f}"
+            )
+    finally:
+        session.close()
+
+
+@app.command("list-entities")
+def list_entities() -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        rows = list(
+            session.scalars(
+                select(EntityORM).order_by(EntityORM.confidence_score.desc(), EntityORM.created_at.desc())
+            )
+        )
+        print_banner()
+        for row in rows:
+            typer.echo(
+                f"{row.entity_id} | {row.entity_type} | {row.canonical_name} | score={row.confidence_score:.2f} | {row.redaction_level}"
+            )
+    finally:
+        session.close()
+
+
+@app.command("show-entity-observations")
+def show_entity_observations(entity_id: int) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        rows = list(
+            session.scalars(
+                select(EntityObservationLinkORM)
+                .where(EntityObservationLinkORM.entity_id == entity_id)
+                .order_by(EntityObservationLinkORM.entity_observation_link_id.asc())
+            )
+        )
+        print_banner()
+        for row in rows:
+            typer.echo(
+                f"{row.entity_observation_link_id} | entity={row.entity_id} | observation={row.observation_id} | {row.match_basis} | score={row.confidence_contribution:.2f}"
+            )
     finally:
         session.close()
 

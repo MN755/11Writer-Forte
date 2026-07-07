@@ -48,6 +48,21 @@ class EventORM(TimestampMixin, Base):
     products: Mapped[list["SituationProductORM"]] = relationship(back_populates="event")
 
 
+class EntityORM(TimestampMixin, Base):
+    __tablename__ = "entities"
+
+    entity_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    slug: Mapped[str] = mapped_column(String(120), unique=True, index=True)
+    entity_type: Mapped[str] = mapped_column(String(40), index=True)
+    canonical_name: Mapped[str] = mapped_column(String(200))
+    resolution_basis: Mapped[str] = mapped_column(String(80), default="rule_based")
+    confidence_score: Mapped[float] = mapped_column(Float, default=0.5)
+    redaction_level: Mapped[str] = mapped_column(String(50), default="public")
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+    observation_links: Mapped[list["EntityObservationLinkORM"]] = relationship(back_populates="entity")
+
+
 class GeofenceORM(TimestampMixin, Base):
     __tablename__ = "geofences"
 
@@ -119,6 +134,7 @@ class ObservationORM(TimestampMixin, Base):
 
     import_run: Mapped[LocalImportRunORM | None] = relationship(back_populates="observations")
     event_links: Mapped[list["EventObservationLinkORM"]] = relationship(back_populates="observation")
+    entity_links: Mapped[list["EntityObservationLinkORM"]] = relationship(back_populates="observation")
 
 
 class CustodyLogORM(Base):
@@ -180,6 +196,20 @@ class EventObservationLinkORM(Base):
 
     event: Mapped[EventORM] = relationship(back_populates="observation_links")
     observation: Mapped[ObservationORM] = relationship(back_populates="event_links")
+
+
+class EntityObservationLinkORM(Base):
+    __tablename__ = "entity_observation_links"
+
+    entity_observation_link_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    entity_id: Mapped[int] = mapped_column(ForeignKey("entities.entity_id"), index=True)
+    observation_id: Mapped[int] = mapped_column(ForeignKey("observations.observation_id"), index=True)
+    match_basis: Mapped[str] = mapped_column(String(80), default="rule_based")
+    confidence_contribution: Mapped[float] = mapped_column(Float, default=0.5)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+    entity: Mapped[EntityORM] = relationship(back_populates="observation_links")
+    observation: Mapped[ObservationORM] = relationship(back_populates="entity_links")
 
 
 class SituationProductORM(TimestampMixin, Base):
