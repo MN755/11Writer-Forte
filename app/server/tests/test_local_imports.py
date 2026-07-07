@@ -44,6 +44,17 @@ def test_local_json_import_applies_trust_profile(client: TestClient, tmp_path: P
     assert payload["observations"][0]["trust_level"] == "trusted"
     assert payload["observations"][0]["approval_policy"] == "auto_approve_stable"
     assert payload["observations"][0]["location_geojson"]["type"] == "Point"
+    storage_response = client.get(
+        "/api/storage/objects",
+        params={"owner_type": "local_import_run", "owner_id": str(payload["import_run_id"])},
+    )
+    assert storage_response.status_code == 200
+    storage_objects = storage_response.json()
+    assert len(storage_objects) == 1
+    assert storage_objects[0]["object_kind"] == "local_import_source"
+    assert storage_objects[0]["retention_class"] == "investigative"
+    assert storage_objects[0]["storage_tier"] == "warm"
+    assert storage_objects[0]["source_uri"] == str(fixture)
 
     layers_response = client.get("/api/layers")
     assert layers_response.status_code == 200
@@ -114,3 +125,9 @@ def test_local_import_skips_duplicate_observations(client: TestClient, tmp_path:
         and row["details_json"]["records_skipped"] == 2
         for row in custody_response.json()
     )
+    assert sum(
+        1
+        for row in custody_response.json()
+        if row["object_type"] == "storage_object"
+        and row["action"] == "storage_registered"
+    ) >= 2

@@ -140,6 +140,7 @@ def test_runtime_snapshot_export_and_restore_round_trip(client: TestClient, tmp_
     assert snapshot["observations"]
     assert snapshot["events"]
     assert snapshot["entities"]
+    assert snapshot["storage_objects"]
     assert snapshot["scheduled_tasks"]
     assert snapshot["scheduled_task_runs"]
     assert snapshot["source_runs"]
@@ -162,6 +163,7 @@ def test_runtime_snapshot_export_and_restore_round_trip(client: TestClient, tmp_
     assert row_counts["observations"] >= 2
     assert row_counts["events"] >= 1
     assert row_counts["entities"] >= 1
+    assert row_counts["storage_objects"] >= 1
     assert row_counts["scheduled_tasks"] >= 1
     assert row_counts["source_definitions"] >= 1
     assert row_counts["source_runs"] >= 1
@@ -173,4 +175,5 @@ def test_runtime_snapshot_export_and_restore_round_trip(client: TestClient, tmp_
     assert len(restored_snapshot["observations"]) >= len(snapshot["observations"])
     assert len(restored_snapshot["events"]) >= len(snapshot["events"])
     assert len(restored_snapshot["entities"]) >= len(snapshot["entities"])
+    assert len(restored_snapshot["storage_objects"]) >= len(snapshot["storage_objects"])
     assert any(log["action"] == "runtime_restored" for log in restored_snapshot["custody_logs"])

@@ -60,6 +60,18 @@ def test_camera_inventory_materialization_and_update(client: TestClient, tmp_pat
         "mndot-i35w-001",
         "mndot-i94-002",
     }
+    storage_response = client.get(
+        "/api/storage/objects",
+        params={"owner_type": "camera_inventory", "limit": 20},
+    )
+    assert storage_response.status_code == 200
+    storage_objects = storage_response.json()
+    assert len(storage_objects) == 5
+    assert {row["object_kind"] for row in storage_objects} == {
+        "camera_image_ref",
+        "camera_stream_ref",
+        "camera_page_ref",
+    }
 
     cameras_response = client.get(
         "/api/cameras",
@@ -121,6 +133,12 @@ def test_camera_inventory_materialization_and_update(client: TestClient, tmp_pat
     second_payload = second_materialization.json()
     assert second_payload["created_count"] == 0
     assert second_payload["updated_count"] == 1
+    second_storage_response = client.get(
+        "/api/storage/objects",
+        params={"owner_type": "camera_inventory", "limit": 20},
+    )
+    assert second_storage_response.status_code == 200
+    assert len(second_storage_response.json()) == 5
 
     schedule_response = client.post(
         "/api/scheduler/tasks",
@@ -204,5 +222,10 @@ def test_camera_inventory_materialization_and_update(client: TestClient, tmp_pat
     assert any(
         row["object_type"] == "camera_inventory_materialization"
         and row["action"] == "camera_materialization_completed"
+        for row in custody_rows
+    )
+    assert any(
+        row["object_type"] == "storage_object"
+        and row["action"] == "storage_refreshed"
         for row in custody_rows
     )

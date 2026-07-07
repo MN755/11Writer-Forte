@@ -15,6 +15,7 @@ This repo intentionally removes the frontend runtime. The only operator-facing i
 - Event fusion materialization plus exportable cited summaries and rule-based reports
 - Managed source definitions with persisted source-run history and scheduler-driven sync hooks
 - Camera inventory materialization that turns imported/public traffic camera observations into persisted geospatial camera records with provenance
+- Storage-object ledger that tracks retained artifacts, retention class, lifecycle state, and provenance for imports and camera-derived references
 - SQLAlchemy storage foundation that runs on SQLite for local development and Postgres/PostGIS-oriented URLs for deployment
 - PostGIS-aware spatial query path that persists WKT alongside GeoJSON and automatically provisions spatial indexes on PostgreSQL
 - Local import pipeline for JSON, JSONL, TXT, and SQLite inputs with row-level dedupe inside each layer
@@ -74,6 +75,10 @@ elevenwriter show-camera-ops 1
 elevenwriter show-camera-report-index --layer traffic-camera-feed --source-domain cams.example.com
 elevenwriter export-camera-summary ./exports/camera-summary.json --layer traffic-camera-feed
 elevenwriter add-camera-refresh-schedule mndot-camera-refresh 300 --layer traffic-camera-feed --source-domain 511mn.org --limit 1000
+elevenwriter list-storage-objects --owner-type camera_inventory --retention-class operational
+elevenwriter add-storage-object manual:casefile:1 report_export event 42 file:///tmp/casefile-42.json --storage-tier hot --retention-class investigative
+elevenwriter promote-storage-object 1 event 42 --storage-tier archive --retention-class permanent
+elevenwriter transition-storage-object 1 archived --storage-tier archive
 elevenwriter add-entity-resolution-schedule nightly-entities 600 --bbox "-96,29,-94,31" --min-observations 2
 elevenwriter add-event-fusion-schedule nightly-fusion 600 --bbox "-96,29,-94,31" --distance-km 10 --time-window-minutes 120
 elevenwriter query-observations --bbox "-96,29,-94,31"
@@ -117,6 +122,8 @@ By default the compose stack starts the API, a scheduler worker, and PostGIS-rea
 - Postgres runtime now auto-enables `postgis` plus GiST expression indexes for observation points and geofence geometries, while SQLite keeps the Python fallback path for local runs and tests.
 - The headless CLI now includes a `doctor` command and the API exposes `/api/operations/database`, so operators can audit connectivity, additive schema drift, table counts, and PostGIS readiness without freestyling SQL in production.
 - Runtime backup and recovery now have a first-class path too: `/api/operations/runtime/export`, `/api/operations/runtime/restore`, and matching CLI commands serialize the core backend state in dependency-safe order and log custody records for both export and restore.
+- The storage-core slice is real now, not a manifesto: `/api/storage/objects` plus the `list-storage-objects`, `add-storage-object`, `promote-storage-object`, and `transition-storage-object` CLI commands expose a first-class artifact ledger with retention classes, tiering, and lifecycle controls.
+- Imports and camera materialization now auto-register storage manifests, so raw local files plus camera image/stream/page references get tracked as storage objects with expiration windows and custody events instead of disappearing into the void.
 - Camera/webcam work is no longer just notes: `/api/cameras` and `/api/cameras/materialize` now persist camera inventory from imported observations, including MnDOT-style feeds that expose image or stream endpoints plus geospatial coordinates.
 - Camera ops now have a proper backend reporting surface too: `/api/cameras/summary` rolls up fleet health by layer, domain, provider, and status, while `/api/cameras/{id}/ops` exposes per-camera custody, latest observation/import context, and matching refresh schedules.
 - Camera reporting is exportable now too: `/api/cameras/report-index` summarizes refresh task coverage, recent materializations, stale inventory, and recent refresh runs, while `/api/cameras/export/summary` emits a JSON-ready artifact for downstream systems and archival.

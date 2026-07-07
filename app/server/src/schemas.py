@@ -8,6 +8,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 TrustLevel = Literal["trusted", "neutral", "blocked"]
 ApprovalPolicy = Literal["auto_approve_stable", "manual_review", "always_review", "auto_reject"]
+StorageTier = Literal["hot", "warm", "archive"]
+RetentionClass = Literal["ephemeral", "operational", "investigative", "permanent"]
+StorageLifecycleStatus = Literal["active", "promoted", "degraded", "archived", "expired"]
 
 
 class ForteModel(BaseModel):
@@ -76,6 +79,7 @@ class RuntimeSnapshotRead(ForteModel):
     entities: list["EntityRead"]
     observations: list["ObservationRead"]
     camera_inventory: list["CameraInventoryRead"]
+    storage_objects: list["StorageObjectRead"]
     event_observation_links: list["EventObservationLinkRead"]
     entity_observation_links: list["EntityObservationLinkRead"]
     alerts: list["AlertRead"]
@@ -168,6 +172,49 @@ class CameraInventoryRead(ForteModel):
     metadata_json: dict[str, Any]
     created_at: datetime
     updated_at: datetime
+
+
+class StorageObjectCreate(ForteModel):
+    object_key: str
+    object_kind: str
+    owner_type: str
+    owner_id: str
+    object_uri: str
+    content_hash: str | None = None
+    media_type: str | None = None
+    storage_tier: StorageTier = "hot"
+    retention_class: RetentionClass = "operational"
+    lifecycle_status: StorageLifecycleStatus = "active"
+    source_uri: str | None = None
+    byte_size: int | None = None
+    observed_at: datetime | None = None
+    expires_at: datetime | None = None
+    degraded_from_storage_object_id: int | None = None
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+
+
+class StorageObjectRead(StorageObjectCreate):
+    storage_object_id: int
+    promoted_by_type: str | None
+    promoted_by_id: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class StorageObjectPromoteRequest(ForteModel):
+    storage_tier: StorageTier = "warm"
+    retention_class: RetentionClass | None = None
+    promoted_by_type: str
+    promoted_by_id: str
+    expires_at: datetime | None = None
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+
+
+class StorageObjectTransitionRequest(ForteModel):
+    lifecycle_status: StorageLifecycleStatus
+    storage_tier: StorageTier | None = None
+    expires_at: datetime | None = None
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
 
 
 class CameraMaterializationRequest(ForteModel):
