@@ -1140,6 +1140,42 @@ def add_source_sync_schedule(
         session.close()
 
 
+@app.command("add-camera-refresh-schedule")
+def add_camera_refresh_schedule(
+    name: str,
+    interval_seconds: int,
+    layer: str | None = None,
+    source_domain: str | None = None,
+    limit: int = 500,
+    notes: str = "",
+    retry_attempts: int = 1,
+    retry_backoff_seconds: float = 0.0,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        payload_json: dict[str, object] = {"limit": limit}
+        if source_domain:
+            payload_json["source_domain"] = source_domain
+        task = create_scheduled_task(
+            session,
+            ScheduledTaskCreate(
+                name=name,
+                task_type="camera_inventory_refresh",
+                interval_seconds=interval_seconds,
+                retry_attempts=retry_attempts,
+                retry_backoff_seconds=retry_backoff_seconds,
+                layer_key=layer,
+                notes=notes,
+                payload_json=payload_json,
+            ),
+        )
+        print_banner()
+        typer.echo(f"scheduled task {task.task_id} created for camera inventory refresh")
+    finally:
+        session.close()
+
+
 @app.command("list-schedules")
 def list_schedules() -> None:
     init_db()
@@ -1148,9 +1184,26 @@ def list_schedules() -> None:
         rows = list(session.scalars(select(ScheduledTaskORM).order_by(ScheduledTaskORM.task_id.asc())))
         print_banner()
         for row in rows:
-            typer.echo(
-                f"{row.task_id} | {row.task_type} | every={row.interval_seconds}s | retry={row.retry_attempts} | backoff={row.retry_backoff_seconds}s | enabled={row.enabled} | next={row.next_run_at}"
-            )
+            parts = [
+                f"{row.task_id}",
+                row.task_type,
+                f"every={row.interval_seconds}s",
+                f"retry={row.retry_attempts}",
+                f"backoff={row.retry_backoff_seconds}s",
+                f"enabled={row.enabled}",
+                f"next={row.next_run_at}",
+            ]
+            if row.layer_key:
+                parts.append(f"layer={row.layer_key}")
+            if row.source_id is not None:
+                parts.append(f"source={row.source_id}")
+            if row.geofence_id is not None:
+                parts.append(f"geofence={row.geofence_id}")
+            if row.target_path:
+                parts.append(f"path={row.target_path}")
+            if row.payload_json:
+                parts.append(f"payload={json.dumps(row.payload_json, sort_keys=True)}")
+            typer.echo(" | ".join(parts))
     finally:
         session.close()
 

@@ -205,6 +205,89 @@ def test_local_import_schedule_runs_manually(client: TestClient, tmp_path: Path)
     )
 
 
+def test_camera_inventory_refresh_schedule_materializes_camera_inventory(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    fixture = tmp_path / "scheduled-cameras.json"
+    fixture.write_text(
+        json.dumps(
+            [
+                {
+                    "camera_id": "mndot-i35w-001",
+                    "camera_name": "I-35W @ Lake St",
+                    "provider": "MnDOT",
+                    "road_name": "I-35W",
+                    "status": "active",
+                    "image_url": "https://images.511mn.org/camera-1.jpg",
+                    "page_url": "https://511mn.org/camera/1",
+                    "lat": 44.9485,
+                    "lon": -93.2682,
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    import_response = client.post(
+        "/api/imports/local",
+        json={"source_path": str(fixture), "layer_key": "traffic-camera-feed"},
+    )
+    assert import_response.status_code == 200
+
+    schedule_response = client.post(
+        "/api/scheduler/tasks",
+        json={
+            "name": "scheduled-camera-refresh",
+            "task_type": "camera_inventory_refresh",
+            "interval_seconds": 300,
+            "layer_key": "traffic-camera-feed",
+            "payload_json": {"limit": 25, "source_domain": "511mn.org"},
+        },
+    )
+    assert schedule_response.status_code == 200
+    task_id = schedule_response.json()["task_id"]
+
+    run_response = client.post(f"/api/scheduler/tasks/{task_id}/run")
+    assert run_response.status_code == 200
+    payload = run_response.json()
+    assert payload["status"] == "completed"
+    assert payload["records_affected"] == 1
+    assert payload["output_json"]["created_count"] == 1
+    assert payload["output_json"]["updated_count"] == 0
+    assert payload["output_json"]["scanned_count"] == 1
+    assert len(payload["output_json"]["camera_inventory_ids"]) == 1
+
+    cameras_response = client.get("/api/cameras", params={"layer_key": "traffic-camera-feed"})
+    assert cameras_response.status_code == 200
+    cameras = cameras_response.json()
+    assert len(cameras) == 1
+    assert cameras[0]["external_id"] == "mndot-i35w-001"
+    assert cameras[0]["source_domain"] == "images.511mn.org"
+
+    custody_response = client.get("/api/custody/logs")
+    assert custody_response.status_code == 200
+    assert any(
+        row["object_type"] == "camera_inventory_materialization"
+        and row["action"] == "camera_materialization_completed"
+        for row in custody_response.json()
+    )
+
+
+def test_camera_inventory_refresh_schedule_rejects_invalid_payload(client: TestClient) -> None:
+    response = client.post(
+        "/api/scheduler/tasks",
+        json={
+            "name": "broken-camera-refresh",
+            "task_type": "camera_inventory_refresh",
+            "interval_seconds": 300,
+            "source_id": 1,
+            "payload_json": {"limit": "nope"},
+        },
+    )
+    assert response.status_code == 409
+    assert "Camera inventory refresh" in response.json()["detail"]
+
+
 def test_source_sync_schedule_skips_unchanged_payloads(client: TestClient, tmp_path: Path) -> None:
     fixture = tmp_path / "scheduled-stable.json"
     fixture.write_text(

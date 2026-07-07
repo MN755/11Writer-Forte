@@ -15,6 +15,7 @@ from src.models import (
     ScheduledTaskRunORM,
 )
 from src.schemas import ScheduledTaskCreate, ScheduledTaskUpdate
+from src.services.camera_service import materialize_camera_inventory
 from src.services.geospatial_service import build_contains_geometry_sql_filter, point_in_geometry, uses_postgis
 from src.services.import_service import import_local_path
 from src.services.layer_service import ensure_data_layer
@@ -37,6 +38,7 @@ def create_scheduled_task(session: Session, payload: ScheduledTaskCreate) -> Sch
         source_id=payload.source_id,
         target_path=payload.target_path,
         geofence_id=payload.geofence_id,
+        payload_json=payload.payload_json,
     )
     if payload.layer_key:
         ensure_data_layer(session, payload.layer_key, actor="scheduler_registry")
@@ -95,6 +97,7 @@ def update_scheduled_task(
         source_id=source_id,
         target_path=target_path,
         geofence_id=geofence_id,
+        payload_json=changes["payload_json"] if "payload_json" in changes else record.payload_json,
     )
 
     if "layer_key" in changes and changes["layer_key"]:
@@ -344,6 +347,29 @@ def execute_task(
                 "import_run_id": source_run.import_run_id,
             },
         )
+    if task.task_type == "camera_inventory_refresh":
+        source_domain, limit = resolve_camera_inventory_refresh_payload(task.payload_json)
+        result = materialize_camera_inventory(
+            session,
+            layer_key=task.layer_key,
+            source_domain=source_domain,
+            limit=limit,
+            actor=actor,
+        )
+        cameras = result["cameras"]
+        return (
+            int(result["created_count"]) + int(result["updated_count"]),
+            {
+                "layer_key": task.layer_key,
+                "source_domain": source_domain,
+                "limit": limit,
+                "scanned_count": int(result["scanned_count"]),
+                "created_count": int(result["created_count"]),
+                "updated_count": int(result["updated_count"]),
+                "camera_inventory_ids": [camera.camera_inventory_id for camera in cameras],
+                "camera_keys": [camera.camera_key for camera in cameras],
+            },
+        )
     raise ValueError(f"Unsupported task type: {task.task_type}")
 
 
@@ -489,6 +515,7 @@ def validate_task_configuration(
     source_id: int | None,
     target_path: str | None,
     geofence_id: int | None,
+    payload_json: dict[str, object] | None,
 ) -> None:
     if task_type == "local_import" and not target_path:
         raise ValueError("Local import task requires target_path.")
@@ -496,6 +523,12 @@ def validate_task_configuration(
         raise ValueError("Source sync task requires source_id.")
     if task_type == "integrity_seed" and any(value is not None for value in (source_id, target_path, geofence_id)):
         raise ValueError("Integrity seed task does not accept source_id, target_path, or geofence_id.")
+    if task_type == "camera_inventory_refresh":
+        if any(value is not None for value in (source_id, target_path, geofence_id)):
+            raise ValueError(
+                "Camera inventory refresh task does not accept source_id, target_path, or geofence_id."
+            )
+        resolve_camera_inventory_refresh_payload(payload_json)
 
 
 def ensure_unique_task_name(
@@ -539,3 +572,26 @@ def recompute_task_next_run(record: ScheduledTaskORM, changes: dict[str, object]
         return
     reference = record.last_run_at if record.last_run_at is not None else None
     record.next_run_at = compute_next_run(record.interval_seconds, reference)
+
+
+def resolve_camera_inventory_refresh_payload(
+    payload_json: dict[str, object] | None,
+) -> tuple[str | None, int]:
+    payload = payload_json or {}
+    if not isinstance(payload, dict):
+        raise ValueError("Camera inventory refresh payload_json must be a JSON object.")
+
+    source_domain_value = payload.get("source_domain")
+    if source_domain_value is not None and not isinstance(source_domain_value, str):
+        raise ValueError("Camera inventory refresh payload source_domain must be a string.")
+    source_domain = source_domain_value.strip() if isinstance(source_domain_value, str) else None
+    if source_domain == "":
+        source_domain = None
+
+    limit_value = payload.get("limit", 500)
+    if isinstance(limit_value, bool) or not isinstance(limit_value, int):
+        raise ValueError("Camera inventory refresh payload limit must be an integer.")
+    if limit_value < 1 or limit_value > 5000:
+        raise ValueError("Camera inventory refresh payload limit must be between 1 and 5000.")
+
+    return source_domain, limit_value
