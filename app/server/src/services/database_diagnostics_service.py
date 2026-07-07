@@ -9,6 +9,7 @@ from src.config import get_settings
 from src.db import REQUIRED_ADDITIVE_COLUMNS, REQUIRED_POSTGIS_INDEX_DDLS
 from src.models import (
     AlertORM,
+    CameraInventoryORM,
     CustodyLogORM,
     DataLayerORM,
     EntityObservationLinkORM,
@@ -32,6 +33,7 @@ TABLE_COUNT_MODELS: tuple[tuple[str, object], ...] = (
     ("source_definitions", SourceDefinitionORM),
     ("local_import_runs", LocalImportRunORM),
     ("observations", ObservationORM),
+    ("camera_inventory", CameraInventoryORM),
     ("events", EventORM),
     ("entities", EntityORM),
     ("event_observation_links", EventObservationLinkORM),

@@ -43,6 +43,11 @@ REQUIRED_POSTGIS_INDEX_DDLS: dict[str, str] = {
         "ON geofences USING GIST (ST_GeomFromText(geometry_wkt, 4326)) "
         "WHERE geometry_wkt IS NOT NULL"
     ),
+    "idx_camera_inventory_location_wkt_gist": (
+        "CREATE INDEX IF NOT EXISTS idx_camera_inventory_location_wkt_gist "
+        "ON camera_inventory USING GIST (ST_GeomFromText(location_wkt, 4326)) "
+        "WHERE location_wkt IS NOT NULL"
+    ),
 }
 
 

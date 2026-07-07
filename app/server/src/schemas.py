@@ -75,6 +75,7 @@ class RuntimeSnapshotRead(ForteModel):
     events: list["EventRead"]
     entities: list["EntityRead"]
     observations: list["ObservationRead"]
+    camera_inventory: list["CameraInventoryRead"]
     event_observation_links: list["EventObservationLinkRead"]
     entity_observation_links: list["EntityObservationLinkRead"]
     alerts: list["AlertRead"]
@@ -144,6 +145,42 @@ class EntityObservationLinkRead(ForteModel):
     match_basis: str
     confidence_contribution: float
     created_at: datetime
+
+
+class CameraInventoryRead(ForteModel):
+    camera_inventory_id: int
+    camera_key: str
+    observation_id: int | None
+    external_id: str | None
+    name: str
+    source_domain: str | None
+    layer_key: str
+    provider: str
+    road_name: str
+    status: str
+    active: bool
+    image_url: str | None
+    stream_url: str | None
+    page_url: str | None
+    location_geojson: dict[str, Any] | None
+    confidence_score: float
+    last_observed_at: datetime | None
+    metadata_json: dict[str, Any]
+    created_at: datetime
+    updated_at: datetime
+
+
+class CameraMaterializationRequest(ForteModel):
+    layer_key: str | None = None
+    source_domain: str | None = None
+    limit: int = Field(default=500, ge=1, le=5000)
+
+
+class CameraMaterializationResponse(ForteModel):
+    created_count: int
+    updated_count: int
+    scanned_count: int
+    cameras: list[CameraInventoryRead]
 
 
 class EventObservationLinkRead(ForteModel):
