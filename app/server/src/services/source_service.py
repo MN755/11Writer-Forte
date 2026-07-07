@@ -260,6 +260,34 @@ def build_source_ops_report_index(
     }
 
 
+def build_source_ops_export_summary(
+    session: Session,
+    *,
+    stale_after_hours: float = 24.0,
+    source_limit: int = 500,
+    report_limit: int = 25,
+    stale_source_limit: int = 25,
+) -> dict[str, object]:
+    generated_at = source_now()
+    sources = list_source_definitions(session)[:source_limit]
+    return {
+        "generated_at": generated_at,
+        "filters_json": {
+            "stale_after_hours": stale_after_hours,
+            "source_limit": source_limit,
+            "report_limit": report_limit,
+            "stale_source_limit": stale_source_limit,
+        },
+        "report_index": build_source_ops_report_index(
+            session,
+            stale_after_hours=stale_after_hours,
+            limit=report_limit,
+            stale_source_limit=stale_source_limit,
+        ),
+        "sources": sources,
+    }
+
+
 def collect_source_ops_statuses(
     session: Session,
     *,

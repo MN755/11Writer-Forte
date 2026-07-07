@@ -14,6 +14,7 @@ from src.services.export_artifact_service import write_json_export_artifact, wri
 from src.services.operations_report_service import build_operations_report
 from src.services.runtime_snapshot_service import build_runtime_snapshot
 from src.services.scheduler_service import build_scheduler_ops_export_summary
+from src.services.source_service import build_source_ops_export_summary
 
 
 def test_export_artifact_service_registers_storage_objects(
@@ -85,6 +86,16 @@ def test_export_artifact_service_registers_storage_objects(
         "/api/imports/local",
         json={"source_path": str(camera_fixture), "layer_key": "traffic-camera-feed"},
     ).status_code == 200
+    source_definition = client.post(
+        "/api/sources",
+        json={
+            "name": "export-artifact-source-def",
+            "source_kind": "local_file",
+            "layer_key": "marine-track",
+            "target_uri": str(source_fixture),
+        },
+    )
+    assert source_definition.status_code == 200
     assert client.post(
         "/api/cameras/materialize",
         json={"layer_key": "traffic-camera-feed", "limit": 25},
@@ -214,6 +225,20 @@ def test_export_artifact_service_registers_storage_objects(
             observed_at=scheduler_summary["generated_at"],
             metadata_json=scheduler_payload["filters_json"],
         )
+
+        source_summary = build_source_ops_export_summary(session, source_limit=50, report_limit=25, stale_source_limit=25)
+        source_payload = json.loads(json.dumps(source_summary, default=str))
+        write_json_export_artifact(
+            session,
+            output_path=exports_dir / "source-summary.json",
+            payload=source_payload,
+            object_kind="source_summary_export",
+            owner_type="source_export",
+            owner_id="scoped",
+            source_uri="/api/sources/export/summary",
+            observed_at=source_summary["generated_at"],
+            metadata_json=source_payload["filters_json"],
+        )
     finally:
         session.close()
 
@@ -258,3 +283,10 @@ def test_export_artifact_service_registers_storage_objects(
     ).json()
     assert len(scheduler_rows) == 1
     assert scheduler_rows[0]["metadata_json"]["task_limit"] == 50
+
+    source_rows = client.get(
+        "/api/storage/objects",
+        params={"owner_type": "source_export", "object_kind": "source_summary_export"},
+    ).json()
+    assert len(source_rows) == 1
+    assert source_rows[0]["metadata_json"]["source_limit"] == 50
