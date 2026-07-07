@@ -60,6 +60,39 @@ class DatabaseDiagnosticsRead(ForteModel):
     table_counts: list[DatabaseTableCountRead]
 
 
+class RuntimeSnapshotRead(ForteModel):
+    exported_at: datetime
+    app_name: str
+    app_version: str
+    database_backend: str
+    spatial_backend: str
+    row_counts: list[DatabaseTableCountRead]
+    data_layers: list["DataLayerRead"]
+    source_trust_profiles: list["SourceTrustProfileRead"]
+    geofences: list["GeofenceRead"]
+    source_definitions: list["SourceDefinitionRead"]
+    local_import_runs: list["LocalImportRunSummaryRead"]
+    events: list["EventRead"]
+    entities: list["EntityRead"]
+    observations: list["ObservationRead"]
+    event_observation_links: list["EventObservationLinkRead"]
+    entity_observation_links: list["EntityObservationLinkRead"]
+    alerts: list["AlertRead"]
+    scheduled_tasks: list["ScheduledTaskRead"]
+    scheduled_task_runs: list["ScheduledTaskRunRead"]
+    source_runs: list["SourceRunRead"]
+    situation_products: list["SituationProductRead"]
+    custody_logs: list["CustodyLogRead"]
+
+
+class RuntimeRestoreResultRead(ForteModel):
+    restored_at: datetime
+    database_backend: str
+    replaced_existing: bool
+    total_records: int
+    row_counts: list[DatabaseTableCountRead]
+
+
 class DataLayerCreate(ForteModel):
     key: str
     name: str

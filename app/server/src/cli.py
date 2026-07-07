@@ -29,6 +29,8 @@ from src.schemas import (
     EventFusionRequest,
     EntityResolutionRequest,
     OperationsReportRead,
+    RuntimeRestoreResultRead,
+    RuntimeSnapshotRead,
     ScheduledTaskCreate,
     ScheduledTaskUpdate,
     SourceDefinitionCreate,
@@ -43,6 +45,8 @@ from src.services.layer_service import create_data_layer, list_data_layers
 from src.services.observation_service import build_cross_verification_summaries, query_observations
 from src.services.operations_report_service import build_operations_report
 from src.services.redaction_service import enforce_export_redaction
+from src.services.runtime_snapshot_service import build_runtime_snapshot
+from src.services.runtime_snapshot_service import restore_runtime_snapshot
 from src.services.scheduler_runtime_service import run_scheduler_worker
 from src.services.scheduler_service import create_scheduled_task, run_due_tasks, run_task, update_scheduled_task
 from src.services.source_service import (
@@ -929,6 +933,51 @@ def export_operations_report(output_path: Path, hours: float | None = 24.0, limi
         output_path.write_text(json.dumps(serializable, indent=2), encoding="utf-8")
         print_banner()
         typer.echo(f"exported operations report to {output_path}")
+    finally:
+        session.close()
+
+
+@app.command("export-runtime-snapshot")
+def export_runtime_snapshot_command(output_path: Path) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        snapshot = build_runtime_snapshot(session)
+        serializable = TypeAdapter(RuntimeSnapshotRead).validate_python(snapshot).model_dump(mode="json")
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json.dumps(serializable, indent=2), encoding="utf-8")
+        print_banner()
+        typer.echo(f"exported runtime snapshot to {output_path}")
+    finally:
+        session.close()
+
+
+@app.command("restore-runtime-snapshot")
+def restore_runtime_snapshot_command(
+    input_path: Path,
+    replace_existing: bool = False,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        payload = json.loads(input_path.read_text(encoding="utf-8"))
+        try:
+            result = restore_runtime_snapshot(
+                session,
+                payload,
+                replace_existing=replace_existing,
+            )
+        except ValueError as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        serializable = TypeAdapter(RuntimeRestoreResultRead).validate_python(result).model_dump(mode="json")
+        print_banner()
+        typer.echo(
+            "restored runtime snapshot "
+            f"| replaced_existing={serializable['replaced_existing']} "
+            f"| total_records={serializable['total_records']}"
+        )
+        for item in serializable["row_counts"]:
+            typer.echo(f"{item['table_name']}: {item['row_count']}")
     finally:
         session.close()
 
