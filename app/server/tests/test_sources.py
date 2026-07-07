@@ -219,3 +219,65 @@ def test_http_source_retries_and_records_fetch_metadata(client: TestClient) -> N
             and row["details_json"]["attempt_count"] == 2
             for row in custody_rows
         )
+
+
+def test_source_run_skips_unchanged_payloads(client: TestClient, tmp_path: Path) -> None:
+    fixture = tmp_path / "unchanged-source.json"
+    fixture.write_text(
+        json.dumps(
+            [
+                {
+                    "title": "Stable payload",
+                    "url": "https://stable.example.com/1",
+                    "lat": 29.7,
+                    "lon": -95.3,
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    source_response = client.post(
+        "/api/sources",
+        json={
+            "name": "stable-source",
+            "source_kind": "local_file",
+            "layer_key": "stable-feed",
+            "target_uri": str(fixture),
+        },
+    )
+    assert source_response.status_code == 200
+    source_id = source_response.json()["source_id"]
+
+    first_run = client.post(f"/api/sources/{source_id}/run")
+    assert first_run.status_code == 200
+    assert first_run.json()["status"] == "completed"
+    first_import_run_id = first_run.json()["import_run_id"]
+
+    second_run = client.post(f"/api/sources/{source_id}/run")
+    assert second_run.status_code == 200
+    second_payload = second_run.json()
+    assert second_payload["status"] == "skipped"
+    assert second_payload["import_run_id"] is None
+    assert second_payload["output_json"]["skip_reason"] == "payload_unchanged"
+    assert second_payload["output_json"]["payload_sha256"]
+
+    imports_response = client.get("/api/imports/runs")
+    assert imports_response.status_code == 200
+    import_runs = imports_response.json()
+    assert len(import_runs) == 1
+    assert import_runs[0]["import_run_id"] == first_import_run_id
+
+    source_runs_response = client.get("/api/sources/runs")
+    assert source_runs_response.status_code == 200
+    source_runs = source_runs_response.json()
+    assert source_runs[0]["status"] == "skipped"
+    assert source_runs[1]["status"] == "completed"
+
+    custody_response = client.get("/api/custody/logs")
+    assert custody_response.status_code == 200
+    assert any(
+        row["object_type"] == "source_run"
+        and row["action"] == "source_run_skipped"
+        for row in custody_response.json()
+    )

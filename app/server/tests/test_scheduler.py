@@ -142,3 +142,69 @@ def test_local_import_schedule_runs_manually(client: TestClient, tmp_path: Path)
         and row["action"] == "task_created"
         for row in custody_response.json()
     )
+
+
+def test_source_sync_schedule_skips_unchanged_payloads(client: TestClient, tmp_path: Path) -> None:
+    fixture = tmp_path / "scheduled-stable.json"
+    fixture.write_text(
+        json.dumps(
+            [
+                {
+                    "title": "Scheduled stable source",
+                    "url": "https://stable.example.com/scheduled",
+                    "lat": 29.9,
+                    "lon": -95.2,
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    source_response = client.post(
+        "/api/sources",
+        json={
+            "name": "scheduled-stable-source",
+            "source_kind": "local_file",
+            "layer_key": "stable-feed",
+            "target_uri": str(fixture),
+        },
+    )
+    assert source_response.status_code == 200
+    source_id = source_response.json()["source_id"]
+
+    schedule_response = client.post(
+        "/api/scheduler/tasks",
+        json={
+            "name": "scheduled-stable-task",
+            "task_type": "source_sync",
+            "interval_seconds": 300,
+            "source_id": source_id,
+        },
+    )
+    assert schedule_response.status_code == 200
+    task_id = schedule_response.json()["task_id"]
+
+    first_run = client.post(f"/api/scheduler/tasks/{task_id}/run")
+    assert first_run.status_code == 200
+    assert first_run.json()["records_affected"] == 1
+
+    second_run = client.post(f"/api/scheduler/tasks/{task_id}/run")
+    assert second_run.status_code == 200
+    assert second_run.json()["records_affected"] == 0
+
+    imports_response = client.get("/api/imports/runs")
+    assert imports_response.status_code == 200
+    assert len(imports_response.json()) == 1
+
+    source_runs_response = client.get("/api/sources/runs")
+    assert source_runs_response.status_code == 200
+    source_runs = source_runs_response.json()
+    assert source_runs[0]["status"] == "skipped"
+    assert source_runs[1]["status"] == "completed"
+
+    custody_response = client.get("/api/custody/logs")
+    assert custody_response.status_code == 200
+    assert any(
+        row["object_type"] == "source_run"
+        and row["action"] == "source_run_skipped"
+        for row in custody_response.json()
+    )
