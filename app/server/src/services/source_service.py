@@ -103,6 +103,46 @@ def run_source_definition(session: Session, source_id: int, actor: str = "source
                 details_json=materialized.metadata,
             )
         )
+        if should_skip_unchanged_source(session, source, materialized.metadata):
+            finished_at = source_now()
+            run.status = "skipped"
+            run.records_imported = 0
+            run.finished_at = finished_at
+            run.output_json = {
+                "source_kind": source.source_kind,
+                "target_uri": source.target_uri,
+                "skip_reason": "payload_unchanged",
+                **materialized.metadata,
+            }
+            session.add(
+                CustodyLogORM(
+                    object_type="source_run",
+                    object_id=str(run.source_run_id),
+                    action="source_run_skipped",
+                    actor=actor,
+                    details_json={
+                        "source_id": source.source_id,
+                        "skip_reason": "payload_unchanged",
+                        "payload_sha256": materialized.metadata.get("payload_sha256"),
+                    },
+                )
+            )
+            session.add(
+                CustodyLogORM(
+                    object_type="source_definition",
+                    object_id=str(source.source_id),
+                    action="source_run_skipped",
+                    actor=actor,
+                    details_json={
+                        "source_run_id": run.source_run_id,
+                        "skip_reason": "payload_unchanged",
+                        "payload_sha256": materialized.metadata.get("payload_sha256"),
+                    },
+                )
+            )
+            session.commit()
+            session.refresh(run)
+            return run
         import_run = import_local_path(
             session,
             materialized.path,
@@ -185,12 +225,16 @@ def run_source_definition(session: Session, source_id: int, actor: str = "source
 
 def materialize_source_payload(source: SourceDefinitionORM) -> MaterializedSourcePayload:
     if source.source_kind == "local_file":
-        path = str(Path(source.target_uri).expanduser().resolve())
+        resolved = Path(source.target_uri).expanduser().resolve()
+        payload = resolved.read_bytes()
+        path = str(resolved)
         return MaterializedSourcePayload(
             path=path,
             metadata={
                 "materialization_kind": "local_file",
                 "resolved_path": path,
+                "byte_count": len(payload),
+                "payload_sha256": hashlib.sha256(payload).hexdigest(),
             },
         )
 
@@ -238,6 +282,36 @@ def parse_fetch_config(source: SourceDefinitionORM) -> SourceFetchConfig:
         retry_backoff_seconds=retry_backoff_seconds,
         headers=headers,
     )
+
+
+def should_skip_unchanged_source(
+    session: Session,
+    source: SourceDefinitionORM,
+    metadata: dict[str, Any],
+) -> bool:
+    if not source_skip_unchanged_enabled(source):
+        return False
+    payload_sha256 = metadata.get("payload_sha256")
+    if not isinstance(payload_sha256, str) or not payload_sha256:
+        return False
+    previous_run = session.scalar(
+        select(SourceRunORM)
+        .where(
+            SourceRunORM.source_id == source.source_id,
+            SourceRunORM.status.in_(("completed", "skipped")),
+        )
+        .order_by(SourceRunORM.source_run_id.desc())
+        .limit(1)
+    )
+    if previous_run is None:
+        return False
+    previous_hash = previous_run.output_json.get("payload_sha256")
+    return previous_hash == payload_sha256
+
+
+def source_skip_unchanged_enabled(source: SourceDefinitionORM) -> bool:
+    metadata = source.metadata_json if isinstance(source.metadata_json, dict) else {}
+    return bool(metadata.get("skip_unchanged", True))
 
 
 def fetch_http_source(

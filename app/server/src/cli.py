@@ -73,6 +73,7 @@ def build_http_source_metadata(
     timeout_seconds: float,
     retry_attempts: int,
     retry_backoff_seconds: float,
+    skip_unchanged: bool,
     header: list[str],
 ) -> dict[str, object]:
     headers: dict[str, str] = {}
@@ -85,6 +86,7 @@ def build_http_source_metadata(
         "request_timeout_seconds": timeout_seconds,
         "retry_attempts": retry_attempts,
         "retry_backoff_seconds": retry_backoff_seconds,
+        "skip_unchanged": skip_unchanged,
         "headers": headers,
     }
 
@@ -171,6 +173,7 @@ def add_source_file(
     layer: str,
     notes: str = "",
     integrity_source: bool = False,
+    skip_unchanged: bool = True,
 ) -> None:
     init_db()
     session = get_session_factory()()
@@ -184,6 +187,7 @@ def add_source_file(
                 target_uri=str(source_path),
                 notes=notes,
                 integrity_source=integrity_source,
+                metadata_json={"skip_unchanged": skip_unchanged},
             ),
         )
         print_banner()
@@ -202,6 +206,7 @@ def add_source_http_json(
     timeout_seconds: float = 30.0,
     retry_attempts: int = 3,
     retry_backoff_seconds: float = 0.0,
+    skip_unchanged: bool = True,
     header: list[str] = typer.Option(default_factory=list),
 ) -> None:
     init_db()
@@ -220,6 +225,7 @@ def add_source_http_json(
                     timeout_seconds=timeout_seconds,
                     retry_attempts=retry_attempts,
                     retry_backoff_seconds=retry_backoff_seconds,
+                    skip_unchanged=skip_unchanged,
                     header=header,
                 ),
             ),
@@ -240,6 +246,7 @@ def add_source_http_text(
     timeout_seconds: float = 30.0,
     retry_attempts: int = 3,
     retry_backoff_seconds: float = 0.0,
+    skip_unchanged: bool = True,
     header: list[str] = typer.Option(default_factory=list),
 ) -> None:
     init_db()
@@ -258,6 +265,7 @@ def add_source_http_text(
                     timeout_seconds=timeout_seconds,
                     retry_attempts=retry_attempts,
                     retry_backoff_seconds=retry_backoff_seconds,
+                    skip_unchanged=skip_unchanged,
                     header=header,
                 ),
             ),

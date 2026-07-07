@@ -51,8 +51,8 @@ elevenwriter init-db
 elevenwriter seed-integrity
 elevenwriter import-local path/to/file.json --layer incident-feed
 elevenwriter list-imports
-elevenwriter add-source-file harbor-source ./feeds/harbor.json marine-track
-elevenwriter add-source-http-json remote-feed https://example.com/feed.json remote-track --retry-attempts 3 --header "Authorization: Bearer token"
+elevenwriter add-source-file harbor-source ./feeds/harbor.json marine-track --skip-unchanged true
+elevenwriter add-source-http-json remote-feed https://example.com/feed.json remote-track --retry-attempts 3 --skip-unchanged true --header "Authorization: Bearer token"
 elevenwriter list-sources
 elevenwriter run-source 1
 elevenwriter list-source-runs
@@ -96,3 +96,4 @@ By default the compose stack starts the API plus PostGIS-ready Postgres.
 - Event export bundles package the event, linked observations, resolved entities, import/source context, generated products, citations, and relevant custody records into one JSON artifact for downstream systems or archival.
 - Managed sources provide a named catalog for repeatable ingestion; scheduler tasks can now sync those source definitions instead of only replaying raw file paths.
 - HTTP-managed sources support retry attempts, timeout controls, custom headers, cached payload materialization, and persisted fetch metadata so headless sync jobs have enough operational context to debug failures.
+- Managed source runs are idempotent by default: when the payload hash matches the most recent completed or skipped run for that source, the new run is marked `skipped` and does not create duplicate imports.
