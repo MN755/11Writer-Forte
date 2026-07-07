@@ -25,6 +25,7 @@ def build_event_export_bundle(session: Session, event_id: int) -> dict[str, obje
     event = session.get(EventORM, event_id)
     if event is None:
         raise ValueError(f"Event {event_id} does not exist.")
+    exported_at = export_now()
 
     observation_links = list(
         session.scalars(
@@ -87,13 +88,21 @@ def build_event_export_bundle(session: Session, event_id: int) -> dict[str, obje
         observation_links=observation_links,
         observations=observations,
         import_runs=import_runs,
-        source_runs=source_runs,
+        source_definitions=source_definitions,
         products=products,
+        export_log=log_bundle_export(
+            session,
+            event=event,
+            exported_at=exported_at,
+            observation_count=len(observations),
+            product_count=len(products),
+        ),
     )
     citations_json = flatten_citations(products)
+    session.commit()
 
     return {
-        "exported_at": export_now(),
+        "exported_at": exported_at,
         "event": event,
         "observation_links": observation_links,
         "observations": observations,
@@ -113,12 +122,14 @@ def filter_relevant_custody_logs(
     observation_links: list[EventObservationLinkORM],
     observations: list[ObservationORM],
     import_runs: list[LocalImportRunORM],
-    source_runs: list[SourceRunORM],
+    source_definitions: list[SourceDefinitionORM],
     products: list[SituationProductORM],
+    export_log: CustodyLogORM,
 ) -> list[CustodyLogORM]:
     relevant_pairs = {
         ("event", str(event.event_id)),
         ("event_fusion", str(event.event_id)),
+        ("event_export", str(event.event_id)),
     }
     relevant_pairs.update(
         ("observation", str(observation.observation_id))
@@ -129,12 +140,8 @@ def filter_relevant_custody_logs(
         for import_run in import_runs
     )
     relevant_pairs.update(
-        ("source_definition", str(source_run.source_id))
-        for source_run in source_runs
-    )
-    relevant_pairs.update(
-        ("scheduled_task", str(source_run.source_id))
-        for source_run in source_runs
+        ("source_definition", str(source_definition.source_id))
+        for source_definition in source_definitions
     )
     relevant_pairs.update(
         ("situation_product", str(product.product_id))
@@ -146,10 +153,38 @@ def filter_relevant_custody_logs(
     )
 
     logs = list(session.scalars(select(CustodyLogORM).order_by(CustodyLogORM.created_at.asc())))
-    return [
+    filtered_logs = [
         log for log in logs
         if (log.object_type, log.object_id) in relevant_pairs
     ]
+    if export_log not in filtered_logs:
+        filtered_logs.append(export_log)
+    return filtered_logs
+
+
+def log_bundle_export(
+    session: Session,
+    *,
+    event: EventORM,
+    exported_at: datetime,
+    observation_count: int,
+    product_count: int,
+) -> CustodyLogORM:
+    record = CustodyLogORM(
+        object_type="event_export",
+        object_id=str(event.event_id),
+        action="bundle_exported",
+        actor="exporter",
+        details_json={
+            "event_id": event.event_id,
+            "exported_at": exported_at.isoformat(),
+            "observation_count": observation_count,
+            "product_count": product_count,
+        },
+    )
+    session.add(record)
+    session.flush()
+    return record
 
 
 def flatten_citations(products: list[SituationProductORM]) -> list[dict[str, object]]:

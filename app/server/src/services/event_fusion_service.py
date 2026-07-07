@@ -7,7 +7,13 @@ from hashlib import sha1
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from src.models import EventORM, EventObservationLinkORM, ObservationORM, SituationProductORM
+from src.models import (
+    CustodyLogORM,
+    EventORM,
+    EventObservationLinkORM,
+    ObservationORM,
+    SituationProductORM,
+)
 from src.schemas import EventFusionRequest
 from src.services.observation_service import build_cross_verification_summaries, query_observations
 
@@ -21,7 +27,11 @@ class MaterializedEvent:
     created_new: bool
 
 
-def materialize_fused_events(session: Session, request: EventFusionRequest) -> list[MaterializedEvent]:
+def materialize_fused_events(
+    session: Session,
+    request: EventFusionRequest,
+    actor: str = "event_fusion",
+) -> list[MaterializedEvent]:
     observations = query_observations(
         session,
         layer_key=request.layer_key,
@@ -72,6 +82,7 @@ def materialize_fused_events(session: Session, request: EventFusionRequest) -> l
             session.add(event)
             session.flush()
         else:
+            event.redaction_level = request.redaction_level
             event.summary = build_event_summary(summary, linked_observations)
             event.metadata_json = {
                 **event.metadata_json,
@@ -81,13 +92,29 @@ def materialize_fused_events(session: Session, request: EventFusionRequest) -> l
                 "centroid_geojson": summary["centroid_geojson"],
             }
 
-        ensure_event_links(session, event, linked_observations, summary["verification_score"])
+        log_event_fusion(
+            session,
+            event,
+            linked_observations,
+            summary,
+            request.redaction_level,
+            created_new,
+            actor=actor,
+        )
+        ensure_event_links(
+            session,
+            event,
+            linked_observations,
+            summary["verification_score"],
+            actor=actor,
+        )
         product_count = ensure_situation_products(
             session,
             event,
             linked_observations,
             summary,
             request.redaction_level,
+            actor=actor,
         )
         results.append(
             MaterializedEvent(
@@ -145,6 +172,7 @@ def ensure_event_links(
     event: EventORM,
     observations: list[ObservationORM],
     verification_score: float,
+    actor: str = "event_fusion",
 ) -> None:
     existing_ids = {
         link.observation_id
@@ -155,14 +183,29 @@ def ensure_event_links(
     for observation in observations:
         if observation.observation_id in existing_ids:
             continue
+        link = EventObservationLinkORM(
+            event_id=event.event_id,
+            observation_id=observation.observation_id,
+            relationship_type="supporting",
+            confidence_contribution=verification_score,
+        )
+        session.add(link)
+        session.flush()
         session.add(
-            EventObservationLinkORM(
-                event_id=event.event_id,
-                observation_id=observation.observation_id,
-                relationship_type="supporting",
-                confidence_contribution=verification_score,
+            CustodyLogORM(
+                object_type="event_observation_link",
+                object_id=str(link.event_observation_link_id),
+                action="link_created",
+                actor=actor,
+                details_json={
+                    "event_id": event.event_id,
+                    "observation_id": observation.observation_id,
+                    "relationship_type": link.relationship_type,
+                    "confidence_contribution": verification_score,
+                },
             )
         )
+        existing_ids.add(observation.observation_id)
 
 
 def ensure_situation_products(
@@ -171,6 +214,7 @@ def ensure_situation_products(
     observations: list[ObservationORM],
     summary: dict[str, object],
     redaction_level: str,
+    actor: str = "event_fusion",
 ) -> int:
     cited_summary = build_cited_summary(event, observations, summary)
     detailed_report = build_detailed_report(event, observations, summary)
@@ -179,7 +223,6 @@ def ensure_situation_products(
         ("cited_summary", cited_summary),
         ("report", detailed_report),
     ]
-    count = 0
     for product_type, body_text in specs:
         product = session.scalar(
             select(SituationProductORM).where(
@@ -199,14 +242,67 @@ def ensure_situation_products(
                 generated_by="rule_based",
             )
             session.add(product)
-            count += 1
+            session.flush()
+            action = "product_generated"
         else:
             product.redaction_level = redaction_level
             product.title = title
             product.body_text = body_text
             product.citations_json = citations
-        count += 1 if product is not None else 0
+            action = "product_regenerated"
+        session.add(
+            CustodyLogORM(
+                object_type="situation_product",
+                object_id=str(product.product_id),
+                action=action,
+                actor=actor,
+                details_json={
+                    "event_id": event.event_id,
+                    "product_type": product_type,
+                    "redaction_level": redaction_level,
+                    "citation_count": len(citations),
+                    "observation_count": len(observations),
+                },
+            )
+        )
     return len(specs)
+
+
+def log_event_fusion(
+    session: Session,
+    event: EventORM,
+    observations: list[ObservationORM],
+    summary: dict[str, object],
+    redaction_level: str,
+    created_new: bool,
+    actor: str,
+) -> None:
+    observation_ids = [observation.observation_id for observation in observations]
+    details = {
+        "fusion_cluster_id": summary["cluster_id"],
+        "verification_score": summary["verification_score"],
+        "observation_ids": observation_ids,
+        "observation_count": len(observations),
+        "redaction_level": redaction_level,
+    }
+    session.add(
+        CustodyLogORM(
+            object_type="event",
+            object_id=str(event.event_id),
+            action="event_created_from_fusion" if created_new else "event_updated_from_fusion",
+            actor=actor,
+            details_json=details,
+        )
+    )
+    session.add(
+        CustodyLogORM(
+            object_type="event_fusion",
+            object_id=str(event.event_id),
+            action="fusion_materialized",
+            actor=actor,
+            details_json=details,
+        )
+    )
 
 
 def build_citations(observations: list[ObservationORM]) -> list[dict[str, object]]:
