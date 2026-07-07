@@ -68,6 +68,27 @@ def parse_bbox(value: str | None) -> tuple[float | None, float | None, float | N
     return (min_lon, min_lat, max_lon, max_lat)
 
 
+def build_http_source_metadata(
+    *,
+    timeout_seconds: float,
+    retry_attempts: int,
+    retry_backoff_seconds: float,
+    header: list[str],
+) -> dict[str, object]:
+    headers: dict[str, str] = {}
+    for item in header:
+        if ":" not in item:
+            raise typer.BadParameter("header must be 'Name: Value'")
+        key, value = item.split(":", 1)
+        headers[key.strip()] = value.strip()
+    return {
+        "request_timeout_seconds": timeout_seconds,
+        "retry_attempts": retry_attempts,
+        "retry_backoff_seconds": retry_backoff_seconds,
+        "headers": headers,
+    }
+
+
 @app.command("status")
 def status() -> None:
     settings = get_settings()
@@ -163,6 +184,82 @@ def add_source_file(
                 target_uri=str(source_path),
                 notes=notes,
                 integrity_source=integrity_source,
+            ),
+        )
+        print_banner()
+        typer.echo(f"source {source.source_id} created for {source.target_uri}")
+    finally:
+        session.close()
+
+
+@app.command("add-source-http-json")
+def add_source_http_json(
+    name: str,
+    target_uri: str,
+    layer: str,
+    notes: str = "",
+    integrity_source: bool = False,
+    timeout_seconds: float = 30.0,
+    retry_attempts: int = 3,
+    retry_backoff_seconds: float = 0.0,
+    header: list[str] = typer.Option(default_factory=list),
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        source = create_source_definition(
+            session,
+            SourceDefinitionCreate(
+                name=name,
+                source_kind="http_json",
+                layer_key=layer,
+                target_uri=target_uri,
+                notes=notes,
+                integrity_source=integrity_source,
+                metadata_json=build_http_source_metadata(
+                    timeout_seconds=timeout_seconds,
+                    retry_attempts=retry_attempts,
+                    retry_backoff_seconds=retry_backoff_seconds,
+                    header=header,
+                ),
+            ),
+        )
+        print_banner()
+        typer.echo(f"source {source.source_id} created for {source.target_uri}")
+    finally:
+        session.close()
+
+
+@app.command("add-source-http-text")
+def add_source_http_text(
+    name: str,
+    target_uri: str,
+    layer: str,
+    notes: str = "",
+    integrity_source: bool = False,
+    timeout_seconds: float = 30.0,
+    retry_attempts: int = 3,
+    retry_backoff_seconds: float = 0.0,
+    header: list[str] = typer.Option(default_factory=list),
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        source = create_source_definition(
+            session,
+            SourceDefinitionCreate(
+                name=name,
+                source_kind="http_text",
+                layer_key=layer,
+                target_uri=target_uri,
+                notes=notes,
+                integrity_source=integrity_source,
+                metadata_json=build_http_source_metadata(
+                    timeout_seconds=timeout_seconds,
+                    retry_attempts=retry_attempts,
+                    retry_backoff_seconds=retry_backoff_seconds,
+                    header=header,
+                ),
             ),
         )
         print_banner()
