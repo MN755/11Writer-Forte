@@ -1871,6 +1871,18 @@ def show_operations_report(hours: float | None = 24.0, limit: int = 10) -> None:
         typer.echo(
             f"events={summary['event_count']} entities={summary['entity_count']} observations={summary['observation_count']}"
         )
+        storage_report = report["storage_report"]
+        typer.echo(
+            "storage="
+            f"{storage_report['total_count']} active={storage_report['active_count']} "
+            f"expired={storage_report['expired_count']} archived={storage_report['archived_count']}"
+        )
+        clickhouse_diagnostics = report["clickhouse_diagnostics"]
+        typer.echo(
+            "clickhouse="
+            f"{clickhouse_diagnostics['status']} enabled={clickhouse_diagnostics['enabled']} "
+            f"reachable={clickhouse_diagnostics['reachable']} mode={clickhouse_diagnostics['storage_mode']}"
+        )
         camera_summary = report["camera_inventory_summary"]
         typer.echo(
             f"cameras={camera_summary['total_count']} active={camera_summary['active_count']} inactive={camera_summary['inactive_count']} stale={camera_summary['stale_count']}"
