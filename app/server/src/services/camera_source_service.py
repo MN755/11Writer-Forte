@@ -8,8 +8,15 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from src.models import CameraInventoryORM, CameraSourceInventoryORM, CustodyLogORM, ObservationORM
-from src.services.camera_service import query_camera_inventory
+from src.models import (
+    CameraInventoryORM,
+    CameraSourceInventoryORM,
+    CustodyLogORM,
+    ObservationORM,
+    ScheduledTaskORM,
+    ScheduledTaskRunORM,
+)
+from src.services.camera_service import query_camera_inventory, refresh_task_matches_scope, serialize_refresh_run
 from src.services.trust_service import normalize_domain
 
 
@@ -48,7 +55,7 @@ def list_camera_sources(
     status: str | None = None,
     verification_state: str | None = None,
     active: bool | None = None,
-    limit: int = 200,
+    limit: int | None = 200,
 ) -> list[CameraSourceInventoryORM]:
     statement = select(CameraSourceInventoryORM).order_by(
         CameraSourceInventoryORM.graduation_score.desc(),
@@ -66,7 +73,9 @@ def list_camera_sources(
         statement = statement.where(CameraSourceInventoryORM.verification_state == verification_state)
     if active is not None:
         statement = statement.where(CameraSourceInventoryORM.active == active)
-    return list(session.scalars(statement.limit(limit)))
+    if limit is not None:
+        statement = statement.limit(limit)
+    return list(session.scalars(statement))
 
 
 def materialize_camera_source_inventory(
@@ -290,6 +299,162 @@ def build_camera_source_inventory_ops_detail(
     }
 
 
+def build_camera_source_ops_report_index(
+    session: Session,
+    *,
+    layer_key: str | None = None,
+    source_domain: str | None = None,
+    endpoint_kind: str | None = None,
+    status: str | None = None,
+    verification_state: str | None = None,
+    active: bool | None = None,
+    stale_after_hours: float = 24.0,
+    limit: int = 25,
+    stale_source_limit: int = 25,
+) -> dict[str, object]:
+    generated_at = source_inventory_now()
+    stale_before = generated_at - timedelta(hours=max(0.0, stale_after_hours))
+    summary = build_camera_source_inventory_summary(
+        session,
+        layer_key=layer_key,
+        source_domain=source_domain,
+        endpoint_kind=endpoint_kind,
+        status=status,
+        verification_state=verification_state,
+        active=active,
+    )
+    scoped_sources = list_camera_sources(
+        session,
+        layer_key=layer_key,
+        source_domain=source_domain,
+        endpoint_kind=endpoint_kind,
+        status=status,
+        verification_state=verification_state,
+        active=active,
+        limit=None,
+    )
+    stale_sources = [
+        source
+        for source in scoped_sources
+        if is_stale_camera_source(source, stale_before)
+    ][:stale_source_limit]
+
+    refresh_tasks = list(
+        session.scalars(
+            select(ScheduledTaskORM)
+            .where(ScheduledTaskORM.task_type == "camera_inventory_refresh")
+            .order_by(ScheduledTaskORM.task_id.asc())
+        )
+    )
+    matching_refresh_tasks = [
+        task
+        for task in refresh_tasks
+        if refresh_task_matches_scope(task, layer_key=layer_key, source_domain=source_domain)
+    ]
+    task_lookup = {task.task_id: task for task in matching_refresh_tasks}
+    task_ids = list(task_lookup)
+
+    all_refresh_runs: list[ScheduledTaskRunORM] = []
+    recent_refresh_runs: list[dict[str, object]] = []
+    if task_ids:
+        all_refresh_runs = list(
+            session.scalars(
+                select(ScheduledTaskRunORM)
+                .where(ScheduledTaskRunORM.task_id.in_(task_ids))
+                .order_by(ScheduledTaskRunORM.task_run_id.desc())
+            )
+        )
+        recent_refresh_runs = [
+            serialize_refresh_run(task_lookup[run.task_id], run)
+            for run in all_refresh_runs[:limit]
+            if run.task_id in task_lookup
+        ]
+
+    materialization_logs = list(
+        session.scalars(
+            select(CustodyLogORM)
+            .where(CustodyLogORM.object_type == "camera_source_materialization")
+            .order_by(CustodyLogORM.created_at.desc())
+            .limit(max(limit * 5, 50))
+        )
+    )
+    recent_materializations = [
+        log
+        for log in materialization_logs
+        if camera_source_materialization_matches_scope(log, layer_key=layer_key, source_domain=source_domain)
+    ][:limit]
+    latest_materialization_at = recent_materializations[0].created_at if recent_materializations else None
+
+    return {
+        "generated_at": generated_at,
+        "stale_after_hours": stale_after_hours,
+        "latest_materialization_at": latest_materialization_at,
+        "inventory_summary": summary,
+        "refresh_task_count": len(matching_refresh_tasks),
+        "refresh_run_count": len(all_refresh_runs),
+        "refresh_failure_count": sum(1 for run in all_refresh_runs if run.status == "failed"),
+        "refresh_tasks": matching_refresh_tasks,
+        "recent_refresh_runs": recent_refresh_runs,
+        "recent_materializations": recent_materializations,
+        "stale_sources": stale_sources,
+    }
+
+
+def build_camera_source_ops_export_summary(
+    session: Session,
+    *,
+    layer_key: str | None = None,
+    source_domain: str | None = None,
+    endpoint_kind: str | None = None,
+    status: str | None = None,
+    verification_state: str | None = None,
+    active: bool | None = None,
+    stale_after_hours: float = 24.0,
+    source_limit: int = 500,
+    report_limit: int = 25,
+    stale_source_limit: int = 25,
+) -> dict[str, object]:
+    generated_at = source_inventory_now()
+    sources = list_camera_sources(
+        session,
+        layer_key=layer_key,
+        source_domain=source_domain,
+        endpoint_kind=endpoint_kind,
+        status=status,
+        verification_state=verification_state,
+        active=active,
+        limit=source_limit,
+    )
+    return {
+        "generated_at": generated_at,
+        "filters_json": {
+            "layer_key": layer_key,
+            "source_domain": source_domain,
+            "endpoint_kind": endpoint_kind,
+            "status": status,
+            "verification_state": verification_state,
+            "active": active,
+            "stale_after_hours": stale_after_hours,
+            "source_limit": source_limit,
+            "report_limit": report_limit,
+            "stale_source_limit": stale_source_limit,
+        },
+        "report_index": build_camera_source_ops_report_index(
+            session,
+            layer_key=layer_key,
+            source_domain=source_domain,
+            endpoint_kind=endpoint_kind,
+            status=status,
+            verification_state=verification_state,
+            active=active,
+            stale_after_hours=stale_after_hours,
+            limit=report_limit,
+            stale_source_limit=stale_source_limit,
+        ),
+        "sources": sources,
+    }
+
+
 def build_camera_source_candidates(camera: CameraInventoryORM) -> list[CameraSourceCandidate]:
     checked_at = source_inventory_now()
     candidates: list[CameraSourceCandidate] = []
@@ -483,6 +648,38 @@ def merge_metadata(
 
 def normalize_timestamp(value: datetime) -> datetime:
     return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+
+
+def is_stale_camera_source(source: CameraSourceInventoryORM, stale_before: datetime) -> bool:
+    if source.last_observed_at is None:
+        return True
+    return normalize_timestamp(source.last_observed_at) < stale_before
+
+
+def camera_source_materialization_matches_scope(
+    log: CustodyLogORM,
+    *,
+    layer_key: str | None,
+    source_domain: str | None,
+) -> bool:
+    details = log.details_json if isinstance(log.details_json, dict) else {}
+    detail_layer = details.get("layer_key")
+    detail_source_domain = details.get("source_domain")
+    if layer_key is not None and detail_layer is not None and detail_layer != layer_key:
+        return False
+    if source_domain is None:
+        return True
+    if not isinstance(detail_source_domain, str) or not detail_source_domain.strip():
+        return True
+    normalized_scope_domain = normalize_domain(source_domain)
+    normalized_detail_domain = normalize_domain(detail_source_domain)
+    if not normalized_scope_domain or not normalized_detail_domain:
+        return False
+    return (
+        normalized_scope_domain == normalized_detail_domain
+        or normalized_scope_domain.endswith(f".{normalized_detail_domain}")
+        or normalized_detail_domain.endswith(f".{normalized_scope_domain}")
+    )
 
 
 def values_equal(old_value: Any, new_value: Any) -> bool:

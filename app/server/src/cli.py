@@ -23,8 +23,10 @@ from src.models import (
     SourceTrustProfileORM,
 )
 from src.schemas import (
+    CameraSourceOpsExportSummaryRead,
     CameraSourceMaterializationResponse,
     CameraSourceInventoryRead,
+    CameraSourceOpsReportIndexRead,
     CameraSourceSummaryRead,
     ClickHouseArchiveResultRead,
     ClickHouseDiagnosticsRead,
@@ -62,6 +64,8 @@ from src.schemas import (
 )
 from src.services.camera_source_service import (
     build_camera_source_inventory_ops_detail,
+    build_camera_source_ops_export_summary,
+    build_camera_source_ops_report_index,
     build_camera_source_inventory_summary,
     list_camera_sources,
     materialize_camera_source_inventory,
@@ -1226,6 +1230,61 @@ def show_camera_source_ops_command(camera_source_inventory_id: int) -> None:
         session.close()
 
 
+@app.command("show-camera-source-report-index")
+def show_camera_source_report_index_command(
+    layer: str | None = None,
+    source_domain: str | None = None,
+    endpoint_kind: str | None = None,
+    status: str | None = None,
+    verification_state: str | None = None,
+    active: bool | None = typer.Option(default=None),
+    stale_after_hours: float = 24.0,
+    limit: int = 25,
+    stale_source_limit: int = 25,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        report = build_camera_source_ops_report_index(
+            session,
+            layer_key=layer,
+            source_domain=source_domain,
+            endpoint_kind=endpoint_kind,
+            status=status,
+            verification_state=verification_state,
+            active=active,
+            stale_after_hours=stale_after_hours,
+            limit=limit,
+            stale_source_limit=stale_source_limit,
+        )
+        serializable = TypeAdapter(CameraSourceOpsReportIndexRead).validate_python(report).model_dump(mode="json")
+        print_banner()
+        typer.echo(
+            f"refresh_tasks={serializable['refresh_task_count']} refresh_runs={serializable['refresh_run_count']} failures={serializable['refresh_failure_count']}"
+        )
+        typer.echo(
+            f"latest_materialization_at={serializable['latest_materialization_at']} stale_after_hours={serializable['stale_after_hours']}"
+        )
+        inventory = serializable["inventory_summary"]
+        typer.echo(
+            "inventory "
+            f"total={inventory['total_count']} active={inventory['active_count']} ready={inventory['ready_count']} "
+            f"review={inventory['review_count']} candidate={inventory['candidate_count']} graduated={inventory['graduated_count']}"
+        )
+        typer.echo("recent_refresh_runs:")
+        for row in serializable["recent_refresh_runs"]:
+            typer.echo(
+                f"  {row['task_run_id']} | task={row['task_name']} | status={row['status']} | records={row['records_affected']} | started={row['started_at']}"
+            )
+        typer.echo("stale_sources:")
+        for row in serializable["stale_sources"]:
+            typer.echo(
+                f"  {row['camera_source_inventory_id']} | {row['endpoint_kind']} | {row['status']} | source={row['source_domain']} | last_observed_at={row['last_observed_at']}"
+            )
+    finally:
+        session.close()
+
+
 @app.command("show-camera-report-index")
 def show_camera_report_index_command(
     layer: str | None = None,
@@ -1277,6 +1336,55 @@ def show_camera_report_index_command(
             typer.echo(
                 f"  {row['camera_inventory_id']} | {row['name']} | source={row['source_domain']} | last_observed_at={row['last_observed_at']}"
             )
+    finally:
+        session.close()
+
+
+@app.command("export-camera-source-summary")
+def export_camera_source_summary_command(
+    output_path: Path,
+    layer: str | None = None,
+    source_domain: str | None = None,
+    endpoint_kind: str | None = None,
+    status: str | None = None,
+    verification_state: str | None = None,
+    active: bool | None = typer.Option(default=None),
+    stale_after_hours: float = 24.0,
+    source_limit: int = 500,
+    report_limit: int = 25,
+    stale_source_limit: int = 25,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        report = build_camera_source_ops_export_summary(
+            session,
+            layer_key=layer,
+            source_domain=source_domain,
+            endpoint_kind=endpoint_kind,
+            status=status,
+            verification_state=verification_state,
+            active=active,
+            stale_after_hours=stale_after_hours,
+            source_limit=source_limit,
+            report_limit=report_limit,
+            stale_source_limit=stale_source_limit,
+        )
+        serializable = TypeAdapter(CameraSourceOpsExportSummaryRead).validate_python(report).model_dump(mode="json")
+        write_json_export_artifact(
+            session,
+            payload=serializable,
+            object_kind="camera_source_summary_export",
+            owner_type="camera_source_export",
+            owner_id=layer or source_domain or "scoped",
+            output_path=output_path,
+            source_uri="/api/camera-sources/export/summary",
+            observed_at=report["generated_at"],
+            metadata_json=serializable["filters_json"],
+            actor="cli_export",
+        )
+        print_banner()
+        typer.echo(f"exported camera source summary to {output_path}")
     finally:
         session.close()
 
@@ -1965,6 +2073,14 @@ def show_operations_report(hours: float | None = 24.0, limit: int = 10) -> None:
             f"scheduler_runs={scheduler_report['task_run_count']} scheduler_failures={scheduler_report['task_run_failure_count']} "
             f"maintenance_runs={scheduler_report['maintenance_run_count']} maintenance_failures={scheduler_report['maintenance_failure_count']}"
         )
+        source_summary = report["source_inventory_summary"]
+        typer.echo(
+            f"sources={source_summary['total_count']} scheduled={source_summary['scheduled_count']} unscheduled={source_summary['unscheduled_count']} stale={source_summary['stale_count']} failing={source_summary['failing_count']}"
+        )
+        source_report = report["source_report_index"]
+        typer.echo(
+            f"source_sync_tasks={source_report['sync_task_count']} source_sync_runs={source_report['sync_run_count']} source_sync_failures={source_report['sync_failure_count']}"
+        )
         camera_summary = report["camera_inventory_summary"]
         typer.echo(
             f"cameras={camera_summary['total_count']} active={camera_summary['active_count']} inactive={camera_summary['inactive_count']} stale={camera_summary['stale_count']}"
@@ -1972,6 +2088,14 @@ def show_operations_report(hours: float | None = 24.0, limit: int = 10) -> None:
         camera_report = report["camera_report_index"]
         typer.echo(
             f"camera_refresh_tasks={camera_report['refresh_task_count']} refresh_runs={camera_report['refresh_run_count']} refresh_failures={camera_report['refresh_failure_count']}"
+        )
+        camera_source_summary = report["camera_source_inventory_summary"]
+        typer.echo(
+            f"camera_sources={camera_source_summary['total_count']} active={camera_source_summary['active_count']} ready={camera_source_summary['ready_count']} review={camera_source_summary['review_count']} candidate={camera_source_summary['candidate_count']} graduated={camera_source_summary['graduated_count']}"
+        )
+        camera_source_report = report["camera_source_report_index"]
+        typer.echo(
+            f"camera_source_refresh_tasks={camera_source_report['refresh_task_count']} refresh_runs={camera_source_report['refresh_run_count']} refresh_failures={camera_source_report['refresh_failure_count']}"
         )
     finally:
         session.close()

@@ -126,6 +126,8 @@ def test_operations_report_summarizes_runtime_activity(client: TestClient, tmp_p
     assert payload["source_report_index"]["recent_runs"][0]["source_id"] == source_id
     assert payload["camera_inventory_summary"]["total_count"] == 0
     assert payload["camera_report_index"]["refresh_task_count"] == 0
+    assert payload["camera_source_inventory_summary"]["total_count"] == 0
+    assert payload["camera_source_report_index"]["refresh_task_count"] == 0
 
     camera_fixture = tmp_path / "ops-cameras.json"
     camera_fixture.write_text(
@@ -181,3 +183,6 @@ def test_operations_report_summarizes_runtime_activity(client: TestClient, tmp_p
     assert camera_payload["camera_inventory_summary"]["inactive_count"] == 1
     assert camera_payload["camera_report_index"]["refresh_task_count"] == 1
     assert camera_payload["camera_report_index"]["recent_materializations"][0]["action"] == "camera_materialization_completed"
+    assert camera_payload["camera_source_inventory_summary"]["total_count"] == 1
+    assert camera_payload["camera_source_report_index"]["refresh_task_count"] == 1
+    assert camera_payload["camera_source_report_index"]["recent_materializations"][0]["action"] == "camera_source_materialization_completed"

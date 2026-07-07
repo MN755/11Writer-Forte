@@ -107,6 +107,17 @@ def test_camera_inventory_materialization_and_update(client: TestClient, tmp_pat
     assert source_summary["ready_count"] >= 1
     assert any(bucket["key"] == "image" for bucket in source_summary["endpoint_kind_counts"])
 
+    source_report_index_response = client.get(
+        "/api/camera-sources/report-index",
+        params={"layer_key": "traffic-camera-feed", "limit": 10, "stale_after_hours": 0},
+    )
+    assert source_report_index_response.status_code == 200
+    source_report_index = source_report_index_response.json()
+    assert source_report_index["refresh_task_count"] == 0
+    assert source_report_index["inventory_summary"]["total_count"] == 5
+    assert len(source_report_index["stale_sources"]) == 5
+    assert source_report_index["recent_materializations"][0]["action"] == "camera_source_materialization_completed"
+
     bbox_response = client.get(
         "/api/cameras",
         params={
@@ -252,6 +263,16 @@ def test_camera_inventory_materialization_and_update(client: TestClient, tmp_pat
     assert export_summary["filters_json"]["layer_key"] == "traffic-camera-feed"
     assert len(export_summary["cameras"]) == 2
     assert export_summary["report_index"]["inventory_summary"]["total_count"] == 2
+
+    source_export_summary_response = client.get(
+        "/api/camera-sources/export/summary",
+        params={"layer_key": "traffic-camera-feed", "source_limit": 10, "report_limit": 10},
+    )
+    assert source_export_summary_response.status_code == 200
+    source_export_summary = source_export_summary_response.json()
+    assert source_export_summary["filters_json"]["layer_key"] == "traffic-camera-feed"
+    assert len(source_export_summary["sources"]) == 5
+    assert source_export_summary["report_index"]["inventory_summary"]["total_count"] == 5
 
     custody_response = client.get("/api/custody/logs")
     assert custody_response.status_code == 200

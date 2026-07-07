@@ -8,6 +8,7 @@ from sqlalchemy import select
 
 from src.db import get_session_factory
 from src.models import SituationProductORM
+from src.services.camera_source_service import build_camera_source_ops_export_summary
 from src.services.camera_service import build_camera_ops_export_summary
 from src.services.event_export_service import build_event_export_bundle
 from src.services.export_artifact_service import write_json_export_artifact, write_text_export_artifact
@@ -176,6 +177,20 @@ def test_export_artifact_service_registers_storage_objects(
             metadata_json=camera_summary_payload["filters_json"],
         )
 
+        camera_source_summary = build_camera_source_ops_export_summary(session, layer_key="traffic-camera-feed")
+        camera_source_payload = json.loads(json.dumps(camera_source_summary, default=str))
+        write_json_export_artifact(
+            session,
+            output_path=exports_dir / "camera-source-summary.json",
+            payload=camera_source_payload,
+            object_kind="camera_source_summary_export",
+            owner_type="camera_source_export",
+            owner_id="traffic-camera-feed",
+            source_uri="/api/camera-sources/export/summary",
+            observed_at=camera_source_summary["generated_at"],
+            metadata_json=camera_source_payload["filters_json"],
+        )
+
         operations_report = build_operations_report(session, since=None, limit=10)
         operations_payload = json.loads(json.dumps(operations_report, default=str))
         write_json_export_artifact(
@@ -262,6 +277,17 @@ def test_export_artifact_service_registers_storage_objects(
     ).json()
     assert len(camera_rows) == 1
     assert camera_rows[0]["metadata_json"]["layer_key"] == "traffic-camera-feed"
+
+    camera_source_rows = client.get(
+        "/api/storage/objects",
+        params={
+            "owner_type": "camera_source_export",
+            "owner_id": "traffic-camera-feed",
+            "object_kind": "camera_source_summary_export",
+        },
+    ).json()
+    assert len(camera_source_rows) == 1
+    assert camera_source_rows[0]["metadata_json"]["layer_key"] == "traffic-camera-feed"
 
     operations_rows = client.get(
         "/api/storage/objects",
