@@ -476,6 +476,47 @@ def register_source_run_storage_object(
     )
 
 
+def register_export_storage_object(
+    session: Session,
+    *,
+    object_kind: str,
+    owner_type: str,
+    owner_id: str,
+    output_path: str | Path,
+    source_uri: str | None = None,
+    storage_tier: str = "warm",
+    retention_class: str = "investigative",
+    observed_at: datetime | None = None,
+    metadata_json: dict[str, Any] | None = None,
+    actor: str = "cli_export",
+) -> StorageObjectORM:
+    resolved_path = Path(output_path).expanduser().resolve()
+    if not resolved_path.exists() or not resolved_path.is_file():
+        raise ValueError(f"Export artifact '{resolved_path}' does not exist.")
+    return register_storage_object(
+        session,
+        object_key=build_export_storage_key(owner_type, owner_id, object_kind, resolved_path),
+        object_kind=object_kind,
+        owner_type=owner_type,
+        owner_id=owner_id,
+        object_uri=str(resolved_path),
+        source_uri=source_uri,
+        content_hash=hash_file(resolved_path),
+        media_type=media_type_for_export_path(resolved_path),
+        storage_tier=storage_tier,
+        retention_class=retention_class,
+        lifecycle_status="active",
+        byte_size=resolved_path.stat().st_size,
+        observed_at=observed_at,
+        metadata_json={
+            "file_name": resolved_path.name,
+            "suffix": resolved_path.suffix.lower(),
+            **(metadata_json or {}),
+        },
+        actor=actor,
+    )
+
+
 def query_expired_storage_candidates(
     session: Session,
     *,
@@ -637,6 +678,19 @@ def build_camera_storage_key(camera_inventory_id: int, object_kind: str, uri: st
     return f"camera_inventory:{camera_inventory_id}:{object_kind}:{hash_text(uri)[:16]}"
 
 
+def build_export_storage_key(
+    owner_type: str,
+    owner_id: str,
+    object_kind: str,
+    output_path: Path,
+) -> str:
+    normalized_path = str(output_path).replace("\\", "/")
+    return (
+        f"export:{owner_type}:{owner_id}:{object_kind}:"
+        f"{hash_text(normalized_path)[:16]}"
+    )
+
+
 def hash_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -647,6 +701,17 @@ def hash_file(path: Path) -> str:
 
 def hash_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def media_type_for_export_path(path: Path) -> str:
+    return {
+        ".json": "application/json",
+        ".jsonl": "application/jsonl",
+        ".txt": "text/plain",
+        ".md": "text/markdown",
+        ".csv": "text/csv",
+        ".html": "text/html",
+    }.get(path.suffix.lower(), "application/octet-stream")
 
 
 def merge_metadata(
