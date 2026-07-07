@@ -17,9 +17,11 @@ from src.models import (
     StorageObjectORM,
 )
 from src.schemas import (
+    StorageLifecycleSweepResultRead,
     StorageObjectCreate,
     StorageObjectPromoteRequest,
     StorageObjectTransitionRequest,
+    StorageReportRead,
 )
 
 RETENTION_WINDOWS_HOURS: dict[str, float | None] = {
@@ -92,6 +94,114 @@ def create_storage_object(
     return record
 
 
+def build_storage_report(
+    session: Session,
+    *,
+    limit: int = 25,
+    reference: datetime | None = None,
+) -> StorageReportRead:
+    now = normalize_timestamp(reference) or utcnow()
+    rows = list(
+        session.scalars(
+            select(StorageObjectORM).order_by(
+                StorageObjectORM.expires_at.asc().nullslast(),
+                StorageObjectORM.updated_at.desc(),
+            )
+        )
+    )
+    return StorageReportRead.model_validate(
+        {
+            "generated_at": now,
+            "total_count": len(rows),
+            "active_count": sum(1 for row in rows if not is_storage_object_expired(row, now)),
+            "expired_count": sum(1 for row in rows if is_storage_object_expired(row, now)),
+            "promoted_count": sum(1 for row in rows if row.lifecycle_status == "promoted"),
+            "archived_count": sum(1 for row in rows if row.lifecycle_status == "archived"),
+            "next_expiration_at": first_timestamp(
+                normalize_timestamp(row.expires_at)
+                for row in rows
+                if row.lifecycle_status != "expired" and normalize_timestamp(row.expires_at) is not None
+            ),
+            "oldest_expired_at": first_timestamp(
+                normalize_timestamp(row.expires_at)
+                for row in rows
+                if is_storage_object_expired(row, now) and normalize_timestamp(row.expires_at) is not None
+            ),
+            "retention_class_counts": build_storage_buckets(
+                rows,
+                key_name="retention_class",
+                reference=now,
+            ),
+            "storage_tier_counts": build_storage_buckets(
+                rows,
+                key_name="storage_tier",
+                reference=now,
+            ),
+            "lifecycle_status_counts": build_storage_buckets(
+                rows,
+                key_name="lifecycle_status",
+                reference=now,
+            ),
+            "expiring_objects": [
+                row
+                for row in rows
+                if row.lifecycle_status != "expired" and normalize_timestamp(row.expires_at) is not None
+            ][:limit],
+        }
+    )
+
+
+def sweep_expired_storage_objects(
+    session: Session,
+    *,
+    retention_class: str | None = None,
+    limit: int = 100,
+    dry_run: bool = False,
+    actor: str = "storage_lifecycle",
+    reference: datetime | None = None,
+) -> StorageLifecycleSweepResultRead:
+    now = normalize_timestamp(reference) or utcnow()
+    candidates = query_expired_storage_candidates(
+        session,
+        retention_class=retention_class,
+        limit=limit,
+        reference=now,
+    )
+    transitioned_count = 0
+    if not dry_run:
+        for record in candidates:
+            apply_storage_transition(
+                session,
+                record,
+                lifecycle_status="expired",
+                expires_at=normalize_timestamp(record.expires_at) or now,
+                metadata_json={"expired_by": actor, "expired_at": now.isoformat()},
+                actor=actor,
+                action="storage_expired",
+                extra_details={
+                    "reason": "retention_window_elapsed",
+                    "reference": now.isoformat(),
+                },
+            )
+            transitioned_count += 1
+        session.commit()
+        for record in candidates:
+            session.refresh(record)
+    return StorageLifecycleSweepResultRead.model_validate(
+        {
+            "swept_at": now,
+            "dry_run": dry_run,
+            "filters_json": {
+                "retention_class": retention_class,
+                "limit": limit,
+            },
+            "expired_candidate_count": len(candidates),
+            "transitioned_count": transitioned_count,
+            "candidates": candidates,
+        }
+    )
+
+
 def promote_storage_object(
     session: Session,
     storage_object_id: int,
@@ -102,48 +212,7 @@ def promote_storage_object(
     record = session.get(StorageObjectORM, storage_object_id)
     if record is None:
         raise ValueError(f"Storage object {storage_object_id} does not exist.")
-
-    previous = {
-        "storage_tier": record.storage_tier,
-        "retention_class": record.retention_class,
-        "lifecycle_status": record.lifecycle_status,
-        "expires_at": normalize_timestamp(record.expires_at),
-    }
-    record.storage_tier = payload.storage_tier
-    if payload.retention_class is not None:
-        record.retention_class = payload.retention_class
-    record.promoted_by_type = payload.promoted_by_type
-    record.promoted_by_id = payload.promoted_by_id
-    record.lifecycle_status = "promoted"
-    record.expires_at = resolve_expiration(
-        record.retention_class,
-        observed_at=record.observed_at,
-        explicit_expires_at=payload.expires_at,
-    )
-    if payload.metadata_json:
-        record.metadata_json = merge_metadata(record.metadata_json, payload.metadata_json)
-    session.add(
-        CustodyLogORM(
-            object_type="storage_object",
-            object_id=str(record.storage_object_id),
-            action="storage_promoted",
-            actor=actor,
-            details_json={
-                "object_key": record.object_key,
-                "previous": serialize_storage_values(previous),
-                "current": {
-                    "storage_tier": record.storage_tier,
-                    "retention_class": record.retention_class,
-                    "lifecycle_status": record.lifecycle_status,
-                    "expires_at": normalize_timestamp(record.expires_at).isoformat()
-                    if normalize_timestamp(record.expires_at)
-                    else None,
-                    "promoted_by_type": record.promoted_by_type,
-                    "promoted_by_id": record.promoted_by_id,
-                },
-            },
-        )
-    )
+    apply_storage_promotion(session, record, payload, actor=actor)
     session.commit()
     session.refresh(record)
     return record
@@ -159,37 +228,14 @@ def transition_storage_object(
     record = session.get(StorageObjectORM, storage_object_id)
     if record is None:
         raise ValueError(f"Storage object {storage_object_id} does not exist.")
-
-    previous = {
-        "storage_tier": record.storage_tier,
-        "lifecycle_status": record.lifecycle_status,
-        "expires_at": normalize_timestamp(record.expires_at),
-    }
-    record.lifecycle_status = payload.lifecycle_status
-    if payload.storage_tier is not None:
-        record.storage_tier = payload.storage_tier
-    if payload.expires_at is not None or payload.lifecycle_status == "expired":
-        record.expires_at = payload.expires_at or utcnow()
-    if payload.metadata_json:
-        record.metadata_json = merge_metadata(record.metadata_json, payload.metadata_json)
-    session.add(
-        CustodyLogORM(
-            object_type="storage_object",
-            object_id=str(record.storage_object_id),
-            action="storage_transitioned",
-            actor=actor,
-            details_json={
-                "object_key": record.object_key,
-                "previous": serialize_storage_values(previous),
-                "current": {
-                    "storage_tier": record.storage_tier,
-                    "lifecycle_status": record.lifecycle_status,
-                    "expires_at": normalize_timestamp(record.expires_at).isoformat()
-                    if normalize_timestamp(record.expires_at)
-                    else None,
-                },
-            },
-        )
+    apply_storage_transition(
+        session,
+        record,
+        lifecycle_status=payload.lifecycle_status,
+        storage_tier=payload.storage_tier,
+        expires_at=payload.expires_at,
+        metadata_json=payload.metadata_json,
+        actor=actor,
     )
     session.commit()
     session.refresh(record)
@@ -430,6 +476,132 @@ def register_source_run_storage_object(
     )
 
 
+def query_expired_storage_candidates(
+    session: Session,
+    *,
+    retention_class: str | None = None,
+    limit: int = 100,
+    reference: datetime | None = None,
+) -> list[StorageObjectORM]:
+    now = normalize_timestamp(reference) or utcnow()
+    statement = (
+        select(StorageObjectORM)
+        .where(
+            StorageObjectORM.lifecycle_status != "expired",
+            StorageObjectORM.expires_at.is_not(None),
+            StorageObjectORM.expires_at <= now,
+        )
+        .order_by(
+            StorageObjectORM.expires_at.asc(),
+            StorageObjectORM.storage_object_id.asc(),
+        )
+        .limit(limit)
+    )
+    if retention_class:
+        statement = statement.where(StorageObjectORM.retention_class == retention_class)
+    return list(session.scalars(statement))
+
+
+def apply_storage_promotion(
+    session: Session,
+    record: StorageObjectORM,
+    payload: StorageObjectPromoteRequest,
+    *,
+    actor: str,
+) -> StorageObjectORM:
+    previous = {
+        "storage_tier": record.storage_tier,
+        "retention_class": record.retention_class,
+        "lifecycle_status": record.lifecycle_status,
+        "expires_at": normalize_timestamp(record.expires_at),
+    }
+    record.storage_tier = payload.storage_tier
+    if payload.retention_class is not None:
+        record.retention_class = payload.retention_class
+    record.promoted_by_type = payload.promoted_by_type
+    record.promoted_by_id = payload.promoted_by_id
+    record.lifecycle_status = "promoted"
+    record.expires_at = resolve_expiration(
+        record.retention_class,
+        observed_at=record.observed_at,
+        explicit_expires_at=payload.expires_at,
+    )
+    if payload.metadata_json:
+        record.metadata_json = merge_metadata(record.metadata_json, payload.metadata_json)
+    session.add(
+        CustodyLogORM(
+            object_type="storage_object",
+            object_id=str(record.storage_object_id),
+            action="storage_promoted",
+            actor=actor,
+            details_json={
+                "object_key": record.object_key,
+                "previous": serialize_storage_values(previous),
+                "current": {
+                    "storage_tier": record.storage_tier,
+                    "retention_class": record.retention_class,
+                    "lifecycle_status": record.lifecycle_status,
+                    "expires_at": normalize_timestamp(record.expires_at).isoformat()
+                    if normalize_timestamp(record.expires_at)
+                    else None,
+                    "promoted_by_type": record.promoted_by_type,
+                    "promoted_by_id": record.promoted_by_id,
+                },
+            },
+        )
+    )
+    return record
+
+
+def apply_storage_transition(
+    session: Session,
+    record: StorageObjectORM,
+    *,
+    lifecycle_status: str,
+    storage_tier: str | None = None,
+    expires_at: datetime | None = None,
+    metadata_json: dict[str, Any] | None = None,
+    actor: str,
+    action: str = "storage_transitioned",
+    extra_details: dict[str, Any] | None = None,
+) -> StorageObjectORM:
+    previous = {
+        "storage_tier": record.storage_tier,
+        "lifecycle_status": record.lifecycle_status,
+        "expires_at": normalize_timestamp(record.expires_at),
+    }
+    record.lifecycle_status = lifecycle_status
+    if storage_tier is not None:
+        record.storage_tier = storage_tier
+    if expires_at is not None or lifecycle_status == "expired":
+        record.expires_at = normalize_timestamp(expires_at) or utcnow()
+    if metadata_json:
+        record.metadata_json = merge_metadata(record.metadata_json, metadata_json)
+    details_json = {
+        "object_key": record.object_key,
+        "previous": serialize_storage_values(previous),
+        "current": {
+            "storage_tier": record.storage_tier,
+            "lifecycle_status": record.lifecycle_status,
+            "expires_at": normalize_timestamp(record.expires_at).isoformat()
+            if normalize_timestamp(record.expires_at)
+            else None,
+        },
+    }
+    if extra_details:
+        details_json.update(extra_details)
+    session.add(
+        CustodyLogORM(
+            object_type="storage_object",
+            object_id=str(record.storage_object_id),
+            action=action,
+            actor=actor,
+            details_json=details_json,
+        )
+    )
+    return record
+
+
 def resolve_expiration(
     retention_class: str,
     *,
@@ -501,6 +673,47 @@ def serialize_storage_values(value: Any) -> Any:
     if isinstance(value, list):
         return [serialize_storage_values(item) for item in value]
     return value
+
+
+def is_storage_object_expired(record: StorageObjectORM, reference: datetime | None = None) -> bool:
+    if record.lifecycle_status == "expired":
+        return True
+    expires_at = normalize_timestamp(record.expires_at)
+    now = normalize_timestamp(reference) or utcnow()
+    return expires_at is not None and expires_at <= now
+
+
+def build_storage_buckets(
+    rows: list[StorageObjectORM],
+    *,
+    key_name: str,
+    reference: datetime,
+) -> list[dict[str, int | str]]:
+    grouped: dict[str, dict[str, int | str]] = {}
+    for row in rows:
+        key = str(getattr(row, key_name) or "unknown")
+        bucket = grouped.setdefault(
+            key,
+            {
+                "key": key,
+                "total_count": 0,
+                "expired_count": 0,
+                "active_count": 0,
+            },
+        )
+        bucket["total_count"] = int(bucket["total_count"]) + 1
+        if is_storage_object_expired(row, reference):
+            bucket["expired_count"] = int(bucket["expired_count"]) + 1
+        else:
+            bucket["active_count"] = int(bucket["active_count"]) + 1
+    return [grouped[key] for key in sorted(grouped)]
+
+
+def first_timestamp(values: Any) -> datetime | None:
+    for value in values:
+        if value is not None:
+            return value
+    return None
 
 
 def resolve_source_materialization_media_type(

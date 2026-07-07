@@ -41,10 +41,12 @@ from src.schemas import (
     RuntimeSnapshotRead,
     ScheduledTaskCreate,
     ScheduledTaskUpdate,
+    StorageLifecycleSweepResultRead,
     StorageObjectCreate,
     StorageObjectPromoteRequest,
     StorageObjectRead,
     StorageObjectTransitionRequest,
+    StorageReportRead,
     SourceDefinitionCreate,
     SourceDefinitionUpdate,
 )
@@ -74,7 +76,14 @@ from src.services.runtime_snapshot_service import build_runtime_snapshot
 from src.services.runtime_snapshot_service import restore_runtime_snapshot
 from src.services.scheduler_runtime_service import run_scheduler_worker
 from src.services.scheduler_service import create_scheduled_task, run_due_tasks, run_task, update_scheduled_task
-from src.services.storage_service import create_storage_object, list_storage_objects, promote_storage_object, transition_storage_object
+from src.services.storage_service import (
+    build_storage_report,
+    create_storage_object,
+    list_storage_objects,
+    promote_storage_object,
+    sweep_expired_storage_objects,
+    transition_storage_object,
+)
 from src.services.source_service import (
     build_source_ops_detail,
     create_source_definition,
@@ -1332,6 +1341,33 @@ def list_storage_objects_command(
         session.close()
 
 
+@app.command("show-storage-report")
+def show_storage_report_command(limit: int = 25) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        report = build_storage_report(session, limit=limit)
+        serializable = TypeAdapter(StorageReportRead).validate_python(report).model_dump(mode="json")
+        print_banner()
+        typer.echo(
+            "storage "
+            f"total={serializable['total_count']} active={serializable['active_count']} "
+            f"expired={serializable['expired_count']} promoted={serializable['promoted_count']} "
+            f"archived={serializable['archived_count']}"
+        )
+        typer.echo(
+            f"next_expiration_at={serializable['next_expiration_at']} oldest_expired_at={serializable['oldest_expired_at']}"
+        )
+        if serializable["expiring_objects"]:
+            typer.echo("expiring_objects:")
+            for row in serializable["expiring_objects"]:
+                typer.echo(
+                    f"  {row['storage_object_id']} | {row['object_kind']} | status={row['lifecycle_status']} | expires_at={row['expires_at']}"
+                )
+    finally:
+        session.close()
+
+
 @app.command("add-storage-object")
 def add_storage_object_command(
     object_key: str,
@@ -1376,6 +1412,35 @@ def add_storage_object_command(
         typer.echo(
             f"storage_object={serializable['storage_object_id']} tier={serializable['storage_tier']} retention={serializable['retention_class']} status={serializable['lifecycle_status']}"
         )
+    finally:
+        session.close()
+
+
+@app.command("run-storage-lifecycle")
+def run_storage_lifecycle_command(
+    retention_class: str | None = None,
+    limit: int = 100,
+    dry_run: bool = False,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        result = sweep_expired_storage_objects(
+            session,
+            retention_class=retention_class,
+            limit=limit,
+            dry_run=dry_run,
+            actor="cli_storage",
+        )
+        serializable = TypeAdapter(StorageLifecycleSweepResultRead).validate_python(result).model_dump(mode="json")
+        print_banner()
+        typer.echo(
+            f"swept_at={serializable['swept_at']} dry_run={serializable['dry_run']} candidates={serializable['expired_candidate_count']} transitioned={serializable['transitioned_count']}"
+        )
+        for row in serializable["candidates"]:
+            typer.echo(
+                f"  {row['storage_object_id']} | {row['object_kind']} | retention={row['retention_class']} | status={row['lifecycle_status']} | expires_at={row['expires_at']}"
+            )
     finally:
         session.close()
 
@@ -1633,6 +1698,40 @@ def add_source_sync_schedule(
         )
         print_banner()
         typer.echo(f"scheduled task {task.task_id} created for source sync")
+    finally:
+        session.close()
+
+
+@app.command("add-storage-lifecycle-schedule")
+def add_storage_lifecycle_schedule(
+    name: str,
+    interval_seconds: int,
+    retention_class: str | None = None,
+    limit: int = 100,
+    notes: str = "",
+    retry_attempts: int = 1,
+    retry_backoff_seconds: float = 0.0,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        payload_json: dict[str, object] = {"limit": limit}
+        if retention_class:
+            payload_json["retention_class"] = retention_class
+        task = create_scheduled_task(
+            session,
+            ScheduledTaskCreate(
+                name=name,
+                task_type="storage_lifecycle",
+                interval_seconds=interval_seconds,
+                retry_attempts=retry_attempts,
+                retry_backoff_seconds=retry_backoff_seconds,
+                notes=notes,
+                payload_json=payload_json,
+            ),
+        )
+        print_banner()
+        typer.echo(f"scheduled task {task.task_id} created for storage lifecycle sweep")
     finally:
         session.close()
 

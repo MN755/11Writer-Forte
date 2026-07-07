@@ -22,6 +22,7 @@ from src.services.event_fusion_service import materialize_fused_events
 from src.services.geospatial_service import build_contains_geometry_sql_filter, point_in_geometry, uses_postgis
 from src.services.import_service import import_local_path
 from src.services.layer_service import ensure_data_layer
+from src.services.storage_service import sweep_expired_storage_objects
 from src.services.source_service import run_source_definition
 from src.services.trust_service import seed_default_integrity_sources
 
@@ -354,6 +355,27 @@ def execute_task(
                 "import_run_id": source_run.import_run_id,
             },
         )
+    if task.task_type == "storage_lifecycle":
+        retention_class, limit = resolve_storage_lifecycle_payload(task.payload_json)
+        result = sweep_expired_storage_objects(
+            session,
+            retention_class=retention_class,
+            limit=limit,
+            dry_run=False,
+            actor=actor,
+        )
+        return (
+            result.transitioned_count,
+            {
+                "retention_class": retention_class,
+                "limit": limit,
+                "expired_candidate_count": result.expired_candidate_count,
+                "transitioned_count": result.transitioned_count,
+                "storage_object_ids": [
+                    candidate.storage_object_id for candidate in result.candidates
+                ],
+            },
+        )
     if task.task_type == "camera_inventory_refresh":
         source_domain, limit = resolve_camera_inventory_refresh_payload(task.payload_json)
         result = materialize_camera_inventory(
@@ -558,6 +580,10 @@ def validate_task_configuration(
         raise ValueError("Source sync task requires source_id.")
     if task_type == "integrity_seed" and any(value is not None for value in (source_id, target_path, geofence_id)):
         raise ValueError("Integrity seed task does not accept source_id, target_path, or geofence_id.")
+    if task_type == "storage_lifecycle":
+        if any(value is not None for value in (source_id, target_path, geofence_id)):
+            raise ValueError("Storage lifecycle task does not accept source_id, target_path, or geofence_id.")
+        resolve_storage_lifecycle_payload(payload_json)
     if task_type == "camera_inventory_refresh":
         if any(value is not None for value in (source_id, target_path, geofence_id)):
             raise ValueError(
@@ -642,6 +668,34 @@ def resolve_camera_inventory_refresh_payload(
         raise ValueError("Camera inventory refresh payload limit must be between 1 and 5000.")
 
     return source_domain, limit_value
+
+
+def resolve_storage_lifecycle_payload(
+    payload_json: dict[str, object] | None,
+) -> tuple[str | None, int]:
+    payload = resolve_scheduler_payload_json("Storage lifecycle", payload_json)
+
+    retention_class_value = payload.get("retention_class")
+    if retention_class_value is not None and not isinstance(retention_class_value, str):
+        raise ValueError("Storage lifecycle payload retention_class must be a string.")
+    retention_class = retention_class_value.strip() if isinstance(retention_class_value, str) else None
+    if retention_class == "":
+        retention_class = None
+    if retention_class is not None and retention_class not in {
+        "ephemeral",
+        "operational",
+        "investigative",
+        "permanent",
+    }:
+        raise ValueError("Storage lifecycle payload retention_class is not supported.")
+
+    limit_value = payload.get("limit", 100)
+    if isinstance(limit_value, bool) or not isinstance(limit_value, int):
+        raise ValueError("Storage lifecycle payload limit must be an integer.")
+    if limit_value < 1 or limit_value > 1000:
+        raise ValueError("Storage lifecycle payload limit must be between 1 and 1000.")
+
+    return retention_class, limit_value
 
 
 def build_entity_resolution_request(
