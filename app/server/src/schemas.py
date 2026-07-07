@@ -322,6 +322,8 @@ class ScheduledTaskCreate(ForteModel):
     task_type: Literal["local_import", "geofence_scan", "integrity_seed", "source_sync"]
     interval_seconds: int = Field(ge=60)
     enabled: bool = True
+    retry_attempts: int = Field(default=1, ge=1, le=10)
+    retry_backoff_seconds: float = Field(default=0.0, ge=0.0, le=300.0)
     source_id: int | None = None
     target_path: str | None = None
     layer_key: str | None = None

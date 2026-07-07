@@ -1,9 +1,44 @@
 from __future__ import annotations
 
 import json
+import threading
+from contextlib import contextmanager
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+
+
+@contextmanager
+def flaky_scheduler_json_server(payload: list[dict[str, object]]):
+    state = {"requests": 0}
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            state["requests"] += 1
+            if state["requests"] == 1:
+                self.send_response(503)
+                self.send_header("Content-Type", "text/plain")
+                self.end_headers()
+                self.wfile.write(b"temporary failure")
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(payload).encode("utf-8"))
+
+        def log_message(self, format: str, *args: object) -> None:  # noqa: A003
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}/feed.json", state
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
 
 
 def test_geofence_schedule_creates_alert_and_custody_log(
@@ -208,3 +243,83 @@ def test_source_sync_schedule_skips_unchanged_payloads(client: TestClient, tmp_p
         and row["action"] == "source_run_skipped"
         for row in custody_response.json()
     )
+
+
+def test_source_sync_schedule_retries_transient_failure(client: TestClient) -> None:
+    payload = [
+        {
+            "title": "Retry source record",
+            "url": "https://retry.example.com/1",
+            "lat": 29.88,
+            "lon": -95.44,
+        }
+    ]
+    with flaky_scheduler_json_server(payload) as (target_uri, state):
+        source_response = client.post(
+            "/api/sources",
+            json={
+                "name": "retry-http-source",
+                "source_kind": "http_json",
+                "layer_key": "retry-feed",
+                "target_uri": target_uri,
+                "metadata_json": {
+                    "retry_attempts": 1,
+                    "retry_backoff_seconds": 0,
+                    "request_timeout_seconds": 5,
+                },
+            },
+        )
+        assert source_response.status_code == 200
+        source_id = source_response.json()["source_id"]
+
+        schedule_response = client.post(
+            "/api/scheduler/tasks",
+            json={
+                "name": "retry-source-sync-task",
+                "task_type": "source_sync",
+                "interval_seconds": 300,
+                "retry_attempts": 2,
+                "retry_backoff_seconds": 0,
+                "source_id": source_id,
+            },
+        )
+        assert schedule_response.status_code == 200
+        task_id = schedule_response.json()["task_id"]
+        assert schedule_response.json()["retry_attempts"] == 2
+
+        run_response = client.post(f"/api/scheduler/tasks/{task_id}/run")
+        assert run_response.status_code == 200
+        payload = run_response.json()
+        assert payload["status"] == "completed"
+        assert payload["records_affected"] == 1
+        assert payload["output_json"]["attempt_count"] == 2
+        assert payload["output_json"]["max_attempts"] == 2
+        assert len(payload["output_json"]["attempt_errors"]) == 1
+
+        assert state["requests"] == 2
+
+        source_runs_response = client.get("/api/sources/runs")
+        assert source_runs_response.status_code == 200
+        source_runs = source_runs_response.json()
+        assert source_runs[0]["status"] == "completed"
+        assert source_runs[1]["status"] == "failed"
+
+        custody_response = client.get("/api/custody/logs")
+        assert custody_response.status_code == 200
+        custody_rows = custody_response.json()
+        assert any(
+            row["object_type"] == "scheduled_task_run"
+            and row["action"] == "task_attempt_failed"
+            for row in custody_rows
+        )
+        assert any(
+            row["object_type"] == "scheduled_task_run"
+            and row["action"] == "task_retry_scheduled"
+            for row in custody_rows
+        )
+        assert any(
+            row["object_type"] == "scheduled_task_run"
+            and row["action"] == "task_run_completed"
+            and row["details_json"]["attempt_count"] == 2
+            for row in custody_rows
+        )

@@ -608,6 +608,8 @@ def add_local_import_schedule(
     interval_seconds: int,
     layer: str = "unassigned",
     notes: str = "",
+    retry_attempts: int = 1,
+    retry_backoff_seconds: float = 0.0,
 ) -> None:
     init_db()
     session = get_session_factory()()
@@ -618,6 +620,8 @@ def add_local_import_schedule(
                 name=name,
                 task_type="local_import",
                 interval_seconds=interval_seconds,
+                retry_attempts=retry_attempts,
+                retry_backoff_seconds=retry_backoff_seconds,
                 target_path=str(source_path),
                 layer_key=layer,
                 notes=notes,
@@ -635,6 +639,8 @@ def add_geofence_scan_schedule(
     interval_seconds: int,
     geofence_id: int | None = None,
     notes: str = "",
+    retry_attempts: int = 1,
+    retry_backoff_seconds: float = 0.0,
 ) -> None:
     init_db()
     session = get_session_factory()()
@@ -645,6 +651,8 @@ def add_geofence_scan_schedule(
                 name=name,
                 task_type="geofence_scan",
                 interval_seconds=interval_seconds,
+                retry_attempts=retry_attempts,
+                retry_backoff_seconds=retry_backoff_seconds,
                 geofence_id=geofence_id,
                 notes=notes,
             ),
@@ -661,6 +669,8 @@ def add_source_sync_schedule(
     source_id: int,
     interval_seconds: int,
     notes: str = "",
+    retry_attempts: int = 1,
+    retry_backoff_seconds: float = 0.0,
 ) -> None:
     init_db()
     session = get_session_factory()()
@@ -671,6 +681,8 @@ def add_source_sync_schedule(
                 name=name,
                 task_type="source_sync",
                 interval_seconds=interval_seconds,
+                retry_attempts=retry_attempts,
+                retry_backoff_seconds=retry_backoff_seconds,
                 source_id=source_id,
                 notes=notes,
             ),
@@ -690,7 +702,7 @@ def list_schedules() -> None:
         print_banner()
         for row in rows:
             typer.echo(
-                f"{row.task_id} | {row.task_type} | every={row.interval_seconds}s | enabled={row.enabled} | next={row.next_run_at}"
+                f"{row.task_id} | {row.task_type} | every={row.interval_seconds}s | retry={row.retry_attempts} | backoff={row.retry_backoff_seconds}s | enabled={row.enabled} | next={row.next_run_at}"
             )
     finally:
         session.close()

@@ -68,6 +68,10 @@ def reconcile_additive_schema(engine: Engine) -> None:
         "local_import_runs": {
             "records_skipped": "INTEGER NOT NULL DEFAULT 0",
         },
+        "scheduled_tasks": {
+            "retry_attempts": "INTEGER NOT NULL DEFAULT 1",
+            "retry_backoff_seconds": "FLOAT NOT NULL DEFAULT 0.0",
+        },
     }
     inspector = inspect(engine)
     with engine.begin() as connection:
