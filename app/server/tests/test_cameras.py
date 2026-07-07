@@ -56,6 +56,9 @@ def test_camera_inventory_materialization_and_update(client: TestClient, tmp_pat
     assert materialized["created_count"] == 2
     assert materialized["updated_count"] == 0
     assert materialized["scanned_count"] == 2
+    assert materialized["source_created_count"] == 5
+    assert materialized["source_updated_count"] == 0
+    assert materialized["source_scanned_endpoint_count"] == 5
     assert {camera["external_id"] for camera in materialized["cameras"]} == {
         "mndot-i35w-001",
         "mndot-i94-002",
@@ -82,6 +85,27 @@ def test_camera_inventory_materialization_and_update(client: TestClient, tmp_pat
     assert len(active_cameras) == 1
     assert active_cameras[0]["external_id"] == "mndot-i35w-001"
     assert active_cameras[0]["provider"] == "MnDOT"
+
+    source_inventory_response = client.get(
+        "/api/camera-sources",
+        params={"layer_key": "traffic-camera-feed", "limit": 20},
+    )
+    assert source_inventory_response.status_code == 200
+    source_inventory = source_inventory_response.json()
+    assert len(source_inventory) == 5
+    assert {row["endpoint_kind"] for row in source_inventory} == {"image", "stream", "page"}
+    assert all(row["verification_state"] == "observed" for row in source_inventory)
+
+    source_summary_response = client.get(
+        "/api/camera-sources/summary",
+        params={"layer_key": "traffic-camera-feed"},
+    )
+    assert source_summary_response.status_code == 200
+    source_summary = source_summary_response.json()
+    assert source_summary["total_count"] == 5
+    assert source_summary["active_count"] == 3
+    assert source_summary["ready_count"] >= 1
+    assert any(bucket["key"] == "image" for bucket in source_summary["endpoint_kind_counts"])
 
     bbox_response = client.get(
         "/api/cameras",
@@ -133,6 +157,8 @@ def test_camera_inventory_materialization_and_update(client: TestClient, tmp_pat
     second_payload = second_materialization.json()
     assert second_payload["created_count"] == 0
     assert second_payload["updated_count"] == 1
+    assert second_payload["source_created_count"] == 0
+    assert second_payload["source_updated_count"] >= 1
     second_storage_response = client.get(
         "/api/storage/objects",
         params={"owner_type": "camera_inventory", "limit": 20},
@@ -204,6 +230,19 @@ def test_camera_inventory_materialization_and_update(client: TestClient, tmp_pat
     assert report_index["stale_cameras"][0]["camera_inventory_id"] == camera_id
     assert report_index["recent_materializations"][0]["action"] == "camera_materialization_completed"
 
+    camera_source_id = next(
+        row["camera_source_inventory_id"]
+        for row in source_inventory
+        if row["external_id"] == "mndot-i35w-001" and row["endpoint_kind"] == "stream"
+    )
+    source_ops_response = client.get(f"/api/camera-sources/{camera_source_id}/ops")
+    assert source_ops_response.status_code == 200
+    source_ops = source_ops_response.json()
+    assert source_ops["source"]["camera_source_inventory_id"] == camera_source_id
+    assert source_ops["camera"]["camera_inventory_id"] == camera_id
+    assert source_ops["latest_observation"]["observation_id"] == second_payload["cameras"][0]["observation_id"]
+    assert any(log["action"] == "camera_source_updated" for log in source_ops["custody_logs"])
+
     export_summary_response = client.get(
         "/api/cameras/export/summary",
         params={"layer_key": "traffic-camera-feed", "camera_limit": 10, "report_limit": 10},
@@ -222,6 +261,16 @@ def test_camera_inventory_materialization_and_update(client: TestClient, tmp_pat
     assert any(
         row["object_type"] == "camera_inventory_materialization"
         and row["action"] == "camera_materialization_completed"
+        for row in custody_rows
+    )
+    assert any(
+        row["object_type"] == "camera_source_inventory"
+        and row["action"] == "camera_source_registered"
+        for row in custody_rows
+    )
+    assert any(
+        row["object_type"] == "camera_source_materialization"
+        and row["action"] == "camera_source_materialization_completed"
         for row in custody_rows
     )
     assert any(

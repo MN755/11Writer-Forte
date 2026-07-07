@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from src.config import get_settings
 from src.db import init_db
 from src.routes.alerts import router as alerts_router
+from src.routes.camera_sources import router as camera_sources_router
 from src.routes.cameras import router as cameras_router
 from src.routes.clickhouse import router as clickhouse_router
 from src.routes.custody import router as custody_router
@@ -45,6 +46,7 @@ def create_application() -> FastAPI:
     application.include_router(layer_router, prefix=settings.api_prefix)
     application.include_router(geofences_router, prefix=settings.api_prefix)
     application.include_router(alerts_router, prefix=settings.api_prefix)
+    application.include_router(camera_sources_router, prefix=settings.api_prefix)
     application.include_router(cameras_router, prefix=settings.api_prefix)
     application.include_router(clickhouse_router, prefix=settings.api_prefix)
     application.include_router(custody_router, prefix=settings.api_prefix)

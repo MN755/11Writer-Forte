@@ -11,6 +11,8 @@ ApprovalPolicy = Literal["auto_approve_stable", "manual_review", "always_review"
 StorageTier = Literal["hot", "warm", "archive"]
 RetentionClass = Literal["ephemeral", "operational", "investigative", "permanent"]
 StorageLifecycleStatus = Literal["active", "promoted", "degraded", "archived", "expired"]
+CameraSourceStatus = Literal["candidate", "review", "ready", "graduated", "ignored", "retired"]
+CameraSourceVerificationState = Literal["unknown", "observed", "reachable", "failed"]
 
 
 class ForteModel(BaseModel):
@@ -136,6 +138,7 @@ class RuntimeSnapshotRead(ForteModel):
     entities: list["EntityRead"]
     observations: list["ObservationRead"]
     camera_inventory: list["CameraInventoryRead"]
+    camera_source_inventory: list["CameraSourceInventoryRead"]
     storage_objects: list["StorageObjectRead"]
     event_observation_links: list["EventObservationLinkRead"]
     entity_observation_links: list["EntityObservationLinkRead"]
@@ -315,6 +318,9 @@ class CameraMaterializationResponse(ForteModel):
     created_count: int
     updated_count: int
     scanned_count: int
+    source_created_count: int = 0
+    source_updated_count: int = 0
+    source_scanned_endpoint_count: int = 0
     cameras: list[CameraInventoryRead]
 
 
@@ -345,6 +351,73 @@ class CameraInventoryOpsDetailRead(ForteModel):
     latest_import_run: LocalImportRunSummaryRead | None
     custody_logs: list["CustodyLogRead"]
     refresh_tasks: list["ScheduledTaskRead"]
+
+
+class CameraSourceInventoryRead(ForteModel):
+    camera_source_inventory_id: int
+    candidate_key: str
+    camera_inventory_id: int | None
+    observation_id: int | None
+    external_id: str | None
+    name: str
+    source_domain: str | None
+    layer_key: str
+    provider: str
+    endpoint_kind: str
+    endpoint_url: str
+    status: CameraSourceStatus
+    verification_state: CameraSourceVerificationState
+    active: bool
+    last_observed_at: datetime | None
+    last_checked_at: datetime | None
+    confidence_score: float
+    graduation_score: float
+    metadata_json: dict[str, Any]
+    created_at: datetime
+    updated_at: datetime
+
+
+class CameraSourceMaterializationRequest(ForteModel):
+    layer_key: str | None = None
+    source_domain: str | None = None
+    active: bool | None = None
+    limit: int = Field(default=500, ge=1, le=5000)
+
+
+class CameraSourceMaterializationResponse(ForteModel):
+    created_count: int
+    updated_count: int
+    scanned_camera_count: int
+    scanned_endpoint_count: int
+    sources: list[CameraSourceInventoryRead]
+
+
+class CameraSourceSummaryBucketRead(ForteModel):
+    key: str
+    total_count: int
+    active_count: int
+    ready_count: int
+    review_count: int
+
+
+class CameraSourceSummaryRead(ForteModel):
+    generated_at: datetime
+    total_count: int
+    active_count: int
+    ready_count: int
+    review_count: int
+    candidate_count: int
+    graduated_count: int
+    source_domain_counts: list[CameraSourceSummaryBucketRead]
+    endpoint_kind_counts: list[CameraSourceSummaryBucketRead]
+    status_counts: list[CameraSourceSummaryBucketRead]
+
+
+class CameraSourceOpsDetailRead(ForteModel):
+    source: CameraSourceInventoryRead
+    camera: CameraInventoryRead | None
+    latest_observation: ObservationRead | None
+    custody_logs: list["CustodyLogRead"]
 
 
 class EventObservationLinkRead(ForteModel):

@@ -10,6 +10,7 @@ from src.config import get_settings
 from src.models import (
     AlertORM,
     CameraInventoryORM,
+    CameraSourceInventoryORM,
     CustodyLogORM,
     DataLayerORM,
     EntityObservationLinkORM,
@@ -30,6 +31,7 @@ from src.models import (
 from src.schemas import (
     AlertRead,
     CameraInventoryRead,
+    CameraSourceInventoryRead,
     CustodyLogRead,
     DataLayerRead,
     DatabaseTableCountRead,
@@ -72,6 +74,12 @@ SNAPSHOT_SECTIONS: tuple[tuple[str, object, type[BaseModel], object], ...] = (
     ("entities", EntityORM, EntityRead, EntityORM.entity_id),
     ("observations", ObservationORM, ObservationRead, ObservationORM.observation_id),
     ("camera_inventory", CameraInventoryORM, CameraInventoryRead, CameraInventoryORM.camera_inventory_id),
+    (
+        "camera_source_inventory",
+        CameraSourceInventoryORM,
+        CameraSourceInventoryRead,
+        CameraSourceInventoryORM.camera_source_inventory_id,
+    ),
     ("storage_objects", StorageObjectORM, StorageObjectRead, StorageObjectORM.storage_object_id),
     (
         "event_observation_links",
@@ -103,6 +111,7 @@ RESTORE_ORDER: tuple[tuple[str, object], ...] = (
     ("entities", EntityORM),
     ("observations", ObservationORM),
     ("camera_inventory", CameraInventoryORM),
+    ("camera_source_inventory", CameraSourceInventoryORM),
     ("storage_objects", StorageObjectORM),
     ("event_observation_links", EventObservationLinkORM),
     ("entity_observation_links", EntityObservationLinkORM),
