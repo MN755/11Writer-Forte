@@ -40,6 +40,7 @@ from src.services.import_service import import_local_path
 from src.services.layer_service import create_data_layer, list_data_layers
 from src.services.observation_service import build_cross_verification_summaries, query_observations
 from src.services.operations_report_service import build_operations_report
+from src.services.redaction_service import enforce_export_redaction
 from src.services.scheduler_runtime_service import run_scheduler_worker
 from src.services.scheduler_service import create_scheduled_task, run_due_tasks, run_task, update_scheduled_task
 from src.services.source_service import (
@@ -652,7 +653,12 @@ def show_event_products(event_id: int) -> None:
 
 
 @app.command("export-event-product")
-def export_event_product(event_id: int, product_type: str, output_path: Path) -> None:
+def export_event_product(
+    event_id: int,
+    product_type: str,
+    output_path: Path,
+    max_redaction_level: str | None = None,
+) -> None:
     init_db()
     session = get_session_factory()()
     try:
@@ -666,6 +672,10 @@ def export_event_product(event_id: int, product_type: str, output_path: Path) ->
             raise typer.BadParameter(
                 f"No product '{product_type}' exists for event {event_id}."
             )
+        try:
+            enforce_export_redaction(product, max_redaction_level)
+        except ValueError as exc:
+            raise typer.BadParameter(str(exc)) from exc
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(product.body_text, encoding="utf-8")
         print_banner()
@@ -675,11 +685,18 @@ def export_event_product(event_id: int, product_type: str, output_path: Path) ->
 
 
 @app.command("export-event-bundle")
-def export_event_bundle(event_id: int, output_path: Path) -> None:
+def export_event_bundle(
+    event_id: int,
+    output_path: Path,
+    max_redaction_level: str | None = None,
+) -> None:
     init_db()
     session = get_session_factory()()
     try:
-        bundle = build_event_export_bundle(session, event_id)
+        try:
+            bundle = build_event_export_bundle(session, event_id, max_redaction_level=max_redaction_level)
+        except ValueError as exc:
+            raise typer.BadParameter(str(exc)) from exc
         serializable = TypeAdapter(EventExportBundleRead).validate_python(bundle).model_dump(mode="json")
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(json.dumps(serializable, indent=2), encoding="utf-8")
