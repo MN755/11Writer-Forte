@@ -68,8 +68,8 @@ elevenwriter list-entities
 elevenwriter show-entity-observations 1
 elevenwriter fuse-events --bbox "-96,29,-94,31" --distance-km 10
 elevenwriter show-event-products 1
-elevenwriter export-event-product 1 cited_summary ./exports/event-1-summary.txt
-elevenwriter export-event-bundle 1 ./exports/event-1-bundle.json
+elevenwriter export-event-product 1 cited_summary ./exports/event-1-summary.txt --max-redaction-level public
+elevenwriter export-event-bundle 1 ./exports/event-1-bundle.json --max-redaction-level public
 elevenwriter add-source-sync-schedule nightly-sync 1 300 --retry-attempts 3 --retry-backoff-seconds 5
 elevenwriter add-geofence-scan-schedule nightly-watch 300
 elevenwriter update-schedule 1 --enabled false --notes "Paused for maintenance"
@@ -106,6 +106,7 @@ By default the compose stack starts the API, a scheduler worker, and PostGIS-rea
 - Event fusion is rule-based today: corroborated clusters materialize into events, linked evidence rows, a cited summary, and a longer report so the headless runtime can emit usable products before LLM narrative generation exists.
 - Event export bundles package the event, linked observations, resolved entities, import/source context, generated products, citations, and relevant custody records into one JSON artifact for downstream systems or archival.
 - Event export bundles now also carry relevant alerts plus scheduled task and scheduled run history, so downstream review can see not just the evidence but the operational path that produced and monitored it.
+- Event and product exports now honor requested redaction ceilings, so lower-clearance bundles can exclude higher-sensitivity entities and products instead of leaking them by accident like amateurs.
 - Managed sources provide a named catalog for repeatable ingestion; scheduler tasks can now sync those source definitions instead of only replaying raw file paths.
 - Managed sources and scheduled tasks now support update/enable-disable lifecycle controls with custody logs, so operators can pause, retarget, and resume headless workflows without deleting history.
 - HTTP-managed sources support retry attempts, timeout controls, custom headers, cached payload materialization, and persisted fetch metadata so headless sync jobs have enough operational context to debug failures.

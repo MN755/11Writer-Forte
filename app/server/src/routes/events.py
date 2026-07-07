@@ -19,6 +19,7 @@ from src.schemas import (
 from src.services.event_export_service import build_event_export_bundle
 from src.services.event_fusion_service import materialize_fused_events
 from src.services.layer_service import create_data_layer, list_data_layers
+from src.services.redaction_service import enforce_export_redaction, filter_records_by_redaction_level
 
 router = APIRouter(prefix="/events", tags=["events"])
 layer_router = APIRouter(prefix="/layers", tags=["layers"])
@@ -67,20 +68,37 @@ def list_event_observations(event_id: int, session: Session = Depends(get_db)) -
 
 
 @router.get("/{event_id}/products", response_model=list[SituationProductRead])
-def list_event_products(event_id: int, session: Session = Depends(get_db)) -> list[SituationProductORM]:
+def list_event_products(
+    event_id: int,
+    max_redaction_level: str | None = None,
+    session: Session = Depends(get_db),
+) -> list[SituationProductORM]:
     event = session.get(EventORM, event_id)
     if event is None:
         raise HTTPException(status_code=404, detail=f"Event {event_id} does not exist.")
+    try:
+        enforce_export_redaction(event, max_redaction_level)
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     statement = select(SituationProductORM).where(SituationProductORM.event_id == event_id)
-    return list(session.scalars(statement.order_by(SituationProductORM.product_id.asc())))
+    rows = list(session.scalars(statement.order_by(SituationProductORM.product_id.asc())))
+    if max_redaction_level is None:
+        return rows
+    return filter_records_by_redaction_level(rows, max_redaction_level)
 
 
 @router.get("/{event_id}/export", response_model=EventExportBundleRead)
-def export_event_bundle(event_id: int, session: Session = Depends(get_db)) -> dict[str, object]:
+def export_event_bundle(
+    event_id: int,
+    max_redaction_level: str | None = None,
+    session: Session = Depends(get_db),
+) -> dict[str, object]:
     try:
-        return build_event_export_bundle(session, event_id)
+        return build_event_export_bundle(session, event_id, max_redaction_level=max_redaction_level)
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        detail = str(exc)
+        status_code = 403 if "cannot be exported" in detail else 404
+        raise HTTPException(status_code=status_code, detail=detail) from exc
 
 
 @layer_router.get("", response_model=list[DataLayerRead])

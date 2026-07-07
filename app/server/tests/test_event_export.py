@@ -4,6 +4,10 @@ import json
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from sqlalchemy import select
+
+from src.db import get_session_factory
+from src.models import EntityORM, SituationProductORM
 
 
 def test_event_export_bundle_includes_evidence_products_and_runs(
@@ -166,3 +170,175 @@ def test_event_export_bundle_includes_evidence_products_and_runs(
         row["action"] == "bundle_exported" and row["object_type"] == "event_export"
         for row in payload["custody_logs"]
     )
+
+
+def test_event_export_bundle_honors_requested_redaction_level(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    fixture = tmp_path / "restricted-bundle.json"
+    fixture.write_text(
+        json.dumps(
+            [
+                {
+                    "title": "Restricted bundle source",
+                    "url": "https://restricted.example.com/1",
+                    "lat": 29.76,
+                    "lon": -95.36,
+                    "vessel_name": "MV Restricted",
+                    "mmsi": "987654321",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    corroboration = tmp_path / "restricted-bundle-2.json"
+    corroboration.write_text(
+        json.dumps(
+            [
+                {
+                    "title": "Restricted corroboration",
+                    "url": "https://restricted-two.example.com/1",
+                    "lat": 29.77,
+                    "lon": -95.35,
+                    "vessel_name": "MV Restricted",
+                    "mmsi": "987654321",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    client.post("/api/imports/local", json={"source_path": str(fixture), "layer_key": "marine-track"})
+    client.post("/api/imports/local", json={"source_path": str(corroboration), "layer_key": "news-track"})
+
+    entity_resolution = client.post(
+        "/api/entities/resolve",
+        json={
+            "min_lon": -96.0,
+            "min_lat": 29.0,
+            "max_lon": -94.0,
+            "max_lat": 31.0,
+            "min_observations": 2,
+            "redaction_level": "confidential",
+        },
+    )
+    assert entity_resolution.status_code == 200
+
+    fused = client.post(
+        "/api/events/fuse",
+        json={
+            "min_lon": -96.0,
+            "min_lat": 29.0,
+            "max_lon": -94.0,
+            "max_lat": 31.0,
+            "distance_km": 10,
+            "time_window_minutes": 120,
+            "redaction_level": "public",
+        },
+    )
+    assert fused.status_code == 200
+    event_id = fused.json()["event_results"][0]["event_id"]
+
+    session = get_session_factory()()
+    try:
+        report_product = session.scalar(
+            select(SituationProductORM).where(
+                SituationProductORM.event_id == event_id,
+                SituationProductORM.product_type == "report",
+            )
+        )
+        assert report_product is not None
+        report_product.redaction_level = "confidential"
+        entity = session.scalar(select(EntityORM).order_by(EntityORM.entity_id.asc()))
+        assert entity is not None
+        entity.redaction_level = "confidential"
+        session.commit()
+    finally:
+        session.close()
+
+    public_bundle = client.get(
+        f"/api/events/{event_id}/export",
+        params={"max_redaction_level": "public"},
+    )
+    assert public_bundle.status_code == 200
+    public_payload = public_bundle.json()
+    assert len(public_payload["products"]) == 1
+    assert public_payload["products"][0]["product_type"] == "cited_summary"
+    assert not public_payload["entities"]
+    assert not public_payload["entity_observation_links"]
+    assert all(citation["source_domain"] for citation in public_payload["citations_json"])
+
+    products_response = client.get(
+        f"/api/events/{event_id}/products",
+        params={"max_redaction_level": "public"},
+    )
+    assert products_response.status_code == 200
+    assert len(products_response.json()) == 1
+
+    restricted_product_export = client.get(
+        f"/api/events/{event_id}/export",
+        params={"max_redaction_level": "confidential"},
+    )
+    assert restricted_product_export.status_code == 200
+    confidential_payload = restricted_product_export.json()
+    assert len(confidential_payload["products"]) == 2
+    assert len(confidential_payload["entities"]) == 1
+
+
+def test_event_export_bundle_rejects_lower_redaction_level_than_event(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    fixture_a = tmp_path / "confidential-event-a.json"
+    fixture_a.write_text(
+        json.dumps(
+            [
+                {
+                    "title": "Confidential event source",
+                    "url": "https://confidential.example.com/1",
+                    "lat": 29.76,
+                    "lon": -95.36,
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    fixture_b = tmp_path / "confidential-event-b.json"
+    fixture_b.write_text(
+        json.dumps(
+            [
+                {
+                    "title": "Confidential corroboration",
+                    "url": "https://confidential-two.example.com/1",
+                    "lat": 29.77,
+                    "lon": -95.35,
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+    client.post("/api/imports/local", json={"source_path": str(fixture_a), "layer_key": "confidential-feed"})
+    client.post("/api/imports/local", json={"source_path": str(fixture_b), "layer_key": "confidential-news"})
+
+    fused = client.post(
+        "/api/events/fuse",
+        json={
+            "min_lon": -96.0,
+            "min_lat": 29.0,
+            "max_lon": -94.0,
+            "max_lat": 31.0,
+            "distance_km": 10,
+            "time_window_minutes": 120,
+            "redaction_level": "confidential",
+        },
+    )
+    assert fused.status_code == 200
+    event_id = fused.json()["event_results"][0]["event_id"]
+
+    export_response = client.get(
+        f"/api/events/{event_id}/export",
+        params={"max_redaction_level": "public"},
+    )
+    assert export_response.status_code == 403
+    assert "cannot be exported" in export_response.json()["detail"]

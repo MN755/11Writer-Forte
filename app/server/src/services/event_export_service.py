@@ -20,16 +20,26 @@ from src.models import (
     SourceDefinitionORM,
     SourceRunORM,
 )
+from src.services.redaction_service import (
+    enforce_export_redaction,
+    filter_records_by_redaction_level,
+    normalize_redaction_level,
+)
 
 
 def export_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def build_event_export_bundle(session: Session, event_id: int) -> dict[str, object]:
+def build_event_export_bundle(
+    session: Session,
+    event_id: int,
+    max_redaction_level: str | None = None,
+) -> dict[str, object]:
     event = session.get(EventORM, event_id)
     if event is None:
         raise ValueError(f"Event {event_id} does not exist.")
+    enforce_export_redaction(event, max_redaction_level)
     exported_at = export_now()
 
     observation_links = list(
@@ -62,6 +72,13 @@ def build_event_export_bundle(session: Session, event_id: int) -> dict[str, obje
             .order_by(EntityORM.entity_id.asc())
         )
     ) if entity_ids else []
+    entities = filter_records_by_redaction_level(entities, max_redaction_level)
+    entity_ids = sorted({entity.entity_id for entity in entities})
+    entity_observation_links = [
+        link
+        for link in entity_observation_links
+        if link.entity_id in entity_ids
+    ]
 
     import_run_ids = sorted(
         {
@@ -101,6 +118,7 @@ def build_event_export_bundle(session: Session, event_id: int) -> dict[str, obje
             .order_by(SituationProductORM.product_id.asc())
         )
     )
+    products = filter_records_by_redaction_level(products, max_redaction_level)
     alerts = filter_relevant_alerts(session, event_id=event_id, observation_ids=observation_ids)
     geofence_ids = sorted({alert.geofence_id for alert in alerts if alert.geofence_id is not None})
     scheduled_tasks = list(
@@ -154,6 +172,7 @@ def build_event_export_bundle(session: Session, event_id: int) -> dict[str, obje
             observation_count=len(observations),
             product_count=len(products),
             entity_count=len(entities),
+            max_redaction_level=max_redaction_level,
         ),
     )
     citations_json = flatten_citations(products)
@@ -175,6 +194,9 @@ def build_event_export_bundle(session: Session, event_id: int) -> dict[str, obje
         "products": products,
         "custody_logs": custody_logs,
         "citations_json": citations_json,
+        "requested_redaction_level": normalize_redaction_level(max_redaction_level)
+        if max_redaction_level is not None
+        else None,
     }
 
 
@@ -291,6 +313,7 @@ def log_bundle_export(
     observation_count: int,
     product_count: int,
     entity_count: int,
+    max_redaction_level: str | None,
 ) -> CustodyLogORM:
     record = CustodyLogORM(
         object_type="event_export",
@@ -303,6 +326,9 @@ def log_bundle_export(
             "observation_count": observation_count,
             "product_count": product_count,
             "entity_count": entity_count,
+            "requested_redaction_level": normalize_redaction_level(max_redaction_level)
+            if max_redaction_level is not None
+            else None,
         },
     )
     session.add(record)
