@@ -8,6 +8,11 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from src.db import get_session_factory
+from src.models import ScheduledTaskORM
+from src.services.scheduler_runtime_service import run_scheduler_worker
+from src.services.scheduler_service import scheduler_now
+
 
 @contextmanager
 def flaky_scheduler_json_server(payload: list[dict[str, object]]):
@@ -344,6 +349,156 @@ def test_source_sync_schedule_retries_transient_failure(client: TestClient) -> N
             and row["details_json"]["attempt_count"] == 2
             for row in custody_rows
         )
+
+
+def test_run_due_tasks_continues_after_failed_task_and_runs_other_due_tasks(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    failing_source_fixture = tmp_path / "failing-source.json"
+    failing_source_fixture.write_text(
+        json.dumps(
+            [
+                {
+                    "title": "Disabled source",
+                    "url": "https://disabled.example.com/1",
+                    "lat": 30.2,
+                    "lon": -95.2,
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    source_response = client.post(
+        "/api/sources",
+        json={
+            "name": "disabled-source",
+            "source_kind": "local_file",
+            "layer_key": "disabled-feed",
+            "target_uri": str(failing_source_fixture),
+            "enabled": False,
+        },
+    )
+    assert source_response.status_code == 200
+    disabled_source_id = source_response.json()["source_id"]
+
+    good_fixture = tmp_path / "good-import.json"
+    good_fixture.write_text(
+        json.dumps(
+            [
+                {
+                    "title": "Healthy import",
+                    "url": "https://healthy.example.com/1",
+                    "lat": 30.3,
+                    "lon": -95.3,
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    failing_task = client.post(
+        "/api/scheduler/tasks",
+        json={
+            "name": "disabled-source-task",
+            "task_type": "source_sync",
+            "interval_seconds": 300,
+            "source_id": disabled_source_id,
+        },
+    )
+    assert failing_task.status_code == 200
+    failing_task_id = failing_task.json()["task_id"]
+
+    good_task = client.post(
+        "/api/scheduler/tasks",
+        json={
+            "name": "healthy-import-task",
+            "task_type": "local_import",
+            "interval_seconds": 300,
+            "target_path": str(good_fixture),
+            "layer_key": "healthy-feed",
+        },
+    )
+    assert good_task.status_code == 200
+    good_task_id = good_task.json()["task_id"]
+
+    session = get_session_factory()()
+    try:
+        for task_id in (failing_task_id, good_task_id):
+            task = session.get(ScheduledTaskORM, task_id)
+            assert task is not None
+            task.next_run_at = scheduler_now()
+        session.commit()
+    finally:
+        session.close()
+
+    due_response = client.post("/api/scheduler/run-due")
+    assert due_response.status_code == 200
+    assert due_response.json()["runs_created"] == 2
+
+    run_rows = client.get("/api/scheduler/runs")
+    assert run_rows.status_code == 200
+    payload = run_rows.json()
+    status_by_task = {row["task_id"]: row["status"] for row in payload[:2]}
+    assert status_by_task[failing_task_id] == "failed"
+    assert status_by_task[good_task_id] == "completed"
+
+    imports_response = client.get("/api/imports/runs")
+    assert imports_response.status_code == 200
+    assert imports_response.json()[0]["records_imported"] == 1
+
+
+def test_scheduler_worker_once_runs_due_tasks(client: TestClient, tmp_path: Path) -> None:
+    fixture = tmp_path / "worker-once.json"
+    fixture.write_text(
+        json.dumps(
+            [
+                {
+                    "title": "Worker import",
+                    "url": "https://worker.example.com/1",
+                    "lat": 29.95,
+                    "lon": -95.05,
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    task_response = client.post(
+        "/api/scheduler/tasks",
+        json={
+            "name": "worker-once-task",
+            "task_type": "local_import",
+            "interval_seconds": 300,
+            "target_path": str(fixture),
+            "layer_key": "worker-feed",
+        },
+    )
+    assert task_response.status_code == 200
+    task_id = task_response.json()["task_id"]
+
+    session = get_session_factory()()
+    try:
+        task = session.get(ScheduledTaskORM, task_id)
+        assert task is not None
+        task.next_run_at = scheduler_now()
+        session.commit()
+    finally:
+        session.close()
+
+    result = run_scheduler_worker(
+        get_session_factory(),
+        poll_seconds=0,
+        actor="test_scheduler_worker",
+        once=True,
+        sleep_fn=lambda _: None,
+    )
+    assert result.iterations == 1
+    assert result.runs_created == 1
+    assert len(result.task_run_ids) == 1
+
+    imports_response = client.get("/api/imports/runs")
+    assert imports_response.status_code == 200
+    assert imports_response.json()[0]["records_imported"] == 1
 
 
 def test_schedule_update_can_disable_then_reenable_task(client: TestClient, tmp_path: Path) -> None:

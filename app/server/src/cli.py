@@ -40,6 +40,7 @@ from src.services.import_service import import_local_path
 from src.services.layer_service import create_data_layer, list_data_layers
 from src.services.observation_service import build_cross_verification_summaries, query_observations
 from src.services.operations_report_service import build_operations_report
+from src.services.scheduler_runtime_service import run_scheduler_worker
 from src.services.scheduler_service import create_scheduled_task, run_due_tasks, run_task, update_scheduled_task
 from src.services.source_service import (
     create_source_definition,
@@ -126,6 +127,12 @@ def parse_json_object_option(value: str | None, option_name: str) -> dict[str, o
     if not isinstance(parsed, dict):
         raise typer.BadParameter(f"{option_name} must decode to a JSON object.")
     return parsed
+
+
+def resolve_scheduler_poll_seconds(value: float | None) -> float:
+    if value is not None:
+        return max(0.0, value)
+    return max(0.0, get_settings().scheduler_poll_seconds)
 
 
 @app.command("status")
@@ -1002,6 +1009,37 @@ def run_due_schedules() -> None:
         typer.echo(f"runs_created={len(runs)}")
     finally:
         session.close()
+
+
+@app.command("scheduler-worker")
+def scheduler_worker_command(
+    poll_seconds: float | None = None,
+    once: bool = False,
+    max_iterations: int | None = None,
+) -> None:
+    init_db()
+    resolved_poll_seconds = resolve_scheduler_poll_seconds(poll_seconds)
+    print_banner()
+    typer.echo(
+        f"scheduler worker starting | poll_seconds={resolved_poll_seconds} | once={once} | max_iterations={max_iterations}"
+    )
+
+    def on_iteration(iteration: int, runs: list[ScheduledTaskRunORM]) -> None:
+        typer.echo(
+            f"iteration={iteration} runs_created={len(runs)} statuses={[run.status for run in runs]}"
+        )
+
+    result = run_scheduler_worker(
+        get_session_factory(),
+        poll_seconds=resolved_poll_seconds,
+        actor="cli_scheduler_worker",
+        once=once,
+        max_iterations=max_iterations,
+        on_iteration=on_iteration,
+    )
+    typer.echo(
+        f"scheduler worker stopped | iterations={result.iterations} runs_created={result.runs_created}"
+    )
 
 
 @app.command("run-schedule")
