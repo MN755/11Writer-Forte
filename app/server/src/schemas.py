@@ -428,6 +428,13 @@ class SourceRunRead(ForteModel):
     output_json: dict[str, Any]
 
 
+class SourceOpsDetailRead(ForteModel):
+    source: SourceDefinitionRead
+    recent_runs: list[SourceRunRead]
+    storage_objects: list[StorageObjectRead]
+    custody_logs: list["CustodyLogRead"]
+
+
 class IntegritySeedResponse(ForteModel):
     created: int
     domains: list[str]
