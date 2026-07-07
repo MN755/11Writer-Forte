@@ -2,12 +2,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from src.db import get_db
-from src.schemas import SourceDefinitionCreate, SourceDefinitionRead, SourceRunRead
+from src.schemas import SourceDefinitionCreate, SourceDefinitionRead, SourceDefinitionUpdate, SourceRunRead
 from src.services.source_service import (
     create_source_definition,
     list_source_definitions,
     list_source_runs,
     run_source_definition,
+    update_source_definition,
 )
 
 router = APIRouter(prefix="/sources", tags=["sources"])
@@ -20,7 +21,18 @@ def list_sources(session: Session = Depends(get_db)) -> list[object]:
 
 @router.post("", response_model=SourceDefinitionRead)
 def create_source(payload: SourceDefinitionCreate, session: Session = Depends(get_db)) -> object:
-    return create_source_definition(session, payload)
+    try:
+        return create_source_definition(session, payload)
+    except ValueError as exc:
+        raise translate_source_error(exc) from exc
+
+
+@router.patch("/{source_id}", response_model=SourceDefinitionRead)
+def update_source(source_id: int, payload: SourceDefinitionUpdate, session: Session = Depends(get_db)) -> object:
+    try:
+        return update_source_definition(session, source_id, payload)
+    except ValueError as exc:
+        raise translate_source_error(exc) from exc
 
 
 @router.get("/runs", response_model=list[SourceRunRead])
@@ -33,4 +45,10 @@ def run_source(source_id: int, session: Session = Depends(get_db)) -> object:
     try:
         return run_source_definition(session, source_id)
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise translate_source_error(exc) from exc
+
+
+def translate_source_error(exc: ValueError) -> HTTPException:
+    detail = str(exc)
+    status_code = 404 if "does not exist" in detail else 409
+    return HTTPException(status_code=status_code, detail=detail)

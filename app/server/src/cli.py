@@ -29,7 +29,9 @@ from src.schemas import (
     EntityResolutionRequest,
     OperationsReportRead,
     ScheduledTaskCreate,
+    ScheduledTaskUpdate,
     SourceDefinitionCreate,
+    SourceDefinitionUpdate,
 )
 from src.services.entity_resolution_service import materialize_entities
 from src.services.event_export_service import build_event_export_bundle
@@ -38,12 +40,13 @@ from src.services.import_service import import_local_path
 from src.services.layer_service import create_data_layer, list_data_layers
 from src.services.observation_service import build_cross_verification_summaries, query_observations
 from src.services.operations_report_service import build_operations_report
-from src.services.scheduler_service import create_scheduled_task, run_due_tasks, run_task
+from src.services.scheduler_service import create_scheduled_task, run_due_tasks, run_task, update_scheduled_task
 from src.services.source_service import (
     create_source_definition,
     list_source_definitions,
     list_source_runs,
     run_source_definition,
+    update_source_definition,
 )
 from src.services.trust_service import seed_default_integrity_sources
 
@@ -111,6 +114,18 @@ def build_http_source_metadata(
         metadata["basic_auth_username"] = basic_auth_username
         metadata["basic_auth_password_env"] = basic_auth_password_env
     return metadata
+
+
+def parse_json_object_option(value: str | None, option_name: str) -> dict[str, object] | None:
+    if value is None:
+        return None
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise typer.BadParameter(f"{option_name} must be valid JSON.") from exc
+    if not isinstance(parsed, dict):
+        raise typer.BadParameter(f"{option_name} must decode to a JSON object.")
+    return parsed
 
 
 @app.command("status")
@@ -418,6 +433,50 @@ def run_source(source_id: int) -> None:
         print_banner()
         typer.echo(
             f"source_run={run.source_run_id} import_run={run.import_run_id} records={run.records_imported}"
+        )
+    finally:
+        session.close()
+
+
+@app.command("update-source")
+def update_source_command(
+    source_id: int,
+    name: str | None = None,
+    layer: str | None = None,
+    target_uri: str | None = None,
+    enabled: bool | None = typer.Option(default=None),
+    integrity_source: bool | None = typer.Option(default=None),
+    notes: str | None = None,
+    metadata_json: str | None = None,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        payload: dict[str, object] = {}
+        if name is not None:
+            payload["name"] = name
+        if layer is not None:
+            payload["layer_key"] = layer
+        if target_uri is not None:
+            payload["target_uri"] = target_uri
+        if enabled is not None:
+            payload["enabled"] = enabled
+        if integrity_source is not None:
+            payload["integrity_source"] = integrity_source
+        if notes is not None:
+            payload["notes"] = notes
+        parsed_metadata = parse_json_object_option(metadata_json, "--metadata-json")
+        if parsed_metadata is not None:
+            payload["metadata_json"] = parsed_metadata
+        source = update_source_definition(
+            session,
+            source_id,
+            SourceDefinitionUpdate(**payload),
+            actor="cli",
+        )
+        print_banner()
+        typer.echo(
+            f"source {source.source_id} | enabled={source.enabled} | layer={source.layer_key} | target={source.target_uri}"
         )
     finally:
         session.close()
@@ -954,6 +1013,62 @@ def run_schedule(task_id: int) -> None:
         print_banner()
         typer.echo(
             f"task_run={task_run.task_run_id} status={task_run.status} records={task_run.records_affected}"
+        )
+    finally:
+        session.close()
+
+
+@app.command("update-schedule")
+def update_schedule(
+    task_id: int,
+    name: str | None = None,
+    enabled: bool | None = typer.Option(default=None),
+    interval_seconds: int | None = None,
+    retry_attempts: int | None = None,
+    retry_backoff_seconds: float | None = None,
+    source_id: int | None = None,
+    target_path: Path | None = None,
+    layer: str | None = None,
+    geofence_id: int | None = None,
+    notes: str | None = None,
+    payload_json: str | None = None,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        payload: dict[str, object] = {}
+        if name is not None:
+            payload["name"] = name
+        if enabled is not None:
+            payload["enabled"] = enabled
+        if interval_seconds is not None:
+            payload["interval_seconds"] = interval_seconds
+        if retry_attempts is not None:
+            payload["retry_attempts"] = retry_attempts
+        if retry_backoff_seconds is not None:
+            payload["retry_backoff_seconds"] = retry_backoff_seconds
+        if source_id is not None:
+            payload["source_id"] = source_id
+        if target_path is not None:
+            payload["target_path"] = str(target_path)
+        if layer is not None:
+            payload["layer_key"] = layer
+        if geofence_id is not None:
+            payload["geofence_id"] = geofence_id
+        if notes is not None:
+            payload["notes"] = notes
+        parsed_payload = parse_json_object_option(payload_json, "--payload-json")
+        if parsed_payload is not None:
+            payload["payload_json"] = parsed_payload
+        task = update_scheduled_task(
+            session,
+            task_id,
+            ScheduledTaskUpdate(**payload),
+            actor="cli",
+        )
+        print_banner()
+        typer.echo(
+            f"task {task.task_id} | enabled={task.enabled} | every={task.interval_seconds}s | next={task.next_run_at}"
         )
     finally:
         session.close()

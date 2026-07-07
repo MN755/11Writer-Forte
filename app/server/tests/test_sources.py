@@ -321,6 +321,67 @@ def test_source_run_skips_unchanged_payloads(client: TestClient, tmp_path: Path)
     )
 
 
+def test_source_update_can_disable_and_retarget_layer(client: TestClient, tmp_path: Path) -> None:
+    fixture = tmp_path / "lifecycle-source.json"
+    fixture.write_text(
+        json.dumps(
+            [
+                {
+                    "title": "Lifecycle source",
+                    "url": "https://lifecycle.example.com/1",
+                    "lat": 29.72,
+                    "lon": -95.22,
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    source_response = client.post(
+        "/api/sources",
+        json={
+            "name": "lifecycle-source",
+            "source_kind": "local_file",
+            "layer_key": "initial-feed",
+            "target_uri": str(fixture),
+        },
+    )
+    assert source_response.status_code == 200
+    source_id = source_response.json()["source_id"]
+
+    update_response = client.patch(
+        f"/api/sources/{source_id}",
+        json={
+            "enabled": False,
+            "layer_key": "retargeted-feed",
+            "notes": "Disabled for review",
+            "metadata_json": {"skip_unchanged": False},
+        },
+    )
+    assert update_response.status_code == 200
+    payload = update_response.json()
+    assert payload["enabled"] is False
+    assert payload["layer_key"] == "retargeted-feed"
+    assert payload["notes"] == "Disabled for review"
+    assert payload["metadata_json"]["skip_unchanged"] is False
+
+    layers_response = client.get("/api/layers")
+    assert layers_response.status_code == 200
+    assert any(layer["key"] == "retargeted-feed" for layer in layers_response.json())
+
+    blocked_run = client.post(f"/api/sources/{source_id}/run")
+    assert blocked_run.status_code == 409
+    assert "disabled" in blocked_run.json()["detail"]
+
+    custody_response = client.get("/api/custody/logs")
+    assert custody_response.status_code == 200
+    assert any(
+        row["object_type"] == "source_definition"
+        and row["object_id"] == str(source_id)
+        and row["action"] == "source_updated"
+        for row in custody_response.json()
+    )
+
+
 def test_http_xml_source_uses_env_basic_auth_and_parses_records(
     client: TestClient,
     monkeypatch,

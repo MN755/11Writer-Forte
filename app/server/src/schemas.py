@@ -165,6 +165,16 @@ class SourceDefinitionRead(SourceDefinitionCreate):
     updated_at: datetime
 
 
+class SourceDefinitionUpdate(ForteModel):
+    name: str | None = None
+    layer_key: str | None = None
+    target_uri: str | None = None
+    enabled: bool | None = None
+    integrity_source: bool | None = None
+    notes: str | None = None
+    metadata_json: dict[str, Any] | None = None
+
+
 class SourceRunRead(ForteModel):
     source_run_id: int
     source_id: int
@@ -351,6 +361,20 @@ class ScheduledTaskRead(ScheduledTaskCreate):
     next_run_at: datetime | None
     created_at: datetime
     updated_at: datetime
+
+
+class ScheduledTaskUpdate(ForteModel):
+    name: str | None = None
+    enabled: bool | None = None
+    interval_seconds: int | None = Field(default=None, ge=60)
+    retry_attempts: int | None = Field(default=None, ge=1, le=10)
+    retry_backoff_seconds: float | None = Field(default=None, ge=0.0, le=300.0)
+    source_id: int | None = None
+    target_path: str | None = None
+    layer_key: str | None = None
+    geofence_id: int | None = None
+    notes: str | None = None
+    payload_json: dict[str, Any] | None = None
 
 
 class ScheduledTaskRunRead(ForteModel):

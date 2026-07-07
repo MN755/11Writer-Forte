@@ -14,9 +14,10 @@ from src.models import (
     ScheduledTaskORM,
     ScheduledTaskRunORM,
 )
-from src.schemas import ScheduledTaskCreate
+from src.schemas import ScheduledTaskCreate, ScheduledTaskUpdate
 from src.services.geospatial_service import build_contains_geometry_sql_filter, point_in_geometry, uses_postgis
 from src.services.import_service import import_local_path
+from src.services.layer_service import ensure_data_layer
 from src.services.source_service import run_source_definition
 from src.services.trust_service import seed_default_integrity_sources
 
@@ -30,9 +31,18 @@ def compute_next_run(interval_seconds: int, reference: datetime | None = None) -
 
 
 def create_scheduled_task(session: Session, payload: ScheduledTaskCreate) -> ScheduledTaskORM:
+    ensure_unique_task_name(session, payload.name)
+    validate_task_configuration(
+        payload.task_type,
+        source_id=payload.source_id,
+        target_path=payload.target_path,
+        geofence_id=payload.geofence_id,
+    )
+    if payload.layer_key:
+        ensure_data_layer(session, payload.layer_key, actor="scheduler_registry")
     record = ScheduledTaskORM(
         **payload.model_dump(),
-        next_run_at=compute_next_run(payload.interval_seconds),
+        next_run_at=compute_next_run(payload.interval_seconds) if payload.enabled else None,
     )
     session.add(record)
     session.flush()
@@ -45,6 +55,63 @@ def create_scheduled_task(session: Session, payload: ScheduledTaskCreate) -> Sch
             details_json={
                 **payload.model_dump(),
                 "task_id": record.task_id,
+            },
+        )
+    )
+    session.commit()
+    session.refresh(record)
+    return record
+
+
+def update_scheduled_task(
+    session: Session,
+    task_id: int,
+    payload: ScheduledTaskUpdate,
+    actor: str = "system",
+) -> ScheduledTaskORM:
+    record = session.get(ScheduledTaskORM, task_id)
+    if record is None:
+        raise ValueError(f"Scheduled task {task_id} does not exist.")
+
+    changes = payload.model_dump(exclude_unset=True)
+    if not changes:
+        return record
+
+    if "name" in changes and changes["name"] != record.name:
+        ensure_unique_task_name(session, str(changes["name"]), task_id=task_id)
+
+    task_type = record.task_type
+    source_id = int(changes["source_id"]) if "source_id" in changes and changes["source_id"] is not None else (
+        None if "source_id" in changes else record.source_id
+    )
+    target_path = str(changes["target_path"]) if "target_path" in changes and changes["target_path"] is not None else (
+        None if "target_path" in changes else record.target_path
+    )
+    geofence_id = int(changes["geofence_id"]) if "geofence_id" in changes and changes["geofence_id"] is not None else (
+        None if "geofence_id" in changes else record.geofence_id
+    )
+    validate_task_configuration(
+        task_type,
+        source_id=source_id,
+        target_path=target_path,
+        geofence_id=geofence_id,
+    )
+
+    if "layer_key" in changes and changes["layer_key"]:
+        ensure_data_layer(session, str(changes["layer_key"]), actor=actor)
+
+    change_details = apply_task_changes(record, changes)
+    recompute_task_next_run(record, changes)
+    session.add(
+        CustodyLogORM(
+            object_type="scheduled_task",
+            object_id=str(record.task_id),
+            action="task_updated",
+            actor=actor,
+            details_json={
+                "task_id": record.task_id,
+                "changes": change_details,
+                "next_run_at": record.next_run_at.isoformat() if record.next_run_at else None,
             },
         )
     )
@@ -401,3 +468,61 @@ def count_scanned_observations(session: Session, geofences: list[GeofenceORM]) -
             )
         )
     )
+
+
+def validate_task_configuration(
+    task_type: str,
+    *,
+    source_id: int | None,
+    target_path: str | None,
+    geofence_id: int | None,
+) -> None:
+    if task_type == "local_import" and not target_path:
+        raise ValueError("Local import task requires target_path.")
+    if task_type == "source_sync" and source_id is None:
+        raise ValueError("Source sync task requires source_id.")
+    if task_type == "integrity_seed" and any(value is not None for value in (source_id, target_path, geofence_id)):
+        raise ValueError("Integrity seed task does not accept source_id, target_path, or geofence_id.")
+
+
+def ensure_unique_task_name(
+    session: Session,
+    name: str,
+    *,
+    task_id: int | None = None,
+) -> None:
+    statement = select(ScheduledTaskORM).where(ScheduledTaskORM.name == name)
+    existing = session.scalar(statement)
+    if existing is None:
+        return
+    if task_id is not None and existing.task_id == task_id:
+        return
+    raise ValueError(f"Scheduled task name '{name}' already exists.")
+
+
+def apply_task_changes(
+    record: ScheduledTaskORM,
+    changes: dict[str, object],
+) -> dict[str, dict[str, object]]:
+    details: dict[str, dict[str, object]] = {}
+    for field_name, new_value in changes.items():
+        old_value = getattr(record, field_name)
+        if old_value == new_value:
+            continue
+        setattr(record, field_name, new_value)
+        details[field_name] = {
+            "old": old_value,
+            "new": new_value,
+        }
+    return details
+
+
+def recompute_task_next_run(record: ScheduledTaskORM, changes: dict[str, object]) -> None:
+    scheduling_fields = {"enabled", "interval_seconds"}
+    if not scheduling_fields.intersection(changes):
+        return
+    if not record.enabled:
+        record.next_run_at = None
+        return
+    reference = record.last_run_at if record.last_run_at is not None else None
+    record.next_run_at = compute_next_run(record.interval_seconds, reference)
