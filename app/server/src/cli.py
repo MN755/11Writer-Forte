@@ -23,6 +23,11 @@ from src.models import (
     SourceTrustProfileORM,
 )
 from src.schemas import (
+    ClickHouseArchiveResultRead,
+    ClickHouseDiagnosticsRead,
+    ClickHouseProvisionResultRead,
+    ClickHouseR2ConfigRead,
+    ClickHouseSyncResultRead,
     CameraOpsExportSummaryRead,
     CameraOpsReportIndexRead,
     CameraMaterializationResponse,
@@ -42,6 +47,13 @@ from src.schemas import (
     StorageObjectTransitionRequest,
     SourceDefinitionCreate,
     SourceDefinitionUpdate,
+)
+from src.services.clickhouse_service import (
+    archive_clickhouse_observations_to_r2,
+    build_clickhouse_diagnostics,
+    build_clickhouse_r2_config_preview,
+    provision_clickhouse_backend,
+    sync_runtime_to_clickhouse,
 )
 from src.services.camera_service import list_cameras
 from src.services.camera_service import materialize_camera_inventory
@@ -204,6 +216,121 @@ def doctor(output_path: Path | None = None) -> None:
             typer.echo(f"wrote diagnostics to {output_path}")
     finally:
         session.close()
+
+
+@app.command("show-clickhouse-status")
+def show_clickhouse_status() -> None:
+    serializable = TypeAdapter(ClickHouseDiagnosticsRead).validate_python(
+        build_clickhouse_diagnostics()
+    ).model_dump(mode="json")
+    print_banner()
+    typer.echo(
+        "status="
+        f"{serializable['status']} enabled={serializable['enabled']} "
+        f"reachable={serializable['reachable']} database={serializable['clickhouse_database']}"
+    )
+    typer.echo(
+        f"url={serializable['clickhouse_url']} observations={serializable['observation_table']} storage={serializable['storage_object_table']}"
+    )
+    typer.echo(
+        f"r2_configured={serializable['r2_configured']} r2_root={serializable['r2_archive_root']}"
+    )
+    if serializable["warnings"]:
+        typer.echo("warnings:")
+        for warning in serializable["warnings"]:
+            typer.echo(f"  - {warning}")
+    if serializable["notes"]:
+        typer.echo("notes:")
+        for note in serializable["notes"]:
+            typer.echo(f"  - {note}")
+
+
+@app.command("provision-clickhouse")
+def provision_clickhouse_command() -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        result = provision_clickhouse_backend(session, actor="cli_clickhouse")
+        serializable = TypeAdapter(ClickHouseProvisionResultRead).validate_python(result).model_dump(mode="json")
+        print_banner()
+        typer.echo(
+            f"provisioned_at={serializable['provisioned_at']} database={serializable['clickhouse_database']} observations={serializable['observation_table']} storage={serializable['storage_object_table']}"
+        )
+    except (RuntimeError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.command("sync-clickhouse")
+def sync_clickhouse_command(
+    layer: str | None = None,
+    source_domain: str | None = None,
+    limit: int = 1000,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        result = sync_runtime_to_clickhouse(
+            session,
+            layer_key=layer,
+            source_domain=source_domain,
+            limit=limit,
+            actor="cli_clickhouse",
+        )
+        serializable = TypeAdapter(ClickHouseSyncResultRead).validate_python(result).model_dump(mode="json")
+        print_banner()
+        typer.echo(
+            f"synced observations={serializable['observation_count']} storage_objects={serializable['storage_object_count']} database={serializable['clickhouse_database']}"
+        )
+    except (RuntimeError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.command("archive-clickhouse-observations")
+def archive_clickhouse_observations_command(
+    layer: str | None = None,
+    source_domain: str | None = None,
+    limit: int | None = None,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        result = archive_clickhouse_observations_to_r2(
+            session,
+            layer_key=layer,
+            source_domain=source_domain,
+            limit=limit,
+            actor="cli_clickhouse",
+        )
+        serializable = TypeAdapter(ClickHouseArchiveResultRead).validate_python(result).model_dump(mode="json")
+        print_banner()
+        typer.echo(
+            f"archived rows={serializable['exported_row_count']} database={serializable['clickhouse_database']} root={serializable['archive_root_url']}"
+        )
+    except (RuntimeError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.command("show-clickhouse-r2-config")
+def show_clickhouse_r2_config() -> None:
+    try:
+        result = build_clickhouse_r2_config_preview()
+        serializable = TypeAdapter(ClickHouseR2ConfigRead).validate_python(result).model_dump(mode="json")
+        print_banner()
+        typer.echo(f"archive_root: {serializable['archive_root_url']}")
+        typer.echo("storage_xml:")
+        typer.echo(serializable["storage_xml"])
+        typer.echo("create_table_sql:")
+        typer.echo(serializable["create_table_sql"])
+        typer.echo("archive_example_sql:")
+        typer.echo(serializable["archive_example_sql"])
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
 
 
 @app.command("init-db")
