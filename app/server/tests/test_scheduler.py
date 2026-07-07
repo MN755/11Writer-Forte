@@ -14,7 +14,7 @@ from src.db import get_session_factory
 from src.models import ScheduledTaskORM
 from src.services import clickhouse_service
 from src.services.scheduler_runtime_service import run_scheduler_worker
-from src.services.scheduler_service import scheduler_now
+from src.services.scheduler_service import run_task, scheduler_now
 
 
 @contextmanager
@@ -1087,3 +1087,148 @@ def test_schedule_update_can_disable_then_reenable_task(client: TestClient, tmp_
         and row["action"] == "task_updated"
         for row in custody_response.json()
     )
+
+
+def test_scheduler_summary_and_report_index_capture_overdue_failing_and_maintenance_tasks(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    healthy_fixture = tmp_path / "scheduler-summary-healthy.json"
+    healthy_fixture.write_text(
+        json.dumps(
+            [
+                {
+                    "title": "Healthy scheduled import",
+                    "url": "https://scheduler-healthy.example.com/1",
+                    "lat": 30.1,
+                    "lon": -95.1,
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    failing_source = client.post(
+        "/api/sources",
+        json={
+            "name": "scheduler-summary-failing-source",
+            "source_kind": "http_json",
+            "layer_key": "disabled-feed",
+            "target_uri": "http://127.0.0.1:1/failing.json",
+            "metadata_json": {
+                "retry_attempts": 1,
+                "request_timeout_seconds": 1,
+            },
+        },
+    )
+    assert failing_source.status_code == 200
+    failing_source_id = failing_source.json()["source_id"]
+
+    disabled_task = client.post(
+        "/api/scheduler/tasks",
+        json={
+            "name": "scheduler-summary-disabled-task",
+            "task_type": "integrity_seed",
+            "interval_seconds": 300,
+            "enabled": False,
+        },
+    )
+    assert disabled_task.status_code == 200
+
+    disabled_fixture = tmp_path / "scheduler-summary-disabled-source.json"
+    disabled_fixture.write_text(
+        json.dumps(
+            [
+                {
+                    "title": "Disabled sync source",
+                    "url": "https://scheduler-disabled.example.com/1",
+                    "lat": 30.2,
+                    "lon": -95.2,
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    healthy_task = client.post(
+        "/api/scheduler/tasks",
+        json={
+            "name": "scheduler-summary-healthy-task",
+            "task_type": "local_import",
+            "interval_seconds": 300,
+            "target_path": str(healthy_fixture),
+            "layer_key": "ops-feed",
+        },
+    )
+    assert healthy_task.status_code == 200
+    healthy_task_id = healthy_task.json()["task_id"]
+    healthy_run = client.post(f"/api/scheduler/tasks/{healthy_task_id}/run")
+    assert healthy_run.status_code == 200
+
+    failing_task = client.post(
+        "/api/scheduler/tasks",
+        json={
+            "name": "scheduler-summary-failing-task",
+            "task_type": "source_sync",
+            "interval_seconds": 300,
+            "source_id": failing_source_id,
+        },
+    )
+    assert failing_task.status_code == 200
+    failing_task_id = failing_task.json()["task_id"]
+    session = get_session_factory()()
+    try:
+        try:
+            run_task(session, failing_task_id, actor="test_scheduler")
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError("Expected scheduled source sync task to fail.")
+    finally:
+        session.close()
+
+    maintenance_task = client.post(
+        "/api/scheduler/tasks",
+        json={
+            "name": "scheduler-summary-maintenance-task",
+            "task_type": "storage_lifecycle",
+            "interval_seconds": 300,
+            "payload_json": {"limit": 25},
+        },
+    )
+    assert maintenance_task.status_code == 200
+    maintenance_task_id = maintenance_task.json()["task_id"]
+
+    session = get_session_factory()()
+    try:
+        maintenance_record = session.get(ScheduledTaskORM, maintenance_task_id)
+        assert maintenance_record is not None
+        maintenance_record.next_run_at = scheduler_now() - timedelta(minutes=10)
+        session.commit()
+    finally:
+        session.close()
+
+    summary_response = client.get("/api/scheduler/summary")
+    assert summary_response.status_code == 200
+    summary = summary_response.json()
+    assert summary["total_count"] == 4
+    assert summary["enabled_count"] == 3
+    assert summary["disabled_count"] == 1
+    assert summary["due_count"] >= 1
+    assert summary["overdue_count"] >= 1
+    assert summary["failing_count"] == 1
+    assert summary["maintenance_task_count"] == 1
+    assert any(bucket["key"] == "storage_lifecycle" for bucket in summary["task_type_counts"])
+    assert any(bucket["key"] == "failed" for bucket in summary["latest_status_counts"])
+
+    report_response = client.get("/api/scheduler/report-index", params={"limit": 10, "overdue_task_limit": 10})
+    assert report_response.status_code == 200
+    report = report_response.json()
+    assert report["task_run_count"] == 2
+    assert report["task_run_failure_count"] == 1
+    assert report["maintenance_run_count"] == 0
+    assert report["maintenance_failure_count"] == 0
+    assert report["inventory_summary"]["total_count"] == 4
+    assert any(row["task"]["task_id"] == maintenance_task_id for row in report["overdue_tasks"])
+    assert any(row["task"]["task_id"] == failing_task_id for row in report["failing_tasks"])
+    assert any(row["task"]["task_id"] == maintenance_task_id for row in report["maintenance_tasks"])
+    assert any(bucket["key"] == "source_sync" and bucket["failure_count"] == 1 for bucket in report["task_type_run_counts"])

@@ -822,6 +822,59 @@ class ScheduledTaskRunRead(ForteModel):
     output_json: dict[str, Any]
 
 
+class ScheduledTaskOpsStatusRead(ForteModel):
+    task: ScheduledTaskRead
+    latest_run: ScheduledTaskRunRead | None
+    is_due: bool
+    is_overdue: bool
+    is_failing: bool
+
+
+class ScheduledTaskSummaryBucketRead(ForteModel):
+    key: str
+    total_count: int
+    enabled_count: int
+    disabled_count: int
+    due_count: int
+    failing_count: int
+
+
+class ScheduledTaskRunSummaryBucketRead(ForteModel):
+    key: str
+    total_count: int
+    completed_count: int
+    failure_count: int
+
+
+class SchedulerInventorySummaryRead(ForteModel):
+    generated_at: datetime
+    reference_time: datetime
+    total_count: int
+    enabled_count: int
+    disabled_count: int
+    due_count: int
+    overdue_count: int
+    failing_count: int
+    maintenance_task_count: int
+    task_type_counts: list[ScheduledTaskSummaryBucketRead]
+    latest_status_counts: list[ScheduledTaskSummaryBucketRead]
+
+
+class SchedulerOpsReportIndexRead(ForteModel):
+    generated_at: datetime
+    latest_run_at: datetime | None
+    inventory_summary: SchedulerInventorySummaryRead
+    task_run_count: int
+    task_run_failure_count: int
+    maintenance_run_count: int
+    maintenance_failure_count: int
+    task_type_run_counts: list[ScheduledTaskRunSummaryBucketRead]
+    recent_runs: list[ScheduledTaskRunRead]
+    overdue_tasks: list[ScheduledTaskOpsStatusRead]
+    failing_tasks: list[ScheduledTaskOpsStatusRead]
+    maintenance_tasks: list[ScheduledTaskOpsStatusRead]
+
+
 class CameraRefreshTaskRunRead(ForteModel):
     task_run_id: int
     task_id: int
@@ -886,6 +939,8 @@ class OperationsReportRead(ForteModel):
     summary: OperationsSummaryRead
     storage_report: StorageReportRead
     clickhouse_diagnostics: ClickHouseDiagnosticsRead
+    scheduler_inventory_summary: SchedulerInventorySummaryRead
+    scheduler_report_index: SchedulerOpsReportIndexRead
     source_inventory_summary: SourceInventorySummaryRead
     source_report_index: SourceOpsReportIndexRead
     camera_inventory_summary: CameraInventorySummaryRead

@@ -5,13 +5,22 @@ from sqlalchemy.orm import Session
 from src.db import get_db
 from src.models import ScheduledTaskORM, ScheduledTaskRunORM
 from src.schemas import (
+    SchedulerInventorySummaryRead,
+    SchedulerOpsReportIndexRead,
     SchedulerKickResponse,
     ScheduledTaskCreate,
     ScheduledTaskRead,
     ScheduledTaskRunRead,
     ScheduledTaskUpdate,
 )
-from src.services.scheduler_service import create_scheduled_task, run_due_tasks, run_task, update_scheduled_task
+from src.services.scheduler_service import (
+    build_scheduler_inventory_summary,
+    build_scheduler_ops_report_index,
+    create_scheduled_task,
+    run_due_tasks,
+    run_task,
+    update_scheduled_task,
+)
 
 router = APIRouter(prefix="/scheduler", tags=["scheduler"])
 
@@ -20,6 +29,24 @@ router = APIRouter(prefix="/scheduler", tags=["scheduler"])
 def list_tasks(session: Session = Depends(get_db)) -> list[ScheduledTaskORM]:
     statement = select(ScheduledTaskORM).order_by(ScheduledTaskORM.task_id.asc())
     return list(session.scalars(statement))
+
+
+@router.get("/summary", response_model=SchedulerInventorySummaryRead)
+def scheduler_summary(session: Session = Depends(get_db)) -> dict[str, object]:
+    return build_scheduler_inventory_summary(session)
+
+
+@router.get("/report-index", response_model=SchedulerOpsReportIndexRead)
+def scheduler_report_index(
+    limit: int = 25,
+    overdue_task_limit: int = 25,
+    session: Session = Depends(get_db),
+) -> dict[str, object]:
+    return build_scheduler_ops_report_index(
+        session,
+        limit=limit,
+        overdue_task_limit=overdue_task_limit,
+    )
 
 
 @router.post("/tasks", response_model=ScheduledTaskRead)
