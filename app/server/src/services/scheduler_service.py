@@ -37,6 +37,13 @@ def compute_next_run(interval_seconds: int, reference: datetime | None = None) -
     return (reference or scheduler_now()) + timedelta(seconds=interval_seconds)
 
 
+MAINTENANCE_TASK_TYPES = {
+    "storage_lifecycle",
+    "clickhouse_sync",
+    "clickhouse_archive",
+}
+
+
 def create_scheduled_task(session: Session, payload: ScheduledTaskCreate) -> ScheduledTaskORM:
     ensure_unique_task_name(session, payload.name)
     validate_task_configuration(
@@ -70,6 +77,78 @@ def create_scheduled_task(session: Session, payload: ScheduledTaskCreate) -> Sch
     session.commit()
     session.refresh(record)
     return record
+
+
+def build_scheduler_inventory_summary(
+    session: Session,
+    *,
+    reference_time: datetime | None = None,
+) -> dict[str, object]:
+    now = reference_time or scheduler_now()
+    statuses = collect_scheduled_task_statuses(session, reference_time=now)
+    return {
+        "generated_at": now,
+        "reference_time": now,
+        "total_count": len(statuses),
+        "enabled_count": sum(1 for status in statuses if status["task"].enabled),
+        "disabled_count": sum(1 for status in statuses if not status["task"].enabled),
+        "due_count": sum(1 for status in statuses if status["is_due"]),
+        "overdue_count": sum(1 for status in statuses if status["is_overdue"]),
+        "failing_count": sum(1 for status in statuses if status["is_failing"]),
+        "maintenance_task_count": sum(
+            1 for status in statuses if status["task"].task_type in MAINTENANCE_TASK_TYPES
+        ),
+        "task_type_counts": build_scheduler_task_buckets(
+            statuses,
+            key_fn=lambda status: str(status["task"].task_type or "unknown"),
+        ),
+        "latest_status_counts": build_scheduler_task_buckets(
+            statuses,
+            key_fn=lambda status: latest_task_status_key(status),
+        ),
+    }
+
+
+def build_scheduler_ops_report_index(
+    session: Session,
+    *,
+    limit: int = 25,
+    overdue_task_limit: int = 25,
+    reference_time: datetime | None = None,
+) -> dict[str, object]:
+    now = reference_time or scheduler_now()
+    inventory_summary = build_scheduler_inventory_summary(session, reference_time=now)
+    statuses = collect_scheduled_task_statuses(session, reference_time=now)
+    all_runs = list(
+        session.scalars(
+            select(ScheduledTaskRunORM).order_by(ScheduledTaskRunORM.started_at.desc(), ScheduledTaskRunORM.task_run_id.desc())
+        )
+    )
+    recent_runs = all_runs[:limit]
+    maintenance_task_ids = {
+        int(status["task"].task_id)
+        for status in statuses
+        if status["task"].task_type in MAINTENANCE_TASK_TYPES
+    }
+    latest_run_at = recent_runs[0].started_at if recent_runs else None
+    return {
+        "generated_at": now,
+        "latest_run_at": latest_run_at,
+        "inventory_summary": inventory_summary,
+        "task_run_count": len(all_runs),
+        "task_run_failure_count": sum(1 for run in all_runs if run.status == "failed"),
+        "maintenance_run_count": sum(1 for run in all_runs if run.task_id in maintenance_task_ids),
+        "maintenance_failure_count": sum(
+            1 for run in all_runs if run.task_id in maintenance_task_ids and run.status == "failed"
+        ),
+        "task_type_run_counts": build_scheduler_run_buckets(all_runs),
+        "recent_runs": recent_runs,
+        "overdue_tasks": [status for status in statuses if status["is_overdue"]][:overdue_task_limit],
+        "failing_tasks": [status for status in statuses if status["is_failing"]][:overdue_task_limit],
+        "maintenance_tasks": [
+            status for status in statuses if status["task"].task_type in MAINTENANCE_TASK_TYPES
+        ][:overdue_task_limit],
+    }
 
 
 def update_scheduled_task(
@@ -851,3 +930,120 @@ def format_validation_error(task_label: str, exc: ValidationError) -> str:
     if location:
         return f"{task_label} payload {location}: {detail}."
     return f"{task_label} payload invalid: {detail}."
+
+
+def collect_scheduled_task_statuses(
+    session: Session,
+    *,
+    reference_time: datetime,
+) -> list[dict[str, object]]:
+    tasks = list(session.scalars(select(ScheduledTaskORM).order_by(ScheduledTaskORM.task_id.asc())))
+    latest_runs_by_task_id = build_latest_runs_by_task_id(session)
+    normalized_reference_time = normalize_scheduler_timestamp(reference_time) or scheduler_now()
+    statuses: list[dict[str, object]] = []
+    for task in tasks:
+        latest_run = latest_runs_by_task_id.get(task.task_id)
+        next_run_at = normalize_scheduler_timestamp(task.next_run_at)
+        is_due = bool(task.enabled and next_run_at is not None and next_run_at <= normalized_reference_time)
+        overdue_threshold = (
+            next_run_at + timedelta(seconds=max(task.interval_seconds, 60))
+            if next_run_at is not None
+            else None
+        )
+        is_overdue = bool(
+            task.enabled
+            and overdue_threshold is not None
+            and overdue_threshold <= normalized_reference_time
+        )
+        statuses.append(
+            {
+                "task": task,
+                "latest_run": latest_run,
+                "is_due": is_due,
+                "is_overdue": is_overdue,
+                "is_failing": bool(latest_run is not None and latest_run.status == "failed"),
+            }
+        )
+    return statuses
+
+
+def build_latest_runs_by_task_id(session: Session) -> dict[int, ScheduledTaskRunORM]:
+    rows = list(
+        session.scalars(
+            select(ScheduledTaskRunORM).order_by(
+                ScheduledTaskRunORM.task_id.asc(),
+                ScheduledTaskRunORM.task_run_id.desc(),
+            )
+        )
+    )
+    latest: dict[int, ScheduledTaskRunORM] = {}
+    for row in rows:
+        latest.setdefault(row.task_id, row)
+    return latest
+
+
+def build_scheduler_task_buckets(
+    statuses: list[dict[str, object]],
+    *,
+    key_fn,
+) -> list[dict[str, object]]:
+    buckets: dict[str, dict[str, object]] = {}
+    for status in statuses:
+        key = key_fn(status)
+        bucket = buckets.setdefault(
+            key,
+            {
+                "key": key,
+                "total_count": 0,
+                "enabled_count": 0,
+                "disabled_count": 0,
+                "due_count": 0,
+                "failing_count": 0,
+            },
+        )
+        bucket["total_count"] = int(bucket["total_count"]) + 1
+        if status["task"].enabled:
+            bucket["enabled_count"] = int(bucket["enabled_count"]) + 1
+        else:
+            bucket["disabled_count"] = int(bucket["disabled_count"]) + 1
+        if status["is_due"]:
+            bucket["due_count"] = int(bucket["due_count"]) + 1
+        if status["is_failing"]:
+            bucket["failing_count"] = int(bucket["failing_count"]) + 1
+    return [buckets[key] for key in sorted(buckets)]
+
+
+def build_scheduler_run_buckets(runs: list[ScheduledTaskRunORM]) -> list[dict[str, object]]:
+    buckets: dict[str, dict[str, object]] = {}
+    for run in runs:
+        task_type = run.task.task_type if run.task is not None else "unknown"
+        bucket = buckets.setdefault(
+            task_type,
+            {
+                "key": task_type,
+                "total_count": 0,
+                "completed_count": 0,
+                "failure_count": 0,
+            },
+        )
+        bucket["total_count"] = int(bucket["total_count"]) + 1
+        if run.status == "completed":
+            bucket["completed_count"] = int(bucket["completed_count"]) + 1
+        if run.status == "failed":
+            bucket["failure_count"] = int(bucket["failure_count"]) + 1
+    return [buckets[key] for key in sorted(buckets)]
+
+
+def latest_task_status_key(status: dict[str, object]) -> str:
+    latest_run = status["latest_run"]
+    if latest_run is None:
+        return "never_run"
+    return str(latest_run.status or "unknown")
+
+
+def normalize_scheduler_timestamp(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is not None:
+        return value
+    return value.replace(tzinfo=timezone.utc)

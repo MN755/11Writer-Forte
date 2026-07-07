@@ -43,6 +43,8 @@ from src.schemas import (
     OperationsReportRead,
     RuntimeRestoreResultRead,
     RuntimeSnapshotRead,
+    SchedulerInventorySummaryRead,
+    SchedulerOpsReportIndexRead,
     ScheduledTaskCreate,
     ScheduledTaskUpdate,
     StorageLifecycleSweepResultRead,
@@ -90,7 +92,14 @@ from src.services.redaction_service import enforce_export_redaction
 from src.services.runtime_snapshot_service import build_runtime_snapshot
 from src.services.runtime_snapshot_service import restore_runtime_snapshot
 from src.services.scheduler_runtime_service import run_scheduler_worker
-from src.services.scheduler_service import create_scheduled_task, run_due_tasks, run_task, update_scheduled_task
+from src.services.scheduler_service import (
+    build_scheduler_inventory_summary,
+    build_scheduler_ops_report_index,
+    create_scheduled_task,
+    run_due_tasks,
+    run_task,
+    update_scheduled_task,
+)
 from src.services.storage_service import (
     build_storage_report,
     create_storage_object,
@@ -1883,6 +1892,17 @@ def show_operations_report(hours: float | None = 24.0, limit: int = 10) -> None:
             f"{clickhouse_diagnostics['status']} enabled={clickhouse_diagnostics['enabled']} "
             f"reachable={clickhouse_diagnostics['reachable']} mode={clickhouse_diagnostics['storage_mode']}"
         )
+        scheduler_summary = report["scheduler_inventory_summary"]
+        typer.echo(
+            "scheduler="
+            f"{scheduler_summary['total_count']} due={scheduler_summary['due_count']} "
+            f"overdue={scheduler_summary['overdue_count']} failing={scheduler_summary['failing_count']}"
+        )
+        scheduler_report = report["scheduler_report_index"]
+        typer.echo(
+            f"scheduler_runs={scheduler_report['task_run_count']} scheduler_failures={scheduler_report['task_run_failure_count']} "
+            f"maintenance_runs={scheduler_report['maintenance_run_count']} maintenance_failures={scheduler_report['maintenance_failure_count']}"
+        )
         camera_summary = report["camera_inventory_summary"]
         typer.echo(
             f"cameras={camera_summary['total_count']} active={camera_summary['active_count']} inactive={camera_summary['inactive_count']} stale={camera_summary['stale_count']}"
@@ -2330,6 +2350,76 @@ def add_event_fusion_schedule(
         )
         print_banner()
         typer.echo(f"scheduled task {task.task_id} created for event fusion refresh")
+    finally:
+        session.close()
+
+
+@app.command("show-scheduler-summary")
+def show_scheduler_summary_command() -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        summary = build_scheduler_inventory_summary(session)
+        serializable = TypeAdapter(SchedulerInventorySummaryRead).validate_python(summary).model_dump(mode="json")
+        print_banner()
+        typer.echo(
+            f"{serializable['total_count']} enabled={serializable['enabled_count']} disabled={serializable['disabled_count']} "
+            f"due={serializable['due_count']} overdue={serializable['overdue_count']} failing={serializable['failing_count']} "
+            f"maintenance={serializable['maintenance_task_count']}"
+        )
+        for group_name in ("task_type_counts", "latest_status_counts"):
+            typer.echo(f"{group_name}:")
+            for item in serializable[group_name]:
+                typer.echo(
+                    f"  {item['key']}: total={item['total_count']} enabled={item['enabled_count']} "
+                    f"disabled={item['disabled_count']} due={item['due_count']} failing={item['failing_count']}"
+                )
+    finally:
+        session.close()
+
+
+@app.command("show-scheduler-report-index")
+def show_scheduler_report_index_command(limit: int = 25, overdue_task_limit: int = 25) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        report = build_scheduler_ops_report_index(
+            session,
+            limit=limit,
+            overdue_task_limit=overdue_task_limit,
+        )
+        serializable = TypeAdapter(SchedulerOpsReportIndexRead).validate_python(report).model_dump(mode="json")
+        print_banner()
+        typer.echo(
+            f"task_runs={serializable['task_run_count']} failures={serializable['task_run_failure_count']} "
+            f"maintenance_runs={serializable['maintenance_run_count']} maintenance_failures={serializable['maintenance_failure_count']}"
+        )
+        inventory = serializable["inventory_summary"]
+        typer.echo(
+            f"tasks={inventory['total_count']} due={inventory['due_count']} overdue={inventory['overdue_count']} "
+            f"failing={inventory['failing_count']}"
+        )
+        typer.echo("task_type_run_counts:")
+        for item in serializable["task_type_run_counts"]:
+            typer.echo(
+                f"  {item['key']}: total={item['total_count']} completed={item['completed_count']} failures={item['failure_count']}"
+            )
+        typer.echo("overdue_tasks:")
+        for item in serializable["overdue_tasks"]:
+            typer.echo(
+                f"  {item['task']['task_id']} | {item['task']['task_type']} | next={item['task']['next_run_at']} | failing={item['is_failing']}"
+            )
+        typer.echo("failing_tasks:")
+        for item in serializable["failing_tasks"]:
+            latest_status = item["latest_run"]["status"] if item["latest_run"] else "never_run"
+            typer.echo(
+                f"  {item['task']['task_id']} | {item['task']['task_type']} | latest={latest_status} | next={item['task']['next_run_at']}"
+            )
+        typer.echo("maintenance_tasks:")
+        for item in serializable["maintenance_tasks"]:
+            typer.echo(
+                f"  {item['task']['task_id']} | {item['task']['task_type']} | enabled={item['task']['enabled']} | next={item['task']['next_run_at']}"
+            )
     finally:
         session.close()
 

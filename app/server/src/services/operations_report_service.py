@@ -17,6 +17,7 @@ from src.models import (
 )
 from src.services.clickhouse_service import build_clickhouse_diagnostics
 from src.services.camera_service import build_camera_inventory_summary, build_camera_ops_report_index
+from src.services.scheduler_service import build_scheduler_inventory_summary, build_scheduler_ops_report_index
 from src.services.source_service import build_source_inventory_summary, build_source_ops_report_index
 from src.services.storage_service import build_storage_report
 
@@ -86,6 +87,8 @@ def build_operations_report(
     camera_report_index = build_camera_ops_report_index(session, limit=limit)
     storage_report = build_storage_report(session, limit=limit)
     clickhouse_diagnostics = build_clickhouse_diagnostics()
+    scheduler_inventory_summary = build_scheduler_inventory_summary(session)
+    scheduler_report_index = build_scheduler_ops_report_index(session, limit=limit)
     source_inventory_summary = build_source_inventory_summary(session)
     source_report_index = build_source_ops_report_index(session, limit=limit)
 
@@ -171,6 +174,8 @@ def build_operations_report(
         },
         "storage_report": storage_report,
         "clickhouse_diagnostics": clickhouse_diagnostics,
+        "scheduler_inventory_summary": scheduler_inventory_summary,
+        "scheduler_report_index": scheduler_report_index,
         "source_inventory_summary": source_inventory_summary,
         "source_report_index": source_report_index,
         "camera_inventory_summary": camera_inventory_summary,

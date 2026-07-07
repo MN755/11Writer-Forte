@@ -116,6 +116,10 @@ def test_operations_report_summarizes_runtime_activity(client: TestClient, tmp_p
     assert payload["clickhouse_diagnostics"]["status"] == "disabled"
     assert payload["clickhouse_diagnostics"]["enabled"] is False
     assert payload["clickhouse_diagnostics"]["storage_mode"] == "archive_only"
+    assert payload["scheduler_inventory_summary"]["total_count"] == 1
+    assert payload["scheduler_inventory_summary"]["enabled_count"] == 1
+    assert payload["scheduler_report_index"]["task_run_count"] == 1
+    assert payload["scheduler_report_index"]["task_run_failure_count"] == 0
     assert payload["source_inventory_summary"]["total_count"] == 1
     assert payload["source_inventory_summary"]["scheduled_count"] == 0
     assert payload["source_report_index"]["sync_task_count"] == 0
@@ -170,6 +174,8 @@ def test_operations_report_summarizes_runtime_activity(client: TestClient, tmp_p
     assert any(
         bucket["key"] == "operational" for bucket in camera_payload["storage_report"]["retention_class_counts"]
     )
+    assert camera_payload["scheduler_inventory_summary"]["total_count"] == 2
+    assert camera_payload["scheduler_report_index"]["task_run_count"] == 1
     assert camera_payload["source_inventory_summary"]["total_count"] == 1
     assert camera_payload["camera_inventory_summary"]["total_count"] == 1
     assert camera_payload["camera_inventory_summary"]["inactive_count"] == 1
