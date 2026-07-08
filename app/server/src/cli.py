@@ -23,6 +23,9 @@ from src.models import (
     SourceTrustProfileORM,
 )
 from src.schemas import (
+    AlertInventorySummaryRead,
+    AlertOpsExportSummaryRead,
+    AlertOpsReportIndexRead,
     CameraSourceOpsExportSummaryRead,
     CameraSourceMaterializationResponse,
     CameraSourceInventoryRead,
@@ -69,6 +72,12 @@ from src.services.camera_source_service import (
     build_camera_source_inventory_summary,
     list_camera_sources,
     materialize_camera_source_inventory,
+)
+from src.services.alert_service import (
+    build_alert_inventory_summary,
+    build_alert_ops_export_summary,
+    build_alert_ops_report_index,
+    list_alert_records,
 )
 from src.services.clickhouse_service import (
     archive_clickhouse_observations_to_r2,
@@ -1754,16 +1763,162 @@ def cross_verify_command(
 
 
 @app.command("list-alerts")
-def list_alerts() -> None:
+def list_alerts(
+    status: str | None = None,
+    geofence_id: int | None = None,
+    event_id: int | None = None,
+    severity: str | None = None,
+    limit: int = 50,
+) -> None:
     init_db()
     session = get_session_factory()()
     try:
-        alerts = list(session.scalars(select(AlertORM).order_by(AlertORM.created_at.desc())))
+        alerts = list_alert_records(
+            session,
+            status=status,
+            geofence_id=geofence_id,
+            event_id=event_id,
+            severity=severity,
+            limit=limit,
+        )
         print_banner()
         for alert in alerts:
             typer.echo(
-                f"{alert.alert_id} | geofence={alert.geofence_id} | {alert.severity} | {alert.status} | {alert.message}"
+                f"{alert.alert_id} | geofence={alert.geofence_id} | event={alert.event_id} | {alert.severity} | {alert.status} | {alert.message}"
             )
+    finally:
+        session.close()
+
+
+@app.command("show-alert-summary")
+def show_alert_summary_command(
+    status: str | None = None,
+    geofence_id: int | None = None,
+    event_id: int | None = None,
+    severity: str | None = None,
+    stale_after_hours: float = 24.0,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        summary = build_alert_inventory_summary(
+            session,
+            status=status,
+            geofence_id=geofence_id,
+            event_id=event_id,
+            severity=severity,
+            stale_after_hours=stale_after_hours,
+        )
+        serializable = TypeAdapter(AlertInventorySummaryRead).validate_python(summary).model_dump(mode="json")
+        print_banner()
+        typer.echo(
+            "totals="
+            f"{serializable['total_count']} open={serializable['open_count']} acknowledged={serializable['acknowledged_count']} "
+            f"closed={serializable['closed_count']} stale_open={serializable['stale_open_count']}"
+        )
+        typer.echo(
+            f"scoped geofence={serializable['geofence_scoped_count']} event={serializable['event_scoped_count']} unscoped={serializable['unscoped_count']}"
+        )
+        for group_name in ("severity_counts", "status_counts", "geofence_counts"):
+            typer.echo(f"{group_name}:")
+            for item in serializable[group_name]:
+                typer.echo(
+                    f"  {item['key']} | total={item['total_count']} | open={item['open_count']} | acknowledged={item['acknowledged_count']} | closed={item['closed_count']} | stale_open={item['stale_open_count']}"
+                )
+    finally:
+        session.close()
+
+
+@app.command("show-alert-report-index")
+def show_alert_report_index_command(
+    status: str | None = None,
+    geofence_id: int | None = None,
+    event_id: int | None = None,
+    severity: str | None = None,
+    stale_after_hours: float = 24.0,
+    limit: int = 25,
+    stale_alert_limit: int = 25,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        report = build_alert_ops_report_index(
+            session,
+            status=status,
+            geofence_id=geofence_id,
+            event_id=event_id,
+            severity=severity,
+            stale_after_hours=stale_after_hours,
+            limit=limit,
+            stale_alert_limit=stale_alert_limit,
+        )
+        serializable = TypeAdapter(AlertOpsReportIndexRead).validate_python(report).model_dump(mode="json")
+        print_banner()
+        typer.echo(
+            f"geofence_scan_tasks={serializable['geofence_scan_task_count']} geofence_scan_runs={serializable['geofence_scan_run_count']} failures={serializable['geofence_scan_failure_count']}"
+        )
+        typer.echo(
+            f"latest_alert_at={serializable['latest_alert_at']} stale_after_hours={serializable['stale_after_hours']}"
+        )
+        inventory = serializable["inventory_summary"]
+        typer.echo(
+            f"inventory total={inventory['total_count']} open={inventory['open_count']} acknowledged={inventory['acknowledged_count']} closed={inventory['closed_count']} stale_open={inventory['stale_open_count']}"
+        )
+        typer.echo("recent_alerts:")
+        for row in serializable["recent_alerts"]:
+            typer.echo(
+                f"  {row['alert_id']} | geofence={row['geofence_id']} | event={row['event_id']} | {row['severity']} | {row['status']} | {row['message']}"
+            )
+        typer.echo("stale_open_alerts:")
+        for row in serializable["stale_open_alerts"]:
+            typer.echo(
+                f"  {row['alert_id']} | geofence={row['geofence_id']} | event={row['event_id']} | {row['severity']} | created={row['created_at']}"
+            )
+    finally:
+        session.close()
+
+
+@app.command("export-alert-summary")
+def export_alert_summary_command(
+    output_path: Path,
+    status: str | None = None,
+    geofence_id: int | None = None,
+    event_id: int | None = None,
+    severity: str | None = None,
+    stale_after_hours: float = 24.0,
+    alert_limit: int = 500,
+    report_limit: int = 25,
+    stale_alert_limit: int = 25,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        report = build_alert_ops_export_summary(
+            session,
+            status=status,
+            geofence_id=geofence_id,
+            event_id=event_id,
+            severity=severity,
+            stale_after_hours=stale_after_hours,
+            alert_limit=alert_limit,
+            report_limit=report_limit,
+            stale_alert_limit=stale_alert_limit,
+        )
+        serializable = TypeAdapter(AlertOpsExportSummaryRead).validate_python(report).model_dump(mode="json")
+        write_json_export_artifact(
+            session,
+            payload=serializable,
+            object_kind="alert_summary_export",
+            owner_type="alert_export",
+            owner_id=str(geofence_id or event_id or "scoped"),
+            output_path=output_path,
+            source_uri="/api/alerts/export/summary",
+            observed_at=report["generated_at"],
+            metadata_json=serializable["filters_json"],
+            actor="cli_export",
+        )
+        print_banner()
+        typer.echo(f"exported alert summary to {output_path}")
     finally:
         session.close()
 
@@ -2049,6 +2204,14 @@ def show_operations_report(hours: float | None = 24.0, limit: int = 10) -> None:
         )
         typer.echo(
             f"events={summary['event_count']} entities={summary['entity_count']} observations={summary['observation_count']}"
+        )
+        alert_summary = report["alert_inventory_summary"]
+        typer.echo(
+            f"alert_inventory={alert_summary['total_count']} open={alert_summary['open_count']} acknowledged={alert_summary['acknowledged_count']} closed={alert_summary['closed_count']} stale_open={alert_summary['stale_open_count']}"
+        )
+        alert_report = report["alert_report_index"]
+        typer.echo(
+            f"alert_geofence_scan_tasks={alert_report['geofence_scan_task_count']} geofence_scan_runs={alert_report['geofence_scan_run_count']} geofence_scan_failures={alert_report['geofence_scan_failure_count']}"
         )
         storage_report = report["storage_report"]
         typer.echo(

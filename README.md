@@ -121,6 +121,10 @@ elevenwriter update-schedule 1 --enabled false --notes "Paused for maintenance"
 elevenwriter scheduler-worker --poll-seconds 5
 elevenwriter list-schedules
 elevenwriter list-schedule-runs
+elevenwriter list-alerts --status open --limit 50
+elevenwriter show-alert-summary --stale-after-hours 24
+elevenwriter show-alert-report-index --stale-after-hours 24 --limit 25
+elevenwriter export-alert-summary ./exports/alert-summary.json --alert-limit 500 --report-limit 25
 elevenwriter update-alert 1 acknowledged --disposition-note "Reviewed by operator"
 elevenwriter run-due-schedules
 elevenwriter list-custody
@@ -194,9 +198,12 @@ ELEVENWRITER_CLICKHOUSE_R2_CACHE_SIZE=10Gi
 - Camera ops now have a proper backend reporting surface too: `/api/cameras/summary` rolls up fleet health by layer, domain, provider, and status, while `/api/cameras/{id}/ops` exposes per-camera custody, latest observation/import context, and matching refresh schedules.
 - Camera reporting is exportable now too: `/api/cameras/report-index` summarizes refresh task coverage, recent materializations, stale inventory, and recent refresh runs, while `/api/cameras/export/summary` emits a JSON-ready artifact for downstream systems and archival.
 - Camera inventory upkeep is scheduler-native now too, so the registry can be refreshed headlessly with `camera_inventory_refresh` tasks instead of waiting for an operator to remember the manual materialization command. Those refresh runs also keep the camera source candidate registry in sync automatically.
+- Alerts finally have fleet-level ops parity too: `/api/alerts/summary`, `/api/alerts/report-index`, `show-alert-summary`, and `show-alert-report-index` expose stale open alerts, severity/status buckets, geofence-scan coverage, and recent alert activity without forcing operators to eyeball raw rows like cavemen.
+- Alert reporting is exportable now too: `/api/alerts/export/summary` and `export-alert-summary` package alert inventory plus geofence-scan health into a JSON artifact that registers in the storage/provenance ledger like the rest of the backend exports.
 - The platform-wide operations report now includes source inventory and source sync health sections too, so source fleet issues show up alongside camera, alert, import, and scheduler activity in one backend report.
 - The platform-wide operations report now carries camera inventory, camera source candidate inventory, and camera refresh sections too, so one headless report can show both event/alert activity and the current health of the camera subsystem.
 - The platform-wide operations report now also carries storage lifecycle inventory plus ClickHouse backend diagnostics, so one headless report can expose artifact retention state and optional analytics-backend health instead of making operators hop across multiple commands.
+- The platform-wide operations report now carries alert inventory and alert geofence-scan health sections too, so stale open alerts and scan coverage show up in the same backend report as scheduler, source, camera, and storage state.
 - The scheduler finally has a fleet-level ops surface too: `/api/scheduler/summary`, `/api/scheduler/report-index`, `show-scheduler-summary`, and `show-scheduler-report-index` expose overdue tasks, failing latest runs, maintenance coverage, and task-type run/failure buckets instead of forcing operators to reverse-engineer health from raw run rows.
 - Scheduler reporting is exportable now too: `/api/scheduler/export/summary` and `export-scheduler-summary` package the scheduler fleet report plus task inventory into a JSON artifact that registers in the storage/provenance ledger like the rest of the backend exports.
 - Entity resolution and event fusion are scheduler-native too, so the backend can keep promoting raw observations into reusable entities, linked events, and generated products without a human sitting there pressing the button like it's 2009.
