@@ -286,7 +286,11 @@ def test_storage_lifecycle_schedule_expires_due_objects(client: TestClient) -> N
             "name": "storage-lifecycle-schedule",
             "task_type": "storage_lifecycle",
             "interval_seconds": 300,
-            "payload_json": {"retention_class": "operational", "limit": 25},
+            "payload_json": {
+                "retention_class": "operational",
+                "limit": 25,
+                "operations": ["expire"],
+            },
         },
     )
     assert schedule_response.status_code == 200
@@ -298,6 +302,7 @@ def test_storage_lifecycle_schedule_expires_due_objects(client: TestClient) -> N
     assert run_payload["status"] == "completed"
     assert run_payload["records_affected"] >= 1
     assert run_payload["output_json"]["transitioned_count"] >= 1
+    assert run_payload["output_json"]["operations"] == ["expire"]
     assert storage_object_id in run_payload["output_json"]["storage_object_ids"]
 
     storage_response = client.get(
@@ -318,6 +323,74 @@ def test_storage_lifecycle_schedule_expires_due_objects(client: TestClient) -> N
         and row["action"] == "storage_expired"
         for row in custody_rows
     )
+    assert any(
+        row["object_type"] == "scheduled_task_run"
+        and row["action"] == "task_run_completed"
+        and row["details_json"]["task_id"] == task_id
+        for row in custody_rows
+    )
+
+
+def test_storage_lifecycle_schedule_archives_managed_objects(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    artifact_path = tmp_path / "var" / "exports" / "scheduled-archive.json"
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_path.write_text('{"scheduled":"archive"}', encoding="utf-8")
+
+    create_response = client.post(
+        "/api/storage/objects",
+        json={
+            "object_key": "scheduled:archive:1",
+            "object_kind": "operations_report_export",
+            "owner_type": "operations_report",
+            "owner_id": "scheduled",
+            "object_uri": artifact_path.as_uri(),
+            "storage_tier": "warm",
+            "retention_class": "operational",
+            "lifecycle_status": "active",
+            "metadata_json": {
+                "storage_managed": True,
+                "archive_eligible": True,
+                "prune_eligible": False,
+            },
+        },
+    )
+    assert create_response.status_code == 200
+    storage_object_id = create_response.json()["storage_object_id"]
+
+    schedule_response = client.post(
+        "/api/scheduler/tasks",
+        json={
+            "name": "storage-archive-schedule",
+            "task_type": "storage_lifecycle",
+            "interval_seconds": 300,
+            "payload_json": {"limit": 25, "operations": ["archive", "verify"]},
+        },
+    )
+    assert schedule_response.status_code == 200
+    task_id = schedule_response.json()["task_id"]
+
+    run_response = client.post(f"/api/scheduler/tasks/{task_id}/run")
+    assert run_response.status_code == 200
+    run_payload = run_response.json()
+    assert run_payload["status"] == "completed"
+    assert run_payload["records_affected"] >= 2
+    assert run_payload["output_json"]["operations"] == ["archive", "verify"]
+
+    manifest_response = client.get(f"/api/storage/objects/{storage_object_id}/manifest")
+    assert manifest_response.status_code == 200
+    manifest = manifest_response.json()
+    assert manifest["canonical_uri"].startswith("file://")
+    assert manifest["canonical_uri"] != artifact_path.as_uri()
+    assert any(replica["role"] == "archive" and replica["status"] == "verified" for replica in manifest["replicas"])
+
+    custody_response = client.get("/api/custody/logs")
+    assert custody_response.status_code == 200
+    custody_rows = custody_response.json()
+    assert any(row["action"] == "storage_archived" for row in custody_rows)
+    assert any(row["action"] == "storage_verified" for row in custody_rows)
     assert any(
         row["object_type"] == "scheduled_task_run"
         and row["action"] == "task_run_completed"

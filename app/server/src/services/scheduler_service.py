@@ -469,21 +469,29 @@ def execute_task(
             },
         )
     if task.task_type == "storage_lifecycle":
-        retention_class, limit = resolve_storage_lifecycle_payload(task.payload_json)
+        retention_class, limit, operations = resolve_storage_lifecycle_payload(task.payload_json)
         result = sweep_expired_storage_objects(
             session,
             retention_class=retention_class,
             limit=limit,
             dry_run=False,
             actor=actor,
+            operations=operations,
         )
         return (
-            result.transitioned_count,
+            result.processed_count,
             {
                 "retention_class": retention_class,
                 "limit": limit,
+                "operations": list(operations),
                 "expired_candidate_count": result.expired_candidate_count,
                 "transitioned_count": result.transitioned_count,
+                "processed_count": result.processed_count,
+                "failed_count": result.failed_count,
+                "operation_results": [
+                    item.model_dump(mode="json") if hasattr(item, "model_dump") else item
+                    for item in result.operation_results
+                ],
                 "storage_object_ids": [
                     candidate.storage_object_id for candidate in result.candidates
                 ],
@@ -845,7 +853,7 @@ def resolve_camera_inventory_refresh_payload(
 
 def resolve_storage_lifecycle_payload(
     payload_json: dict[str, object] | None,
-) -> tuple[str | None, int]:
+) -> tuple[str | None, int, tuple[str, ...]]:
     payload = resolve_scheduler_payload_json("Storage lifecycle", payload_json)
 
     retention_class_value = payload.get("retention_class")
@@ -867,8 +875,23 @@ def resolve_storage_lifecycle_payload(
         raise ValueError("Storage lifecycle payload limit must be an integer.")
     if limit_value < 1 or limit_value > 1000:
         raise ValueError("Storage lifecycle payload limit must be between 1 and 1000.")
+    operations_value = payload.get("operations")
+    if operations_value is None:
+        operations: tuple[str, ...] = ("archive", "verify", "rehydrate", "prune", "expire")
+    else:
+        if not isinstance(operations_value, list) or any(not isinstance(item, str) for item in operations_value):
+            raise ValueError("Storage lifecycle payload operations must be an array of strings.")
+        normalized: list[str] = []
+        allowed = {"archive", "verify", "rehydrate", "prune", "expire"}
+        for item in operations_value:
+            operation = item.strip().lower()
+            if operation not in allowed:
+                raise ValueError("Storage lifecycle payload operations contain an unsupported value.")
+            if operation not in normalized:
+                normalized.append(operation)
+        operations = tuple(normalized or ["archive", "verify", "rehydrate", "prune", "expire"])
 
-    return retention_class, limit_value
+    return retention_class, limit_value, operations
 
 
 def resolve_clickhouse_sync_payload(

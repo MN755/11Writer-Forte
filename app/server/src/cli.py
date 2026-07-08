@@ -51,6 +51,7 @@ from src.schemas import (
     ScheduledTaskCreate,
     ScheduledTaskUpdate,
     StorageLifecycleSweepResultRead,
+    StorageManifestRead,
     StorageObjectCreate,
     StorageObjectPromoteRequest,
     StorageObjectRead,
@@ -108,12 +109,20 @@ from src.services.scheduler_service import (
     update_scheduled_task,
 )
 from src.services.storage_service import (
+    archive_storage_object,
     build_storage_report,
     create_storage_object,
+    get_storage_manifest_for_object,
     list_storage_objects,
     promote_storage_object,
+    prune_storage_object,
+    quarantine_storage_object,
+    rehydrate_storage_object,
+    request_storage_object_rehydration,
     sweep_expired_storage_objects,
     transition_storage_object,
+    unquarantine_storage_object,
+    verify_storage_object,
 )
 from src.services.source_service import (
     build_source_inventory_summary,
@@ -1912,17 +1921,56 @@ def show_storage_report_command(limit: int = 25) -> None:
             "storage "
             f"total={serializable['total_count']} active={serializable['active_count']} "
             f"expired={serializable['expired_count']} promoted={serializable['promoted_count']} "
-            f"archived={serializable['archived_count']}"
+            f"archived={serializable['archived_count']} quarantined={serializable['quarantined_count']}"
+        )
+        typer.echo(
+            f"archive_pending={serializable['archive_pending_count']} verification_failures={serializable['verification_failure_count']} "
+            f"rehydration_pending={serializable['rehydration_pending_count']}"
         )
         typer.echo(
             f"next_expiration_at={serializable['next_expiration_at']} oldest_expired_at={serializable['oldest_expired_at']}"
         )
+        if serializable["problem_objects"]:
+            typer.echo("problem_objects:")
+            for row in serializable["problem_objects"]:
+                typer.echo(
+                    f"  {row['storage_object_id']} | {row['object_kind']} | status={row['lifecycle_status']} | uri={row['object_uri']}"
+                )
         if serializable["expiring_objects"]:
             typer.echo("expiring_objects:")
             for row in serializable["expiring_objects"]:
                 typer.echo(
                     f"  {row['storage_object_id']} | {row['object_kind']} | status={row['lifecycle_status']} | expires_at={row['expires_at']}"
                 )
+    finally:
+        session.close()
+
+
+@app.command("show-storage-manifest")
+def show_storage_manifest_command(storage_object_id: int) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        manifest = get_storage_manifest_for_object(session, storage_object_id)
+        serializable = TypeAdapter(StorageManifestRead).validate_python(manifest).model_dump(mode="json")
+        print_banner()
+        typer.echo(
+            f"canonical_uri={serializable['canonical_uri']} transfer_status={serializable['transfer_status']} "
+            f"managed={serializable['managed']} archive_eligible={serializable['archive_eligible']} "
+            f"prune_eligible={serializable['prune_eligible']}"
+        )
+        typer.echo(
+            f"archived_at={serializable['archived_at']} rehydrated_at={serializable['rehydrated_at']} "
+            f"last_verified_at={serializable['last_verified_at']} failure_reason={serializable['failure_reason']}"
+        )
+        typer.echo("replicas:")
+        for replica in serializable["replicas"]:
+            typer.echo(
+                f"  {replica['role']} | backend={replica['backend']} | status={replica['status']} | "
+                f"size={replica['byte_size']} | {replica['uri']}"
+            )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
     finally:
         session.close()
 
@@ -1980,6 +2028,7 @@ def run_storage_lifecycle_command(
     retention_class: str | None = None,
     limit: int = 100,
     dry_run: bool = False,
+    operation: list[str] | None = typer.Option(None, "--operation"),
 ) -> None:
     init_db()
     session = get_session_factory()()
@@ -1990,16 +2039,182 @@ def run_storage_lifecycle_command(
             limit=limit,
             dry_run=dry_run,
             actor="cli_storage",
+            operations=operation,
         )
         serializable = TypeAdapter(StorageLifecycleSweepResultRead).validate_python(result).model_dump(mode="json")
         print_banner()
         typer.echo(
-            f"swept_at={serializable['swept_at']} dry_run={serializable['dry_run']} candidates={serializable['expired_candidate_count']} transitioned={serializable['transitioned_count']}"
+            f"swept_at={serializable['swept_at']} dry_run={serializable['dry_run']} "
+            f"processed={serializable['processed_count']} failed={serializable['failed_count']} "
+            f"expired_candidates={serializable['expired_candidate_count']} transitioned={serializable['transitioned_count']}"
         )
-        for row in serializable["candidates"]:
+        typer.echo(f"operations={','.join(serializable['filters_json'].get('operations', []))}")
+        for operation_result in serializable["operation_results"]:
             typer.echo(
-                f"  {row['storage_object_id']} | {row['object_kind']} | retention={row['retention_class']} | status={row['lifecycle_status']} | expires_at={row['expires_at']}"
+                f"  {operation_result['operation']} | candidates={operation_result['candidate_count']} "
+                f"processed={operation_result['processed_count']} failed={operation_result['failed_count']}"
             )
+        if serializable["candidates"]:
+            typer.echo("candidates:")
+            for row in serializable["candidates"]:
+                typer.echo(
+                    f"  {row['storage_object_id']} | {row['object_kind']} | retention={row['retention_class']} | "
+                    f"status={row['lifecycle_status']} | expires_at={row['expires_at']}"
+                )
+    finally:
+        session.close()
+
+
+@app.command("archive-storage-object")
+def archive_storage_object_command(
+    storage_object_id: int,
+    prune_local: bool = False,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        result = archive_storage_object(
+            session,
+            storage_object_id,
+            prune_local=prune_local,
+            actor="cli_storage",
+        )
+        print_banner()
+        typer.echo(
+            f"action={result['action']} verified={result['verified']} "
+            f"storage_object={result['storage_object']['storage_object_id']} "
+            f"canonical_uri={result['manifest']['canonical_uri']}"
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.command("verify-storage-object")
+def verify_storage_object_command(storage_object_id: int) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        result = verify_storage_object(session, storage_object_id, actor="cli_storage")
+        print_banner()
+        typer.echo(
+            f"action={result['action']} verified={result['verified']} "
+            f"storage_object={result['storage_object']['storage_object_id']} "
+            f"last_verified_at={result['manifest']['last_verified_at']}"
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.command("request-storage-rehydration")
+def request_storage_rehydration_command(storage_object_id: int) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        result = request_storage_object_rehydration(session, storage_object_id, actor="cli_storage")
+        print_banner()
+        typer.echo(
+            f"action={result['action']} status={result['manifest']['transfer_status']} "
+            f"storage_object={result['storage_object']['storage_object_id']}"
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.command("rehydrate-storage-object")
+def rehydrate_storage_object_command(
+    storage_object_id: int,
+    target_path: Path | None = None,
+    replace_existing: bool = False,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        result = rehydrate_storage_object(
+            session,
+            storage_object_id,
+            target_path=target_path,
+            replace_existing=replace_existing,
+            actor="cli_storage",
+        )
+        print_banner()
+        typer.echo(
+            f"action={result['action']} verified={result['verified']} "
+            f"storage_object={result['storage_object']['storage_object_id']} "
+            f"rehydrated_at={result['manifest']['rehydrated_at']}"
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.command("prune-storage-object")
+def prune_storage_object_command(storage_object_id: int) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        result = prune_storage_object(session, storage_object_id, actor="cli_storage")
+        print_banner()
+        typer.echo(
+            f"action={result['action']} verified={result['verified']} "
+            f"storage_object={result['storage_object']['storage_object_id']} "
+            f"canonical_uri={result['manifest']['canonical_uri']}"
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.command("quarantine-storage-object")
+def quarantine_storage_object_command(storage_object_id: int, reason: str) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        result = quarantine_storage_object(
+            session,
+            storage_object_id,
+            reason=reason,
+            actor="cli_storage",
+        )
+        print_banner()
+        typer.echo(
+            f"action={result['action']} status={result['storage_object']['lifecycle_status']} "
+            f"reason={result['manifest']['failure_reason']}"
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.command("unquarantine-storage-object")
+def unquarantine_storage_object_command(
+    storage_object_id: int,
+    note: str | None = None,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        result = unquarantine_storage_object(
+            session,
+            storage_object_id,
+            note=note,
+            actor="cli_storage",
+        )
+        print_banner()
+        typer.echo(
+            f"action={result['action']} status={result['storage_object']['lifecycle_status']} "
+            f"transfer_status={result['manifest']['transfer_status']}"
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
     finally:
         session.close()
 
@@ -2100,7 +2315,9 @@ def show_operations_report(hours: float | None = 24.0, limit: int = 10) -> None:
         typer.echo(
             "storage="
             f"{storage_report['total_count']} active={storage_report['active_count']} "
-            f"expired={storage_report['expired_count']} archived={storage_report['archived_count']}"
+            f"expired={storage_report['expired_count']} archived={storage_report['archived_count']} "
+            f"quarantined={storage_report['quarantined_count']} archive_pending={storage_report['archive_pending_count']} "
+            f"verify_failures={storage_report['verification_failure_count']} rehydrate_pending={storage_report['rehydration_pending_count']}"
         )
         clickhouse_diagnostics = report["clickhouse_diagnostics"]
         typer.echo(
@@ -2349,6 +2566,7 @@ def add_storage_lifecycle_schedule(
     interval_seconds: int,
     retention_class: str | None = None,
     limit: int = 100,
+    operation: list[str] | None = typer.Option(None, "--operation"),
     notes: str = "",
     retry_attempts: int = 1,
     retry_backoff_seconds: float = 0.0,
@@ -2359,6 +2577,8 @@ def add_storage_lifecycle_schedule(
         payload_json: dict[str, object] = {"limit": limit}
         if retention_class:
             payload_json["retention_class"] = retention_class
+        if operation:
+            payload_json["operations"] = operation
         task = create_scheduled_task(
             session,
             ScheduledTaskCreate(

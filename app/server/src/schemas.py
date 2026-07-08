@@ -8,9 +8,22 @@ from pydantic import BaseModel, ConfigDict, Field
 
 TrustLevel = Literal["trusted", "neutral", "blocked"]
 ApprovalPolicy = Literal["auto_approve_stable", "manual_review", "always_review", "auto_reject"]
-StorageTier = Literal["hot", "warm", "archive"]
+StorageTier = Literal["hot", "warm", "archive", "permanent"]
 RetentionClass = Literal["ephemeral", "operational", "investigative", "permanent"]
-StorageLifecycleStatus = Literal["active", "promoted", "degraded", "archived", "expired"]
+StorageLifecycleStatus = Literal["active", "promoted", "degraded", "archived", "expired", "quarantined"]
+StorageTransferStatus = Literal[
+    "ready",
+    "archiving",
+    "archived",
+    "verified",
+    "verification_failed",
+    "rehydration_requested",
+    "rehydrating",
+    "rehydrated",
+    "quarantined",
+    "pruned",
+    "failed",
+]
 CameraSourceStatus = Literal["candidate", "review", "ready", "graduated", "ignored", "retired"]
 CameraSourceVerificationState = Literal["unknown", "observed", "reachable", "failed"]
 
@@ -285,6 +298,62 @@ class StorageObjectRead(StorageObjectCreate):
     updated_at: datetime
 
 
+class StorageReplicaRead(ForteModel):
+    backend: str
+    uri: str
+    role: str
+    status: str
+    content_hash: str | None
+    byte_size: int | None
+    created_at: datetime | None = None
+    archived_at: datetime | None = None
+    verified_at: datetime | None = None
+    rehydrated_at: datetime | None = None
+    pruned_at: datetime | None = None
+    last_error: str | None = None
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+
+
+class StorageManifestRead(ForteModel):
+    canonical_uri: str
+    transfer_status: StorageTransferStatus | str
+    failure_reason: str | None = None
+    managed: bool = False
+    archive_eligible: bool = False
+    prune_eligible: bool = False
+    archived_at: datetime | None = None
+    rehydrated_at: datetime | None = None
+    last_verified_at: datetime | None = None
+    quarantined_at: datetime | None = None
+    rehydration_requested_at: datetime | None = None
+    replicas: list[StorageReplicaRead] = Field(default_factory=list)
+
+
+class StorageActionResultRead(ForteModel):
+    action: str
+    message: str
+    verified: bool
+    storage_object: StorageObjectRead
+    manifest: StorageManifestRead
+
+
+class StorageArchiveRequest(ForteModel):
+    prune_local: bool = False
+
+
+class StorageRehydrateRequest(ForteModel):
+    target_path: str | None = None
+    replace_existing: bool = False
+
+
+class StorageQuarantineRequest(ForteModel):
+    reason: str
+
+
+class StorageUnquarantineRequest(ForteModel):
+    note: str | None = None
+
+
 class StorageObjectPromoteRequest(ForteModel):
     storage_tier: StorageTier = "warm"
     retention_class: RetentionClass | None = None
@@ -315,20 +384,38 @@ class StorageReportRead(ForteModel):
     expired_count: int
     promoted_count: int
     archived_count: int
+    quarantined_count: int
+    archive_pending_count: int
+    verification_failure_count: int
+    rehydration_pending_count: int
     next_expiration_at: datetime | None
     oldest_expired_at: datetime | None
     retention_class_counts: list[StorageInventoryBucketRead]
     storage_tier_counts: list[StorageInventoryBucketRead]
     lifecycle_status_counts: list[StorageInventoryBucketRead]
+    transfer_status_counts: list[StorageInventoryBucketRead]
     expiring_objects: list[StorageObjectRead]
+    problem_objects: list[StorageObjectRead]
+
+
+class StorageLifecycleOperationResultRead(ForteModel):
+    operation: str
+    candidate_count: int
+    processed_count: int
+    failed_count: int
+    object_ids: list[int] = Field(default_factory=list)
+    failures: list[str] = Field(default_factory=list)
 
 
 class StorageLifecycleSweepResultRead(ForteModel):
     swept_at: datetime
     dry_run: bool
     filters_json: dict[str, Any]
-    expired_candidate_count: int
-    transitioned_count: int
+    expired_candidate_count: int = 0
+    transitioned_count: int = 0
+    processed_count: int = 0
+    failed_count: int = 0
+    operation_results: list[StorageLifecycleOperationResultRead] = Field(default_factory=list)
     candidates: list[StorageObjectRead]
 
 

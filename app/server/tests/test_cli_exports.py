@@ -263,6 +263,7 @@ def test_export_artifact_service_registers_storage_objects(
     ).json()
     assert len(event_rows) == 1
     assert event_rows[0]["metadata_json"]["requested_redaction_level"] == "public"
+    assert event_rows[0]["metadata_json"]["lifecycle_manifest"]["archive_eligible"] is True
 
     product_rows = client.get(
         "/api/storage/objects",
@@ -270,6 +271,7 @@ def test_export_artifact_service_registers_storage_objects(
     ).json()
     assert len(product_rows) == 1
     assert product_rows[0]["media_type"] == "text/plain"
+    assert product_rows[0]["metadata_json"]["lifecycle_manifest"]["managed"] is True
 
     camera_rows = client.get(
         "/api/storage/objects",
@@ -277,6 +279,7 @@ def test_export_artifact_service_registers_storage_objects(
     ).json()
     assert len(camera_rows) == 1
     assert camera_rows[0]["metadata_json"]["layer_key"] == "traffic-camera-feed"
+    assert camera_rows[0]["metadata_json"]["lifecycle_manifest"]["canonical_uri"].endswith("camera-summary.json")
 
     camera_source_rows = client.get(
         "/api/storage/objects",
@@ -295,6 +298,7 @@ def test_export_artifact_service_registers_storage_objects(
     ).json()
     assert len(operations_rows) == 1
     assert operations_rows[0]["metadata_json"]["hours"] == 24.0
+    assert operations_rows[0]["metadata_json"]["lifecycle_manifest"]["archive_eligible"] is True
 
     runtime_rows = client.get(
         "/api/storage/objects",
@@ -302,6 +306,7 @@ def test_export_artifact_service_registers_storage_objects(
     ).json()
     assert len(runtime_rows) == 1
     assert runtime_rows[0]["metadata_json"]["database_backend"] == "sqlite"
+    assert runtime_rows[0]["metadata_json"]["lifecycle_manifest"]["archive_eligible"] is True
 
     scheduler_rows = client.get(
         "/api/storage/objects",

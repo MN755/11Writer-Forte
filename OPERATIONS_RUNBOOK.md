@@ -11,9 +11,41 @@ elevenwriter verify-db
 elevenwriter doctor
 elevenwriter backup-runtime ./backups/runtime-snapshot.json
 elevenwriter restore-runtime ./backups/runtime-snapshot.json --replace-existing
+elevenwriter show-storage-report
+elevenwriter show-storage-manifest 42
+elevenwriter archive-storage-object 42
+elevenwriter verify-storage-object 42
+elevenwriter request-storage-rehydration 42
+elevenwriter rehydrate-storage-object 42 ./var/restored/artifact.bin --replace-existing
+elevenwriter prune-storage-object 42
+elevenwriter run-storage-lifecycle --operation archive --operation verify --operation prune --operation expire
 ```
 
 `init-db` and `migrate-db` both drive Alembic upgrades. `verify-db` is the non-destructive gate you should run before starting API or worker processes during deployments and recovery drills.
+
+## Storage Lifecycle Configuration
+
+Local archive/rehydrate directories default under `ELEVENWRITER_DATA_DIR`:
+
+```dotenv
+ELEVENWRITER_STORAGE_ARCHIVE_BACKEND=local
+ELEVENWRITER_STORAGE_ARCHIVE_DIR=artifacts/archive
+ELEVENWRITER_STORAGE_REHYDRATE_DIR=artifacts/rehydrated
+```
+
+To archive managed artifacts into Cloudflare R2 or another S3-compatible backend instead:
+
+```dotenv
+ELEVENWRITER_STORAGE_ARCHIVE_BACKEND=r2
+ELEVENWRITER_STORAGE_S3_ENDPOINT=https://<ACCOUNT_ID>.r2.cloudflarestorage.com
+ELEVENWRITER_STORAGE_S3_BUCKET=11writer-artifacts
+ELEVENWRITER_STORAGE_S3_ACCESS_KEY_ID=<R2_ACCESS_KEY_ID>
+ELEVENWRITER_STORAGE_S3_SECRET_ACCESS_KEY=<R2_SECRET_ACCESS_KEY>
+ELEVENWRITER_STORAGE_S3_REGION=auto
+ELEVENWRITER_STORAGE_S3_PREFIX=11writer-artifacts
+```
+
+The storage archive backend is optional and separate from the ClickHouse R2 configuration. If you omit the storage-specific S3 settings, Forte falls back to the existing ClickHouse R2 credentials when possible.
 
 ## Windows Direct Runtime
 
@@ -71,6 +103,44 @@ elevenwriter verify-db
 elevenwriter scheduler-worker
 ```
 
+## Artifact Operations
+
+The storage subsystem now executes artifact transfers instead of just recording state changes.
+
+1. Inspect backlog and replica state.
+2. Archive eligible managed artifacts.
+3. Verify archived replicas.
+4. Request or run rehydration when an operator needs the bytes back locally.
+5. Prune only after verified archival and retention expiry.
+
+Direct commands:
+
+```bash
+elevenwriter show-storage-report
+elevenwriter show-storage-manifest 42
+elevenwriter archive-storage-object 42
+elevenwriter verify-storage-object 42
+elevenwriter request-storage-rehydration 42
+elevenwriter rehydrate-storage-object 42 ./var/restored/artifact.bin --replace-existing
+elevenwriter quarantine-storage-object 42 "checksum mismatch"
+elevenwriter unquarantine-storage-object 42 --note "manual review cleared"
+elevenwriter prune-storage-object 42
+```
+
+Scheduler-managed sweep:
+
+```bash
+elevenwriter add-storage-lifecycle-schedule artifact-maintenance 900 --operation archive --operation verify --operation rehydrate --operation prune --operation expire
+elevenwriter run-storage-lifecycle --operation archive --operation verify --operation rehydrate --operation prune --operation expire
+```
+
+Operational rules:
+
+- `archive-storage-object` does not mark the archive complete until checksum and byte-size verification succeed.
+- `rehydrate-storage-object` writes a fresh local replica and verifies it before closing the loop.
+- `prune-storage-object` only touches managed local files under the configured Forte data/archive/rehydrate roots.
+- `quarantine-storage-object` and automatic transfer-failure handling both emit custody records and keep failed artifacts visible in `show-storage-report` and `/api/operations/report`.
+
 ## PostgreSQL / PostGIS Notes
 
 - Use a database URL like `postgresql+psycopg://elevenwriter:change-me@127.0.0.1:5432/elevenwriter`.
@@ -111,6 +181,32 @@ When you add a new revision:
 ## Backup and Restore
 
 Runtime snapshots are logical application-state backups. They are not a substitute for database-native backups.
+
+Storage artifacts are separate from database/runtime snapshots. If you care about recovery instead of wishful thinking, back up both the metadata and the actual bytes.
+
+### Artifact Backup / Recovery
+
+Local archive backend:
+
+1. Stop API and worker processes if you need a point-in-time capture.
+2. Copy `ELEVENWRITER_DATA_DIR/artifacts/archive/` and `ELEVENWRITER_DATA_DIR/artifacts/rehydrated/` if those directories matter to your workflow.
+3. Export a runtime snapshot:
+
+```bash
+elevenwriter backup-runtime ./backups/runtime-snapshot.json
+```
+
+4. Restore database state first.
+5. Restore archive directories second.
+6. Run `elevenwriter verify-db`.
+7. Use `elevenwriter show-storage-report` and `elevenwriter show-storage-manifest <id>` to confirm canonical URIs, replica statuses, and verification timestamps.
+
+R2 archive backend:
+
+1. Capture the runtime snapshot and database-native backup as usual.
+2. Preserve the R2 bucket plus prefix configured by `ELEVENWRITER_STORAGE_S3_BUCKET` and `ELEVENWRITER_STORAGE_S3_PREFIX`.
+3. Restore database state first, then restore or reattach the bucket credentials.
+4. Run `elevenwriter verify-storage-object <id>` or `elevenwriter run-storage-lifecycle --operation verify` against a sample of archived artifacts before declaring the recovery complete.
 
 ### SQLite Recovery Workflow
 
@@ -164,4 +260,4 @@ Use the runtime snapshot restore when you want a deterministic re-seed of applic
 4. Restore into a clean target.
 5. Run `elevenwriter restore-runtime ./backups/runtime-snapshot.json --replace-existing`.
 6. Run `elevenwriter verify-db`.
-7. Run the specific operational checks you care about, such as `elevenwriter doctor`, `elevenwriter show-scheduler-summary`, and a sample API health probe.
+7. Run the specific operational checks you care about, such as `elevenwriter doctor`, `elevenwriter show-scheduler-summary`, `elevenwriter show-storage-report`, and a sample API health probe.
