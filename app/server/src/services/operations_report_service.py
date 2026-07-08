@@ -15,6 +15,7 @@ from src.models import (
     ScheduledTaskRunORM,
     SourceRunORM,
 )
+from src.services.alert_service import build_alert_inventory_summary, build_alert_ops_report_index
 from src.services.clickhouse_service import build_clickhouse_diagnostics
 from src.services.camera_source_service import (
     build_camera_source_inventory_summary,
@@ -87,6 +88,8 @@ def build_operations_report(
             )
         )
     )
+    alert_inventory_summary = build_alert_inventory_summary(session)
+    alert_report_index = build_alert_ops_report_index(session, limit=limit)
     camera_inventory_summary = build_camera_inventory_summary(session)
     camera_report_index = build_camera_ops_report_index(session, limit=limit)
     camera_source_inventory_summary = build_camera_source_inventory_summary(session)
@@ -178,6 +181,8 @@ def build_operations_report(
             "entity_count": count_records(session, EntityORM, EntityORM.created_at, since, until),
             "observation_count": count_records(session, ObservationORM, ObservationORM.created_at, since, until),
         },
+        "alert_inventory_summary": alert_inventory_summary,
+        "alert_report_index": alert_report_index,
         "storage_report": storage_report,
         "clickhouse_diagnostics": clickhouse_diagnostics,
         "scheduler_inventory_summary": scheduler_inventory_summary,

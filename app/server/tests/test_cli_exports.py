@@ -8,6 +8,7 @@ from sqlalchemy import select
 
 from src.db import get_session_factory
 from src.models import SituationProductORM
+from src.services.alert_service import build_alert_ops_export_summary
 from src.services.camera_source_service import build_camera_source_ops_export_summary
 from src.services.camera_service import build_camera_ops_export_summary
 from src.services.event_export_service import build_event_export_bundle
@@ -101,7 +102,6 @@ def test_export_artifact_service_registers_storage_objects(
         "/api/cameras/materialize",
         json={"layer_key": "traffic-camera-feed", "limit": 25},
     ).status_code == 200
-
     fused = client.post(
         "/api/events/fuse",
         json={
@@ -116,6 +116,16 @@ def test_export_artifact_service_registers_storage_objects(
     )
     assert fused.status_code == 200
     event_id = fused.json()["event_results"][0]["event_id"]
+    alert_response = client.post(
+        "/api/alerts",
+        json={
+            "event_id": event_id,
+            "severity": "warning",
+            "status": "open",
+            "message": "Export artifact alert",
+        },
+    )
+    assert alert_response.status_code == 200
 
     exports_dir = tmp_path / "exports"
     session = get_session_factory()()
@@ -254,6 +264,20 @@ def test_export_artifact_service_registers_storage_objects(
             observed_at=source_summary["generated_at"],
             metadata_json=source_payload["filters_json"],
         )
+
+        alert_summary = build_alert_ops_export_summary(session, alert_limit=50, report_limit=25, stale_alert_limit=25)
+        alert_payload = json.loads(json.dumps(alert_summary, default=str))
+        write_json_export_artifact(
+            session,
+            output_path=exports_dir / "alert-summary.json",
+            payload=alert_payload,
+            object_kind="alert_summary_export",
+            owner_type="alert_export",
+            owner_id="scoped",
+            source_uri="/api/alerts/export/summary",
+            observed_at=alert_summary["generated_at"],
+            metadata_json=alert_payload["filters_json"],
+        )
     finally:
         session.close()
 
@@ -316,3 +340,10 @@ def test_export_artifact_service_registers_storage_objects(
     ).json()
     assert len(source_rows) == 1
     assert source_rows[0]["metadata_json"]["source_limit"] == 50
+
+    alert_rows = client.get(
+        "/api/storage/objects",
+        params={"owner_type": "alert_export", "owner_id": "scoped", "object_kind": "alert_summary_export"},
+    ).json()
+    assert len(alert_rows) == 1
+    assert alert_rows[0]["metadata_json"]["alert_limit"] == 50

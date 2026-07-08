@@ -520,6 +520,52 @@ class AlertRead(AlertCreate):
     updated_at: datetime
 
 
+class AlertSummaryBucketRead(ForteModel):
+    key: str
+    total_count: int
+    open_count: int
+    acknowledged_count: int
+    closed_count: int
+    stale_open_count: int
+
+
+class AlertInventorySummaryRead(ForteModel):
+    generated_at: datetime
+    stale_before: datetime
+    total_count: int
+    open_count: int
+    acknowledged_count: int
+    closed_count: int
+    stale_open_count: int
+    geofence_scoped_count: int
+    event_scoped_count: int
+    unscoped_count: int
+    severity_counts: list[AlertSummaryBucketRead]
+    status_counts: list[AlertSummaryBucketRead]
+    geofence_counts: list[AlertSummaryBucketRead]
+
+
+class AlertOpsReportIndexRead(ForteModel):
+    generated_at: datetime
+    stale_after_hours: float
+    latest_alert_at: datetime | None
+    inventory_summary: AlertInventorySummaryRead
+    geofence_scan_task_count: int
+    geofence_scan_run_count: int
+    geofence_scan_failure_count: int
+    geofence_scan_tasks: list["ScheduledTaskRead"]
+    recent_alerts: list[AlertRead]
+    stale_open_alerts: list[AlertRead]
+    unscoped_alerts: list[AlertRead]
+
+
+class AlertOpsExportSummaryRead(ForteModel):
+    generated_at: datetime
+    filters_json: dict[str, Any]
+    report_index: AlertOpsReportIndexRead
+    alerts: list[AlertRead]
+
+
 class SourceTrustProfileCreate(ForteModel):
     domain: str
     trust_level: TrustLevel = "neutral"
@@ -972,6 +1018,8 @@ class OperationsReportRead(ForteModel):
     scope_since: datetime | None
     scope_until: datetime | None
     summary: OperationsSummaryRead
+    alert_inventory_summary: AlertInventorySummaryRead
+    alert_report_index: AlertOpsReportIndexRead
     storage_report: StorageReportRead
     clickhouse_diagnostics: ClickHouseDiagnosticsRead
     scheduler_inventory_summary: SchedulerInventorySummaryRead

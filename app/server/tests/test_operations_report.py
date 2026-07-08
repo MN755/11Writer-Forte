@@ -120,6 +120,14 @@ def test_operations_report_summarizes_runtime_activity(client: TestClient, tmp_p
     assert payload["scheduler_inventory_summary"]["enabled_count"] == 1
     assert payload["scheduler_report_index"]["task_run_count"] == 1
     assert payload["scheduler_report_index"]["task_run_failure_count"] == 0
+    assert payload["alert_inventory_summary"]["total_count"] == 2
+    assert payload["alert_inventory_summary"]["acknowledged_count"] == 1
+    assert payload["alert_inventory_summary"]["stale_open_count"] == 0
+    assert payload["alert_report_index"]["geofence_scan_task_count"] == 1
+    assert payload["alert_report_index"]["geofence_scan_run_count"] == 1
+    assert payload["alert_report_index"]["geofence_scan_failure_count"] == 0
+    assert payload["alert_report_index"]["inventory_summary"]["total_count"] == 2
+    assert len(payload["alert_report_index"]["recent_alerts"]) == 2
     assert payload["source_inventory_summary"]["total_count"] == 1
     assert payload["source_inventory_summary"]["scheduled_count"] == 0
     assert payload["source_report_index"]["sync_task_count"] == 0
@@ -178,6 +186,8 @@ def test_operations_report_summarizes_runtime_activity(client: TestClient, tmp_p
     )
     assert camera_payload["scheduler_inventory_summary"]["total_count"] == 2
     assert camera_payload["scheduler_report_index"]["task_run_count"] == 1
+    assert camera_payload["alert_inventory_summary"]["total_count"] == 2
+    assert camera_payload["alert_report_index"]["geofence_scan_task_count"] == 1
     assert camera_payload["source_inventory_summary"]["total_count"] == 1
     assert camera_payload["camera_inventory_summary"]["total_count"] == 1
     assert camera_payload["camera_inventory_summary"]["inactive_count"] == 1
