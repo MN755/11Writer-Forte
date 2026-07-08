@@ -53,6 +53,136 @@ MnDOT live-feed notes and source-ingestion examples live in [MNDOT_FEEDS.md](MND
 
 Upstream camera/webcam inventory and local parity notes live in [UPSTREAM_CAMERA_INVENTORY.md](UPSTREAM_CAMERA_INVENTORY.md).
 
+## Operational hardening
+
+### Recommended env for any non-local deployment
+
+```bash
+ELEVENWRITER_APP_ENV=prod
+ELEVENWRITER_API_AUTH_MODE=required
+ELEVENWRITER_API_KEY=<LONG_RANDOM_API_KEY>
+ELEVENWRITER_API_KEY_HEADER=X-API-Key
+ELEVENWRITER_REQUEST_ID_HEADER=X-Request-ID
+ELEVENWRITER_METRICS_ENABLED=true
+ELEVENWRITER_LOG_LEVEL=INFO
+```
+
+If you leave `ELEVENWRITER_API_AUTH_MODE=optional`, the API only enforces auth when `ELEVENWRITER_API_KEY` is set. That is fine for local development. It is not fine for anything exposed beyond your laptop. Shocking, I know.
+
+### Protected API usage
+
+```bash
+curl -H "X-API-Key: $ELEVENWRITER_API_KEY" http://127.0.0.1:8000/api/operations/diagnostics
+curl -H "X-API-Key: $ELEVENWRITER_API_KEY" http://127.0.0.1:8000/api/operations/report
+curl -H "X-API-Key: $ELEVENWRITER_API_KEY" http://127.0.0.1:8000/metrics
+```
+
+`/health` stays intentionally unauthenticated and minimal. It returns sanitized runtime health only. `/api/*` and `/metrics` are API-key protected when auth is enabled.
+
+### Observability endpoints
+
+- `GET /health`: liveness plus sanitized database/backend status, auth-enabled state, and metrics-enabled state.
+- `GET /metrics`: Prometheus-style metrics for HTTP traffic, scheduler/source/storage/ClickHouse activity, and current runtime state.
+- `GET /api/operations/database`: structured database diagnostics with sanitized connection info.
+- `GET /api/operations/diagnostics`: headless operator summary for auth, logging/metrics config, database, scheduler, source fleet, storage lifecycle, ClickHouse status, and recent failures.
+- `GET /api/operations/report`: broader operational report with recent runs, alerts, custody logs, and subsystem rollups.
+
+### Secret-handling rules now enforced
+
+- Source `target_uri` values with embedded credentials like `https://user:pass@host/...` are rejected.
+- HTTP source fetch metadata redacts sensitive headers before it lands in run output, storage metadata, or logs.
+- Health/database diagnostics sanitize connection URLs instead of echoing raw secrets or full local paths.
+- ClickHouse R2 config preview redacts access keys in the rendered XML and example SQL.
+
+## Ingestion runtime
+
+### Supported managed source kinds
+
+- `local_file`
+- `sqlite_file`
+- `http_json`
+- `http_jsonl`
+- `http_text`
+- `http_xml`
+- `rss`
+- `webhook_ingest`
+- `sse_stream`
+- `websocket_stream`
+
+All adapters emit the same normalized ingestion envelope before observations are created. Source runs now persist adapter kind, fetch mode, checkpoint/cursor state, last event ID/offset, and seen/imported/skipped/failed counters.
+
+### Source metadata knobs
+
+- HTTP pull adapters: `request_timeout_seconds`, `retry_attempts`, `retry_backoff_seconds`, `headers`, `basic_auth_username`, `basic_auth_password_env`, `skip_unchanged`
+- `webhook_ingest`: `event_format`
+- `sse_stream`: `event_format`
+- `websocket_stream`: `event_format`, `max_messages_per_run`, `send_text`, `send_json`, `send_messages`
+
+For websocket bootstrap messages, string placeholders are rendered from checkpoint state:
+
+- `{cursor_text}`
+- `{last_event_id}`
+- `{last_offset}`
+- `{checkpoint_json}`
+- `{checkpoint_<key>}` for scalar values already stored in checkpoint JSON, for example `{checkpoint_last_offset}`
+
+That gives you a practical resume hook for websocket feeds without pretending there is one universal websocket replay standard. Wild concept: protocols differ.
+
+### Runtime and dead-letter API
+
+- `GET /api/sources/checkpoints`
+- `GET /api/sources/dead-letters`
+- `GET /api/sources/{source_id}/ops`
+- `POST /api/sources/{source_id}/run`
+- `POST /api/sources/{source_id}/runtime`
+- `POST /api/sources/{source_id}/webhook`
+- `POST /api/sources/dead-letters/{source_dead_letter_id}/replay`
+- `POST /api/scheduler/tasks` with `task_type=source_runtime`
+
+### Operator examples
+
+```bash
+# Pull JSONL
+elevenwriter add-source-http-jsonl ndjson-feed https://example.com/feed.jsonl osint-feed
+elevenwriter run-source 1
+
+# Pull RSS
+elevenwriter add-source-rss watch-rss https://example.com/feed.rss osint-feed
+
+# Managed SQLite source
+elevenwriter add-source-sqlite-file seized-db ./fixtures/managed.sqlite osint-feed
+
+# Push-only webhook source
+elevenwriter add-source-webhook webhook-intake osint-feed --event-format json
+curl -X POST \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: $ELEVENWRITER_API_KEY" \
+  -d '{"title":"push event","url":"https://push.example/1","lat":29.76,"lon":-95.36}' \
+  http://127.0.0.1:8000/api/sources/1/webhook
+
+# Stream-native polling/runtime sources
+elevenwriter add-source-sse firehose-sse https://example.com/events osint-feed --event-format json
+elevenwriter add-source-websocket firehose-ws wss://example.com/stream osint-feed --event-format json --max-messages-per-run 50 --send-text '{"resume":"{last_offset}"}'
+elevenwriter run-source-runtime 2
+elevenwriter source-runtime-worker --poll-seconds 5
+elevenwriter add-source-runtime-schedule firehose-runtime 30 --source-id 2
+
+# Checkpoints and dead letters
+elevenwriter list-source-checkpoints
+elevenwriter list-source-dead-letters --source-id 2
+elevenwriter replay-source-dead-letter 7
+curl -H "X-API-Key: $ELEVENWRITER_API_KEY" "http://127.0.0.1:8000/api/sources/dead-letters?source_id=2"
+curl -X POST -H "X-API-Key: $ELEVENWRITER_API_KEY" http://127.0.0.1:8000/api/sources/dead-letters/7/replay
+```
+
+### What gets persisted now
+
+- Source run records include adapter/runtime counters and cursor state.
+- `source_checkpoints` stores current adapter checkpoint state per source.
+- `source_dead_letters` stores malformed/failed records with provenance and replay status.
+- Cached source payloads, checkpoint state, and dead-letter payloads register in the storage ledger.
+- Runtime snapshot export/restore includes source definitions, source runs, source checkpoints, and source dead letters.
+
 ## CLI
 
 ```bash
@@ -65,11 +195,21 @@ elevenwriter list-layers
 elevenwriter import-local path/to/file.json --layer incident-feed
 elevenwriter list-imports
 elevenwriter add-source-file harbor-source ./feeds/harbor.json marine-track --skip-unchanged true
-elevenwriter add-source-http-json remote-feed https://example.com/feed.json remote-track --retry-attempts 3 --skip-unchanged true --header "Authorization: Bearer token"
+elevenwriter add-source-http-json remote-feed https://example.com/feed.json remote-track --retry-attempts 3 --skip-unchanged true --basic-auth-username feed-user --basic-auth-password-env FEED_PASSWORD
+elevenwriter add-source-http-jsonl remote-ndjson https://example.com/feed.jsonl remote-track
+elevenwriter add-source-rss watch-rss https://example.com/feed.rss remote-track
+elevenwriter add-source-sqlite-file managed-db ./feeds/managed.sqlite remote-track
+elevenwriter add-source-webhook webhook-intake remote-track --event-format json
+elevenwriter add-source-sse live-sse https://example.com/events remote-track --event-format json
+elevenwriter add-source-websocket live-ws wss://example.com/stream remote-track --event-format json --max-messages-per-run 50
 elevenwriter list-sources
-elevenwriter update-source 1 --enabled false --notes "Disabled for review"
+elevenwriter update-source 1 --source-kind rss --enabled false --notes "Disabled for review"
 elevenwriter run-source 1
+elevenwriter run-source-runtime 1
 elevenwriter list-source-runs
+elevenwriter list-source-checkpoints
+elevenwriter list-source-dead-letters --source-id 1
+elevenwriter replay-source-dead-letter 7
 elevenwriter show-source-ops 1
 elevenwriter show-source-summary --stale-after-hours 24
 elevenwriter show-source-report-index --stale-after-hours 24
@@ -116,9 +256,11 @@ elevenwriter export-event-bundle 1 ./exports/event-1-bundle.json --max-redaction
 elevenwriter export-runtime-snapshot ./exports/runtime-snapshot.json
 elevenwriter restore-runtime-snapshot ./exports/runtime-snapshot.json --replace-existing
 elevenwriter add-source-sync-schedule nightly-sync 1 300 --retry-attempts 3 --retry-backoff-seconds 5
+elevenwriter add-source-runtime-schedule live-runtime 30 --source-id 2
 elevenwriter add-geofence-scan-schedule nightly-watch 300
 elevenwriter update-schedule 1 --enabled false --notes "Paused for maintenance"
 elevenwriter scheduler-worker --poll-seconds 5
+elevenwriter source-runtime-worker --poll-seconds 5
 elevenwriter list-schedules
 elevenwriter list-schedule-runs
 elevenwriter update-alert 1 acknowledged --disposition-note "Reviewed by operator"
@@ -175,6 +317,9 @@ ELEVENWRITER_CLICKHOUSE_R2_CACHE_SIZE=10Gi
 - SQLite remains supported for local ingestion inputs and lightweight runtime mode, but primary backend storage targets Postgres/PostGIS deployment.
 - Postgres runtime now auto-enables `postgis` plus GiST expression indexes for observation points and geofence geometries, while SQLite keeps the Python fallback path for local runs and tests.
 - The headless CLI now includes a `doctor` command and the API exposes `/api/operations/database`, so operators can audit connectivity, additive schema drift, table counts, and PostGIS readiness without freestyling SQL in production.
+- The backend now emits structured JSON logs with request IDs, request timing, auth outcomes, and key scheduler/source/storage/ClickHouse events, so “what just happened?” finally has receipts.
+- The runtime now exposes `/metrics` plus `/api/operations/diagnostics`, which means operators can scrape Prometheus-style counters and also pull one protected diagnostics document for scheduler health, source failures, storage lifecycle, ClickHouse state, and auth configuration.
+- API hardening is no longer wishful thinking: API-key auth can be required for `/api/*` and `/metrics`, `/health` stays minimal, and the service returns the request ID header on protected responses so log correlation is not a scavenger hunt.
 - Runtime backup and recovery now have a first-class path too: `/api/operations/runtime/export`, `/api/operations/runtime/restore`, and matching CLI commands serialize the core backend state in dependency-safe order and log custody records for both export and restore.
 - Runtime snapshot coverage now extends across newer operational subsystems too, including scheduler task/run state, source-run history, camera/source registries, storage objects, and maintenance-task lineage, so recovery testing is following the real backend instead of freezing at an older shape.
 - The storage-core slice is real now, not a manifesto: `/api/storage/objects` plus the `list-storage-objects`, `add-storage-object`, `promote-storage-object`, and `transition-storage-object` CLI commands expose a first-class artifact ledger with retention classes, tiering, and lifecycle controls.
@@ -211,7 +356,7 @@ ELEVENWRITER_CLICKHOUSE_R2_CACHE_SIZE=10Gi
 - Event and product exports now honor requested redaction ceilings, so lower-clearance bundles can exclude higher-sensitivity entities and products instead of leaking them by accident like amateurs.
 - Managed sources provide a named catalog for repeatable ingestion; scheduler tasks can now sync those source definitions instead of only replaying raw file paths.
 - Managed sources and scheduled tasks now support update/enable-disable lifecycle controls with custody logs, so operators can pause, retarget, and resume headless workflows without deleting history.
-- HTTP-managed sources support retry attempts, timeout controls, custom headers, cached payload materialization, and persisted fetch metadata so headless sync jobs have enough operational context to debug failures.
+- HTTP-managed sources support retry attempts, timeout controls, custom headers, cached payload materialization, and persisted fetch metadata so headless sync jobs have enough operational context to debug failures, without spraying secret headers back into logs and run outputs.
 - Managed source runs are idempotent by default: when the payload hash matches the most recent completed or skipped run for that source, the new run is marked `skipped` and does not create duplicate imports.
 - Local imports are dedupe-aware too: exact duplicate records in the same layer are skipped, and each import run reports `records_seen`, `records_imported`, and `records_skipped`.
 - Scheduled tasks now support task-level retry attempts and linear retry backoff, with custody records for failed attempts, retry scheduling, and final completion/failure outcomes.

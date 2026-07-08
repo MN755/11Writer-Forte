@@ -129,9 +129,13 @@ def test_clickhouse_sync_and_r2_archive_flow(
     assert config_response.status_code == 200
     config_payload = config_response.json()
     assert "<type>object_storage</type>" in config_payload["storage_xml"]
+    assert "r2-secret" not in config_payload["storage_xml"]
+    assert "***REDACTED***" in config_payload["storage_xml"]
     assert "storage_policy = 'r2_main'" in config_payload["create_table_sql"]
     assert "INSERT INTO elevenwriter.observation_facts" in config_payload["rehydrate_example_sql"]
     assert "FROM s3(" in config_payload["direct_query_example_sql"]
+    assert "r2-secret" not in config_payload["rehydrate_example_sql"]
+    assert "***REDACTED***" in config_payload["rehydrate_example_sql"]
 
     rehydrate_response = client.post(
         "/api/operations/clickhouse/rehydrate",

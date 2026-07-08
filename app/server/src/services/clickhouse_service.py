@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -11,8 +12,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from src.config import get_settings
+from src.metrics import inc_counter
 from src.models import CustodyLogORM, ObservationORM, StorageObjectORM
+from src.observability import log_event
 from src.services.observation_service import ObservationQueryRecord, extract_observation_timestamp
+from src.services.redaction_service import REDACTED_VALUE, sanitize_url
+
+logger = logging.getLogger(__name__)
 
 
 def clickhouse_now() -> datetime:
@@ -34,7 +40,7 @@ def build_clickhouse_diagnostics() -> dict[str, object]:
         return {
             "status": "disabled",
             "enabled": False,
-            "clickhouse_url": settings.clickhouse_url,
+            "clickhouse_url": sanitize_url(settings.clickhouse_url),
             "clickhouse_database": settings.clickhouse_database,
             "observation_table": settings.clickhouse_observation_table,
             "storage_object_table": settings.clickhouse_storage_object_table,
@@ -80,7 +86,7 @@ def build_clickhouse_diagnostics() -> dict[str, object]:
     return {
         "status": "ok" if reachable else "degraded",
         "enabled": True,
-        "clickhouse_url": settings.clickhouse_url,
+        "clickhouse_url": sanitize_url(settings.clickhouse_url),
         "clickhouse_database": settings.clickhouse_database,
         "observation_table": settings.clickhouse_observation_table,
         "storage_object_table": settings.clickhouse_storage_object_table,
@@ -122,6 +128,14 @@ def provision_clickhouse_backend(
         "storage_policy": settings.clickhouse_effective_storage_policy,
         "storage_mode": settings.clickhouse_r2_storage_mode,
     }
+    inc_counter("elevenwriter_clickhouse_operations_total", operation="provision", status="completed")
+    log_event(
+        logger,
+        logging.INFO,
+        "clickhouse_provisioned",
+        database=settings.clickhouse_database,
+        storage_mode=settings.clickhouse_r2_storage_mode,
+    )
     if session is not None:
         session.add(
             CustodyLogORM(
@@ -183,6 +197,18 @@ def sync_runtime_to_clickhouse(
         "observation_count": len(observation_rows),
         "storage_object_count": len(storage_object_rows),
     }
+    inc_counter("elevenwriter_clickhouse_operations_total", operation="sync", status="completed")
+    log_event(
+        logger,
+        logging.INFO,
+        "clickhouse_synced",
+        database=get_settings().clickhouse_database,
+        layer_key=layer_key,
+        source_domain=source_domain,
+        limit=limit,
+        observation_count=len(observation_rows),
+        storage_object_count=len(storage_object_rows),
+    )
     session.add(
         CustodyLogORM(
             object_type="clickhouse_backend",
@@ -245,6 +271,18 @@ def archive_clickhouse_observations_to_r2(
         "exported_row_count": exported_row_count,
         "sql": sql,
     }
+    inc_counter("elevenwriter_clickhouse_operations_total", operation="archive", status="completed")
+    log_event(
+        logger,
+        logging.INFO,
+        "clickhouse_archived_to_r2",
+        database=settings.clickhouse_database,
+        layer_key=layer_key,
+        source_domain=source_domain,
+        limit=limit,
+        exported_row_count=exported_row_count,
+        archive_root_url=archive_root_url,
+    )
     session.add(
         CustodyLogORM(
             object_type="clickhouse_backend",
@@ -282,9 +320,21 @@ def build_clickhouse_r2_config_preview() -> dict[str, object]:
         "create_table_sql": build_observation_table_sql(
             storage_policy_override=settings.clickhouse_r2_storage_policy
         ),
-        "archive_example_sql": build_archive_observations_sql(archive_root_url=archive_root_url),
-        "rehydrate_example_sql": build_rehydrate_observations_sql(sample_archive_glob),
-        "direct_query_example_sql": build_r2_direct_query_example_sql(sample_archive_glob),
+        "archive_example_sql": build_archive_observations_sql(
+            archive_root_url=archive_root_url,
+            access_key_id=REDACTED_VALUE,
+            secret_access_key=REDACTED_VALUE,
+        ),
+        "rehydrate_example_sql": build_rehydrate_observations_sql(
+            sample_archive_glob,
+            access_key_id=REDACTED_VALUE,
+            secret_access_key=REDACTED_VALUE,
+        ),
+        "direct_query_example_sql": build_r2_direct_query_example_sql(
+            sample_archive_glob,
+            access_key_id=REDACTED_VALUE,
+            secret_access_key=REDACTED_VALUE,
+        ),
         "docker_output_path": str(default_clickhouse_r2_config_path()),
     }
 
@@ -317,6 +367,15 @@ def rehydrate_clickhouse_observations_from_r2(
         )
     )
     session.commit()
+    inc_counter("elevenwriter_clickhouse_operations_total", operation="rehydrate", status="completed")
+    log_event(
+        logger,
+        logging.INFO,
+        "clickhouse_rehydrated_from_r2",
+        database=settings.clickhouse_database,
+        archive_glob_url=archive_glob_url,
+        imported_row_count=imported_row_count,
+    )
     return {
         "rehydrated_at": clickhouse_now(),
         "clickhouse_database": settings.clickhouse_database,
@@ -462,6 +521,19 @@ def perform_clickhouse_http_request(
         with urlopen(request, timeout=settings.clickhouse_timeout_seconds) as response:
             return response.read().decode("utf-8")
     except Exception as exc:  # pragma: no cover - platform/network details vary
+        inc_counter(
+            "elevenwriter_clickhouse_operations_total",
+            operation="http_request",
+            status="failed",
+        )
+        log_event(
+            logger,
+            logging.WARNING,
+            "clickhouse_request_failed",
+            url=sanitize_url(url),
+            method=method,
+            error=str(exc),
+        )
         raise RuntimeError(f"ClickHouse request failed: {exc}") from exc
 
 
@@ -540,11 +612,15 @@ def build_storage_policy_clause(storage_policy_override: str | None = None) -> s
 def build_archive_observations_sql(
     *,
     archive_root_url: str,
+    access_key_id: str | None = None,
+    secret_access_key: str | None = None,
     layer_key: str | None = None,
     source_domain: str | None = None,
     limit: int | None = None,
 ) -> str:
     settings = get_settings()
+    resolved_access_key_id = access_key_id or settings.clickhouse_r2_access_key_id or ""
+    resolved_secret_access_key = secret_access_key or settings.clickhouse_r2_secret_access_key or ""
     structure = (
         "observation_id UInt64, import_run_id Nullable(UInt64), event_id Nullable(UInt64), "
         "layer_key String, source_domain Nullable(String), source_type String, record_format String, "
@@ -563,8 +639,8 @@ def build_archive_observations_sql(
     return (
         "INSERT INTO FUNCTION s3("
         f"'{archive_root_url.rstrip('/')}/observations/{{_partition_id}}/part.parquet', "
-        f"'{settings.clickhouse_r2_access_key_id}', "
-        f"'{settings.clickhouse_r2_secret_access_key}', "
+        f"'{resolved_access_key_id}', "
+        f"'{resolved_secret_access_key}', "
         f"'Parquet', '{structure}'"
         ")\n"
         "PARTITION BY concat("
@@ -580,8 +656,15 @@ def build_archive_observations_sql(
     )
 
 
-def build_rehydrate_observations_sql(archive_glob_url: str) -> str:
+def build_rehydrate_observations_sql(
+    archive_glob_url: str,
+    *,
+    access_key_id: str | None = None,
+    secret_access_key: str | None = None,
+) -> str:
     settings = get_settings()
+    resolved_access_key_id = access_key_id or settings.clickhouse_r2_access_key_id or ""
+    resolved_secret_access_key = secret_access_key or settings.clickhouse_r2_secret_access_key or ""
     return (
         f"INSERT INTO {settings.clickhouse_database}.{settings.clickhouse_observation_table}\n"
         "SELECT observation_id, import_run_id, event_id, layer_key, source_domain, source_type, "
@@ -589,21 +672,28 @@ def build_rehydrate_observations_sql(archive_glob_url: str) -> str:
         "observed_at, created_at, updated_at, raw_hash, content_text, content_json_json\n"
         "FROM s3("
         f"{to_clickhouse_string(archive_glob_url)}, "
-        f"{to_clickhouse_string(settings.clickhouse_r2_access_key_id or '')}, "
-        f"{to_clickhouse_string(settings.clickhouse_r2_secret_access_key or '')}, "
+        f"{to_clickhouse_string(resolved_access_key_id)}, "
+        f"{to_clickhouse_string(resolved_secret_access_key)}, "
         "'Parquet'"
         ")"
     )
 
 
-def build_r2_direct_query_example_sql(archive_glob_url: str) -> str:
+def build_r2_direct_query_example_sql(
+    archive_glob_url: str,
+    *,
+    access_key_id: str | None = None,
+    secret_access_key: str | None = None,
+) -> str:
     settings = get_settings()
+    resolved_access_key_id = access_key_id or settings.clickhouse_r2_access_key_id or ""
+    resolved_secret_access_key = secret_access_key or settings.clickhouse_r2_secret_access_key or ""
     return (
         "SELECT layer_key, count(*) AS row_count\n"
         "FROM s3("
         f"{to_clickhouse_string(archive_glob_url)}, "
-        f"{to_clickhouse_string(settings.clickhouse_r2_access_key_id or '')}, "
-        f"{to_clickhouse_string(settings.clickhouse_r2_secret_access_key or '')}, "
+        f"{to_clickhouse_string(resolved_access_key_id)}, "
+        f"{to_clickhouse_string(resolved_secret_access_key)}, "
         "'Parquet'"
         ")\n"
         "GROUP BY layer_key\n"
@@ -769,8 +859,8 @@ def render_clickhouse_r2_storage_xml() -> str:
         "        <object_storage_type>s3</object_storage_type>\n"
         "        <metadata_type>local</metadata_type>\n"
         f"        <endpoint>{storage_root_url.rstrip('/')}/</endpoint>\n"
-        f"        <access_key_id>{settings.clickhouse_r2_access_key_id}</access_key_id>\n"
-        f"        <secret_access_key>{settings.clickhouse_r2_secret_access_key}</secret_access_key>\n"
+        f"        <access_key_id>{REDACTED_VALUE}</access_key_id>\n"
+        f"        <secret_access_key>{REDACTED_VALUE}</secret_access_key>\n"
         f"        <region>{settings.clickhouse_r2_region}</region>\n"
         "        <metadata_path>/var/lib/clickhouse/disks/r2_disk/</metadata_path>\n"
         "      </r2_disk>\n"

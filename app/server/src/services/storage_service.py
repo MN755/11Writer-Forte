@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -8,6 +9,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from src.metrics import inc_counter
 from src.models import (
     CameraInventoryORM,
     CustodyLogORM,
@@ -16,6 +18,7 @@ from src.models import (
     SourceRunORM,
     StorageObjectORM,
 )
+from src.observability import log_event
 from src.schemas import (
     StorageLifecycleSweepResultRead,
     StorageObjectCreate,
@@ -23,6 +26,9 @@ from src.schemas import (
     StorageObjectTransitionRequest,
     StorageReportRead,
 )
+from src.services.redaction_service import sanitize_for_observability
+
+logger = logging.getLogger(__name__)
 
 RETENTION_WINDOWS_HOURS: dict[str, float | None] = {
     "ephemeral": 24.0,
@@ -187,6 +193,22 @@ def sweep_expired_storage_objects(
         session.commit()
         for record in candidates:
             session.refresh(record)
+    inc_counter(
+        "elevenwriter_storage_sweeps_total",
+        retention_class=retention_class or "all",
+        dry_run=str(dry_run).lower(),
+        status="completed",
+    )
+    log_event(
+        logger,
+        logging.INFO,
+        "storage_sweep_completed",
+        retention_class=retention_class or "all",
+        limit=limit,
+        dry_run=dry_run,
+        expired_candidate_count=len(candidates),
+        transitioned_count=transitioned_count,
+    )
     return StorageLifecycleSweepResultRead.model_validate(
         {
             "swept_at": now,
@@ -337,7 +359,7 @@ def register_storage_object(
             object_id=str(record.storage_object_id),
             action=action,
             actor=actor,
-            details_json=details,
+            details_json=sanitize_for_observability(details),
         )
     )
     session.flush()
@@ -575,7 +597,8 @@ def apply_storage_promotion(
             object_id=str(record.storage_object_id),
             action="storage_promoted",
             actor=actor,
-            details_json={
+            details_json=sanitize_for_observability(
+                {
                 "object_key": record.object_key,
                 "previous": serialize_storage_values(previous),
                 "current": {
@@ -588,8 +611,18 @@ def apply_storage_promotion(
                     "promoted_by_type": record.promoted_by_type,
                     "promoted_by_id": record.promoted_by_id,
                 },
-            },
+                }
+            ),
         )
+    )
+    log_event(
+        logger,
+        logging.INFO,
+        "storage_object_promoted",
+        storage_object_id=record.storage_object_id,
+        object_key=record.object_key,
+        storage_tier=record.storage_tier,
+        retention_class=record.retention_class,
     )
     return record
 
@@ -637,8 +670,17 @@ def apply_storage_transition(
             object_id=str(record.storage_object_id),
             action=action,
             actor=actor,
-            details_json=details_json,
+            details_json=sanitize_for_observability(details_json),
         )
+    )
+    log_event(
+        logger,
+        logging.INFO,
+        "storage_object_transitioned",
+        storage_object_id=record.storage_object_id,
+        object_key=record.object_key,
+        lifecycle_status=record.lifecycle_status,
+        storage_tier=record.storage_tier,
     )
     return record
 

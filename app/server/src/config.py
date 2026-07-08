@@ -13,6 +13,13 @@ class Settings(BaseSettings):
     app_version: str = "0.1.0"
     app_env: str = "local"
     api_prefix: str = "/api"
+    api_auth_mode: Literal["disabled", "optional", "required"] = "optional"
+    api_key: str | None = None
+    api_key_header: str = "X-API-Key"
+    request_id_header: str = "X-Request-ID"
+    metrics_enabled: bool = True
+    metrics_path: str = "/metrics"
+    log_level: str = "INFO"
     database_url: str = "sqlite:///./var/11writer_forte.db"
     data_dir: Path = Field(default=Path("./var"))
     import_row_limit: int = 5000
@@ -93,6 +100,18 @@ class Settings(BaseSettings):
         if self.clickhouse_r2_storage_mode == "r2_disk" and self.clickhouse_r2_storage_configured:
             return self.clickhouse_r2_storage_policy
         return None
+
+    @property
+    def api_auth_enabled(self) -> bool:
+        if self.api_auth_mode == "disabled":
+            return False
+        if self.api_auth_mode == "required":
+            return True
+        return bool(self.api_key)
+
+    @property
+    def api_auth_misconfigured(self) -> bool:
+        return self.api_auth_mode == "required" and not self.api_key
 
 
 @lru_cache(maxsize=1)

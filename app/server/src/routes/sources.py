@@ -1,8 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 
 from src.db import get_db
 from src.schemas import (
+    SourceCheckpointRead,
+    SourceDeadLetterRead,
     SourceDefinitionCreate,
     SourceDefinitionRead,
     SourceInventorySummaryRead,
@@ -18,9 +20,14 @@ from src.services.source_service import (
     build_source_ops_export_summary,
     build_source_ops_report_index,
     create_source_definition,
+    ingest_webhook_payload,
+    list_source_checkpoints,
+    list_source_dead_letters,
     list_source_definitions,
     list_source_runs,
+    replay_dead_letter_record,
     run_source_definition,
+    run_source_runtime_cycle,
     update_source_definition,
 )
 
@@ -51,6 +58,21 @@ def update_source(source_id: int, payload: SourceDefinitionUpdate, session: Sess
 @router.get("/runs", response_model=list[SourceRunRead])
 def list_runs(session: Session = Depends(get_db)) -> list[object]:
     return list_source_runs(session)
+
+
+@router.get("/checkpoints", response_model=list[SourceCheckpointRead])
+def source_checkpoints(session: Session = Depends(get_db)) -> list[object]:
+    return list_source_checkpoints(session)
+
+
+@router.get("/dead-letters", response_model=list[SourceDeadLetterRead])
+def source_dead_letters(
+    source_id: int | None = None,
+    status: str | None = None,
+    limit: int = Query(default=200, ge=1, le=1000),
+    session: Session = Depends(get_db),
+) -> list[object]:
+    return list_source_dead_letters(session, source_id=source_id, status=status, limit=limit)
 
 
 @router.get("/summary", response_model=SourceInventorySummaryRead)
@@ -105,6 +127,43 @@ def source_ops(source_id: int, session: Session = Depends(get_db)) -> dict[str, 
 def run_source(source_id: int, session: Session = Depends(get_db)) -> object:
     try:
         return run_source_definition(session, source_id)
+    except ValueError as exc:
+        raise translate_source_error(exc) from exc
+
+
+@router.post("/{source_id}/runtime", response_model=dict[str, object])
+def run_source_runtime(source_id: int, session: Session = Depends(get_db)) -> dict[str, object]:
+    try:
+        return run_source_runtime_cycle(session, source_id=source_id)
+    except ValueError as exc:
+        raise translate_source_error(exc) from exc
+
+
+@router.post("/{source_id}/webhook", response_model=SourceRunRead)
+async def source_webhook(
+    source_id: int,
+    request: Request,
+    session: Session = Depends(get_db),
+) -> object:
+    try:
+        payload = await request.body()
+        return ingest_webhook_payload(
+            session,
+            source_id,
+            payload=payload,
+            content_type=request.headers.get("Content-Type"),
+        )
+    except ValueError as exc:
+        raise translate_source_error(exc) from exc
+
+
+@router.post("/dead-letters/{source_dead_letter_id}/replay", response_model=SourceDeadLetterRead)
+def replay_source_dead_letter_route(
+    source_dead_letter_id: int,
+    session: Session = Depends(get_db),
+) -> object:
+    try:
+        return replay_dead_letter_record(session, source_dead_letter_id)
     except ValueError as exc:
         raise translate_source_error(exc) from exc
 

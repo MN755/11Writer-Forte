@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -7,6 +8,7 @@ from pydantic import ValidationError
 from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
 
+from src.metrics import inc_counter
 from src.models import (
     AlertORM,
     CustodyLogORM,
@@ -15,6 +17,7 @@ from src.models import (
     ScheduledTaskORM,
     ScheduledTaskRunORM,
 )
+from src.observability import log_event
 from src.schemas import EntityResolutionRequest, EventFusionRequest, ScheduledTaskCreate, ScheduledTaskUpdate
 from src.services.camera_source_service import materialize_camera_source_inventory
 from src.services.camera_service import materialize_camera_inventory
@@ -25,8 +28,10 @@ from src.services.geospatial_service import build_contains_geometry_sql_filter, 
 from src.services.import_service import import_local_path
 from src.services.layer_service import ensure_data_layer
 from src.services.storage_service import sweep_expired_storage_objects
-from src.services.source_service import run_source_definition
+from src.services.source_service import run_source_definition, run_source_runtime_cycle
 from src.services.trust_service import seed_default_integrity_sources
+
+logger = logging.getLogger(__name__)
 
 
 def scheduler_now() -> datetime:
@@ -76,6 +81,15 @@ def create_scheduled_task(session: Session, payload: ScheduledTaskCreate) -> Sch
     )
     session.commit()
     session.refresh(record)
+    log_event(
+        logger,
+        logging.INFO,
+        "scheduled_task_created",
+        task_id=record.task_id,
+        task_type=record.task_type,
+        interval_seconds=record.interval_seconds,
+        enabled=record.enabled,
+    )
     return record
 
 
@@ -241,6 +255,15 @@ def update_scheduled_task(
     )
     session.commit()
     session.refresh(record)
+    log_event(
+        logger,
+        logging.INFO,
+        "scheduled_task_updated",
+        task_id=record.task_id,
+        task_type=record.task_type,
+        changes=change_details,
+        next_run_at=record.next_run_at,
+    )
     return record
 
 
@@ -254,6 +277,14 @@ def run_due_tasks(session: Session, actor: str = "scheduler") -> list[ScheduledT
         )
     )
     tasks = list(session.scalars(statement.order_by(ScheduledTaskORM.task_id.asc())))
+    log_event(
+        logger,
+        logging.INFO,
+        "scheduler_due_tasks_evaluated",
+        actor=actor,
+        due_task_count=len(tasks),
+        task_ids=[task.task_id for task in tasks],
+    )
     runs: list[ScheduledTaskRunORM] = []
     for task in tasks:
         try:
@@ -289,6 +320,15 @@ def run_task(session: Session, task_id: int, actor: str = "scheduler") -> Schedu
                 "task_type": task.task_type,
             },
         )
+    )
+    log_event(
+        logger,
+        logging.INFO,
+        "scheduled_task_run_started",
+        task_id=task.task_id,
+        task_type=task.task_type,
+        task_run_id=task_run.task_run_id,
+        actor=actor,
     )
 
     max_attempts = max(1, task.retry_attempts)
@@ -341,6 +381,22 @@ def run_task(session: Session, task_id: int, actor: str = "scheduler") -> Schedu
             )
             session.commit()
             session.refresh(task_run)
+            inc_counter(
+                "elevenwriter_scheduler_runs_total",
+                task_type=task.task_type,
+                status="completed",
+            )
+            log_event(
+                logger,
+                logging.INFO,
+                "scheduled_task_run_completed",
+                task_id=task.task_id,
+                task_type=task.task_type,
+                task_run_id=task_run.task_run_id,
+                actor=actor,
+                records_affected=records_affected,
+                attempt_count=attempt,
+            )
             return task_run
         except Exception as exc:
             error_details = {
@@ -423,6 +479,23 @@ def run_task(session: Session, task_id: int, actor: str = "scheduler") -> Schedu
                 )
             )
             session.commit()
+            inc_counter(
+                "elevenwriter_scheduler_runs_total",
+                task_type=task.task_type,
+                status="failed",
+            )
+            log_event(
+                logger,
+                logging.WARNING,
+                "scheduled_task_run_failed",
+                task_id=task.task_id,
+                task_type=task.task_type,
+                task_run_id=task_run.task_run_id,
+                actor=actor,
+                attempt_count=attempt,
+                max_attempts=max_attempts,
+                error=str(exc),
+            )
             raise
 
     session.refresh(task_run)
@@ -466,6 +539,15 @@ def execute_task(
             {
                 "source_run_id": source_run.source_run_id,
                 "import_run_id": source_run.import_run_id,
+            },
+        )
+    if task.task_type == "source_runtime":
+        result = run_source_runtime_cycle(session, source_id=task.source_id, actor=actor)
+        return (
+            int(result["records_imported"]),
+            {
+                "source_id": task.source_id,
+                **result,
             },
         )
     if task.task_type == "storage_lifecycle":
@@ -743,6 +825,9 @@ def validate_task_configuration(
         raise ValueError("Local import task requires target_path.")
     if task_type == "source_sync" and source_id is None:
         raise ValueError("Source sync task requires source_id.")
+    if task_type == "source_runtime":
+        if any(value is not None for value in (target_path, geofence_id)):
+            raise ValueError("Source runtime task does not accept target_path or geofence_id.")
     if task_type == "integrity_seed" and any(value is not None for value in (source_id, target_path, geofence_id)):
         raise ValueError("Integrity seed task does not accept source_id, target_path, or geofence_id.")
     if task_type == "storage_lifecycle":

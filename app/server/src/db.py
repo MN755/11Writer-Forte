@@ -30,6 +30,17 @@ REQUIRED_ADDITIVE_COLUMNS: dict[str, dict[str, str]] = {
     "alerts": {
         "disposition_note": "TEXT NOT NULL DEFAULT ''",
     },
+    "source_runs": {
+        "adapter_kind": "TEXT NOT NULL DEFAULT 'unknown'",
+        "fetch_mode": "TEXT NOT NULL DEFAULT 'pull'",
+        "records_seen": "INTEGER NOT NULL DEFAULT 0",
+        "records_skipped": "INTEGER NOT NULL DEFAULT 0",
+        "records_failed": "INTEGER NOT NULL DEFAULT 0",
+        "cursor_text": "TEXT",
+        "last_event_id": "TEXT",
+        "last_offset": "INTEGER",
+        "checkpoint_json": "JSON NOT NULL DEFAULT '{}'",
+    },
 }
 
 REQUIRED_POSTGIS_INDEX_DDLS: dict[str, str] = {

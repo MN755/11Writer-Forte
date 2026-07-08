@@ -13,6 +13,18 @@ RetentionClass = Literal["ephemeral", "operational", "investigative", "permanent
 StorageLifecycleStatus = Literal["active", "promoted", "degraded", "archived", "expired"]
 CameraSourceStatus = Literal["candidate", "review", "ready", "graduated", "ignored", "retired"]
 CameraSourceVerificationState = Literal["unknown", "observed", "reachable", "failed"]
+SourceKind = Literal[
+    "local_file",
+    "sqlite_file",
+    "http_json",
+    "http_jsonl",
+    "http_text",
+    "http_xml",
+    "rss",
+    "webhook_ingest",
+    "sse_stream",
+    "websocket_stream",
+]
 
 
 class ForteModel(BaseModel):
@@ -29,6 +41,8 @@ class HealthResponse(ForteModel):
     spatial_backend: str
     postgis_ready: bool
     warning_count: int
+    api_auth_enabled: bool
+    metrics_enabled: bool
 
 
 class DatabaseColumnAuditRead(ForteModel):
@@ -142,6 +156,43 @@ class ClickHouseRehydrateResultRead(ForteModel):
     sql: str
 
 
+class ApiAuthDiagnosticsRead(ForteModel):
+    enabled: bool
+    mode: str
+    header_name: str
+    misconfigured: bool
+    protected_prefixes: list[str]
+    metrics_protected: bool
+
+
+class ObservabilityDiagnosticsRead(ForteModel):
+    metrics_enabled: bool
+    metrics_path: str
+    request_id_header: str
+    log_level: str
+
+
+class RuntimeFailureRead(ForteModel):
+    subsystem: str
+    reference_id: str
+    status: str
+    message: str
+    occurred_at: datetime
+
+
+class RuntimeDiagnosticsRead(ForteModel):
+    generated_at: datetime
+    app_env: str
+    api_auth: ApiAuthDiagnosticsRead
+    observability: ObservabilityDiagnosticsRead
+    database: DatabaseDiagnosticsRead
+    scheduler: "SchedulerInventorySummaryRead"
+    sources: "SourceInventorySummaryRead"
+    storage: "StorageReportRead"
+    clickhouse: ClickHouseDiagnosticsRead
+    recent_failures: list[RuntimeFailureRead]
+
+
 class RuntimeSnapshotRead(ForteModel):
     exported_at: datetime
     app_name: str
@@ -153,6 +204,7 @@ class RuntimeSnapshotRead(ForteModel):
     source_trust_profiles: list["SourceTrustProfileRead"]
     geofences: list["GeofenceRead"]
     source_definitions: list["SourceDefinitionRead"]
+    source_checkpoints: list["SourceCheckpointRead"]
     local_import_runs: list["LocalImportRunSummaryRead"]
     events: list["EventRead"]
     entities: list["EntityRead"]
@@ -166,6 +218,7 @@ class RuntimeSnapshotRead(ForteModel):
     scheduled_tasks: list["ScheduledTaskRead"]
     scheduled_task_runs: list["ScheduledTaskRunRead"]
     source_runs: list["SourceRunRead"]
+    source_dead_letters: list["SourceDeadLetterRead"]
     situation_products: list["SituationProductRead"]
     custody_logs: list["CustodyLogRead"]
 
@@ -536,7 +589,7 @@ class SourceTrustProfileRead(SourceTrustProfileCreate):
 
 class SourceDefinitionCreate(ForteModel):
     name: str
-    source_kind: Literal["local_file", "http_json", "http_text", "http_xml"]
+    source_kind: SourceKind
     layer_key: str
     target_uri: str
     enabled: bool = True
@@ -553,12 +606,53 @@ class SourceDefinitionRead(SourceDefinitionCreate):
 
 class SourceDefinitionUpdate(ForteModel):
     name: str | None = None
+    source_kind: SourceKind | None = None
     layer_key: str | None = None
     target_uri: str | None = None
     enabled: bool | None = None
     integrity_source: bool | None = None
     notes: str | None = None
     metadata_json: dict[str, Any] | None = None
+
+
+class SourceCheckpointRead(ForteModel):
+    source_checkpoint_id: int
+    source_id: int
+    adapter_kind: str
+    fetch_mode: str
+    status: str
+    cursor_text: str | None
+    last_event_id: str | None
+    last_offset: int | None
+    checkpoint_json: dict[str, Any]
+    last_seen_at: datetime | None
+    last_success_at: datetime | None
+    last_failure_at: datetime | None
+    failure_count: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class SourceDeadLetterRead(ForteModel):
+    source_dead_letter_id: int
+    source_id: int
+    source_run_id: int | None
+    adapter_kind: str
+    source_kind: str
+    stage: str
+    status: str
+    failure_reason: str
+    record_key: str | None
+    record_hash: str | None
+    raw_payload_text: str | None
+    payload_json: dict[str, Any]
+    cursor_text: str | None
+    checkpoint_json: dict[str, Any]
+    replay_count: int
+    last_replayed_at: datetime | None
+    last_error_text: str | None
+    created_at: datetime
+    updated_at: datetime
 
 
 class SourceRunRead(ForteModel):
@@ -568,14 +662,26 @@ class SourceRunRead(ForteModel):
     status: str
     started_at: datetime
     finished_at: datetime | None
+    adapter_kind: str
+    fetch_mode: str
+    records_seen: int
     records_imported: int
+    records_skipped: int
+    records_failed: int
+    cursor_text: str | None
+    last_event_id: str | None
+    last_offset: int | None
+    checkpoint_json: dict[str, Any]
     error_text: str | None
     output_json: dict[str, Any]
 
 
 class SourceOpsDetailRead(ForteModel):
     source: SourceDefinitionRead
+    report_status: SourceOpsStatusRead | None
     recent_runs: list[SourceRunRead]
+    checkpoint: SourceCheckpointRead | None
+    dead_letters: list[SourceDeadLetterRead]
     storage_objects: list[StorageObjectRead]
     custody_logs: list["CustodyLogRead"]
 
@@ -583,11 +689,17 @@ class SourceOpsDetailRead(ForteModel):
 class SourceOpsStatusRead(ForteModel):
     source: SourceDefinitionRead
     latest_run: SourceRunRead | None
+    checkpoint: SourceCheckpointRead | None
     has_schedule: bool
     next_run_at: datetime | None
     latest_success_at: datetime | None
     is_stale: bool
     is_failing: bool
+    runtime_state: str
+    fetch_mode: str
+    pending_dead_letter_count: int
+    replayed_dead_letter_count: int
+    last_dead_letter_at: datetime | None
     storage_object_count: int
     last_storage_observed_at: datetime | None
 
@@ -609,9 +721,13 @@ class SourceInventorySummaryRead(ForteModel):
     disabled_count: int
     stale_count: int
     failing_count: int
+    runtime_active_count: int
+    runtime_degraded_count: int
+    dead_letter_pending_count: int
     scheduled_count: int
     unscheduled_count: int
     source_kind_counts: list[SourceSummaryBucketRead]
+    fetch_mode_counts: list[SourceSummaryBucketRead]
     layer_counts: list[SourceSummaryBucketRead]
     latest_status_counts: list[SourceSummaryBucketRead]
 
@@ -624,11 +740,15 @@ class SourceOpsReportIndexRead(ForteModel):
     sync_task_count: int
     sync_run_count: int
     sync_failure_count: int
+    pending_dead_letter_count: int
+    runtime_degraded_count: int
     sync_tasks: list["ScheduledTaskRead"]
     recent_runs: list[SourceRunRead]
     stale_sources: list[SourceOpsStatusRead]
     failing_sources: list[SourceOpsStatusRead]
     unscheduled_sources: list[SourceOpsStatusRead]
+    runtime_degraded_sources: list[SourceOpsStatusRead]
+    pending_dead_letter_sources: list[SourceOpsStatusRead]
 
 
 class SourceOpsExportSummaryRead(ForteModel):
@@ -798,6 +918,7 @@ class ScheduledTaskCreate(ForteModel):
         "geofence_scan",
         "integrity_seed",
         "source_sync",
+        "source_runtime",
         "storage_lifecycle",
         "clickhouse_sync",
         "clickhouse_archive",
@@ -956,6 +1077,7 @@ class OperationsSummaryRead(ForteModel):
     skipped_record_count: int
     source_run_count: int
     source_run_failure_count: int
+    source_dead_letter_count: int
     scheduled_task_run_count: int
     scheduled_task_run_failure_count: int
     alert_count: int
@@ -984,6 +1106,7 @@ class OperationsReportRead(ForteModel):
     camera_source_report_index: CameraSourceOpsReportIndexRead
     import_runs: list[LocalImportRunSummaryRead]
     source_runs: list[SourceRunRead]
+    source_dead_letters: list[SourceDeadLetterRead]
     scheduled_task_runs: list[ScheduledTaskRunRead]
     alerts: list[AlertRead]
     custody_logs: list[CustodyLogRead]

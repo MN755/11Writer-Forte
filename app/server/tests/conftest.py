@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from src.config import reset_settings_cache
 from src.db import reset_db_state
+from src.metrics import reset_metrics_registry
 
 
 @pytest.fixture()
@@ -17,6 +18,7 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setenv("ELEVENWRITER_DATA_DIR", str(data_path))
     reset_settings_cache()
     reset_db_state()
+    reset_metrics_registry()
 
     from src.main import app
 
@@ -25,4 +27,5 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
 
     reset_db_state()
     reset_settings_cache()
+    reset_metrics_registry()
 

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from typing import Protocol
+from pathlib import Path
+from typing import Any, Protocol
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 
 REDACTION_ORDER = {
@@ -9,6 +11,27 @@ REDACTION_ORDER = {
     "confidential": 2,
     "secret": 3,
 }
+
+REDACTED_VALUE = "***REDACTED***"
+SENSITIVE_KEY_FRAGMENTS = (
+    "access_key",
+    "api_key",
+    "authorization",
+    "cookie",
+    "credential",
+    "password",
+    "private_key",
+    "secret",
+    "token",
+)
+SENSITIVE_HEADER_NAMES = {
+    "authorization",
+    "cookie",
+    "proxy-authorization",
+    "set-cookie",
+    "x-api-key",
+}
+URL_FIELD_FRAGMENTS = ("url", "uri")
 
 
 class RedactableRecord(Protocol):
@@ -53,3 +76,82 @@ def filter_records_by_redaction_level(
         for record in records
         if is_visible_at_level(getattr(record, "redaction_level", "public"), max_redaction_level)
     ]
+
+
+def sanitize_for_observability(value: Any, *, field_name: str | None = None) -> Any:
+    if isinstance(value, dict):
+        sanitized: dict[str, Any] = {}
+        for key, item in value.items():
+            key_name = str(key)
+            lowered_key = key_name.lower()
+            if is_sensitive_field_name(lowered_key):
+                sanitized[key_name] = REDACTED_VALUE
+                continue
+            if lowered_key == "headers" and isinstance(item, dict):
+                sanitized[key_name] = sanitize_headers(item)
+                continue
+            sanitized[key_name] = sanitize_for_observability(item, field_name=key_name)
+        return sanitized
+    if isinstance(value, list):
+        return [sanitize_for_observability(item, field_name=field_name) for item in value]
+    if isinstance(value, tuple):
+        return [sanitize_for_observability(item, field_name=field_name) for item in value]
+    if isinstance(value, Path):
+        return value.name
+    if isinstance(value, str):
+        if should_sanitize_url(field_name):
+            return sanitize_url(value)
+        return value
+    return value
+
+
+def sanitize_headers(headers: dict[str, Any]) -> dict[str, Any]:
+    sanitized: dict[str, Any] = {}
+    for key, value in headers.items():
+        normalized = str(key)
+        lowered = normalized.lower()
+        if lowered in SENSITIVE_HEADER_NAMES or is_sensitive_field_name(lowered):
+            sanitized[normalized] = REDACTED_VALUE
+            continue
+        sanitized[normalized] = sanitize_for_observability(value, field_name=normalized)
+    return sanitized
+
+
+def sanitize_url(value: str) -> str:
+    stripped = value.strip()
+    if not stripped:
+        return stripped
+    if stripped.startswith("sqlite:///"):
+        filename = Path(stripped.removeprefix("sqlite:///")).name
+        return f"sqlite:///{filename}" if filename else "sqlite:///"
+
+    parsed = urlsplit(stripped)
+    if not parsed.scheme:
+        return stripped
+
+    hostname = parsed.hostname or ""
+    port = f":{parsed.port}" if parsed.port else ""
+    if parsed.username or parsed.password:
+        netloc = f"{REDACTED_VALUE}@{hostname}{port}"
+    else:
+        netloc = parsed.netloc
+
+    query_pairs = []
+    for key, item in parse_qsl(parsed.query, keep_blank_values=True):
+        if is_sensitive_field_name(key.lower()):
+            query_pairs.append((key, REDACTED_VALUE))
+        else:
+            query_pairs.append((key, item))
+    query = urlencode(query_pairs, doseq=True)
+    return urlunsplit((parsed.scheme, netloc, parsed.path, query, parsed.fragment))
+
+
+def is_sensitive_field_name(value: str) -> bool:
+    return any(fragment in value for fragment in SENSITIVE_KEY_FRAGMENTS)
+
+
+def should_sanitize_url(field_name: str | None) -> bool:
+    if field_name is None:
+        return False
+    lowered = field_name.lower()
+    return any(fragment in lowered for fragment in URL_FIELD_FRAGMENTS)
