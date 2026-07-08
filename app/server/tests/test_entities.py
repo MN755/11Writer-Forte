@@ -42,9 +42,26 @@ def test_entity_resolution_materializes_entity_links_and_custody(
         ),
         encoding="utf-8",
     )
+    fixture_c = tmp_path / "entity-c.json"
+    fixture_c.write_text(
+        json.dumps(
+            [
+                {
+                    "title": "Port webcam follow-up",
+                    "url": "https://gamma.example.com/vessel",
+                    "observed_at": "2026-07-06T20:03:00Z",
+                    "lat": 29.761,
+                    "lon": -95.359,
+                    "vessel_name": "MV Example",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
 
     client.post("/api/imports/local", json={"source_path": str(fixture_a), "layer_key": "marine-track"})
     client.post("/api/imports/local", json={"source_path": str(fixture_b), "layer_key": "news-track"})
+    client.post("/api/imports/local", json={"source_path": str(fixture_c), "layer_key": "camera-feed"})
 
     response = client.post(
         "/api/entities/resolve",
@@ -62,7 +79,7 @@ def test_entity_resolution_materializes_entity_links_and_custody(
     entity_id = payload["entity_results"][0]["entity_id"]
     assert payload["entity_results"][0]["entity_type"] == "vessel"
     assert payload["entity_results"][0]["canonical_name"] == "MV Example"
-    assert payload["entity_results"][0]["observation_count"] == 2
+    assert payload["entity_results"][0]["observation_count"] == 3
     assert payload["entity_results"][0]["signal_count"] == 2
 
     entities_response = client.get("/api/entities")
@@ -71,11 +88,15 @@ def test_entity_resolution_materializes_entity_links_and_custody(
     assert len(entities) == 1
     assert entities[0]["entity_id"] == entity_id
     assert entities[0]["metadata_json"]["signal_keys"] == ["mmsi", "vessel_name"]
+    assert entities[0]["metadata_json"]["hard_signal_keys"] == ["mmsi"]
+    assert entities[0]["metadata_json"]["observation_count"] == 3
+    assert entities[0]["metadata_json"]["evidence_strength"] == "anchored"
+    assert entities[0]["metadata_json"]["primary_signal"]["signal_key"] == "mmsi"
 
     links_response = client.get(f"/api/entities/{entity_id}/observations")
     assert links_response.status_code == 200
     links = links_response.json()
-    assert len(links) == 2
+    assert len(links) == 3
 
     rerun_response = client.post(
         "/api/entities/resolve",

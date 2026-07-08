@@ -30,6 +30,8 @@ def test_event_fusion_creates_event_links_and_products(
                     "url": "https://alpha.example.com/departure",
                     "observed_at": "2026-07-06T20:00:00Z",
                     "ground_truth": True,
+                    "vessel_name": "MV Fusion",
+                    "mmsi": "555666777",
                     "lat": 29.76,
                     "lon": -95.36,
                 }
@@ -45,6 +47,8 @@ def test_event_fusion_creates_event_links_and_products(
                     "title": "Departure confirmation",
                     "url": "https://beta.example.com/departure",
                     "observed_at": "2026-07-06T20:05:00Z",
+                    "vessel_name": "MV Fusion",
+                    "mmsi": "555666777",
                     "lat": 29.77,
                     "lon": -95.35,
                 }
@@ -55,6 +59,18 @@ def test_event_fusion_creates_event_links_and_products(
 
     client.post("/api/imports/local", json={"source_path": str(fixture_a), "layer_key": "marine-track"})
     client.post("/api/imports/local", json={"source_path": str(fixture_b), "layer_key": "news-track"})
+    entity_resolution = client.post(
+        "/api/entities/resolve",
+        json={
+            "min_lon": -96.0,
+            "min_lat": 29.0,
+            "max_lon": -94.0,
+            "max_lat": 31.0,
+            "min_observations": 2,
+        },
+    )
+    assert entity_resolution.status_code == 200
+    assert entity_resolution.json()["created_entity_count"] == 1
 
     response = client.post(
         "/api/events/fuse",
@@ -77,6 +93,8 @@ def test_event_fusion_creates_event_links_and_products(
     assert events_response.status_code == 200
     assert events_response.json()[0]["event_id"] == event_id
     assert events_response.json()[0]["occurred_at"].startswith("2026-07-06T20:00:00")
+    assert events_response.json()[0]["metadata_json"]["linked_entity_count"] == 1
+    assert events_response.json()[0]["metadata_json"]["confidence_band"] in {"moderate", "high"}
 
     links_response = client.get(f"/api/events/{event_id}/observations")
     assert links_response.status_code == 200
@@ -93,6 +111,12 @@ def test_event_fusion_creates_event_links_and_products(
     assert any("verification score" in product["body_text"].lower() for product in products)
     assert any("integrity sources" in product["body_text"].lower() for product in products)
     assert any("ground-truth hits" in product["body_text"].lower() for product in products)
+    assert any("executive assessment" in product["body_text"].lower() for product in products)
+    assert any("confidence assessment" in product["body_text"].lower() for product in products)
+    assert any("timeline" in product["body_text"].lower() for product in products)
+    assert any("source reliability breakdown" in product["body_text"].lower() for product in products)
+    assert any("linked entities" in product["body_text"].lower() for product in products)
+    assert any("collection gaps and follow-up" in product["body_text"].lower() for product in products)
     assert all("trust_level" in product["citations_json"][0] for product in products)
 
     custody_response = client.get("/api/custody/logs")
