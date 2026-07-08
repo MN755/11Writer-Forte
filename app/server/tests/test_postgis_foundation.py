@@ -4,13 +4,14 @@ import json
 import sqlite3
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.dialects import postgresql
 
 from src.config import reset_settings_cache
-from src.db import init_db, reset_db_state
-from src.db import get_session_factory
+from src.db import get_engine, get_session_factory, init_db, reset_db_state
+from src.migrations import DatabaseMigrationRequiredError, inspect_database_revision
 from src.models import GeofenceORM, ObservationORM
 from src.services.geospatial_service import (
     build_bbox_sql_filter,
@@ -101,7 +102,39 @@ def test_postgis_contains_filter_compiles_to_spatial_sql() -> None:
     assert "ST_GeomFromText(observations.location_wkt, 4326)" in compiled
 
 
-def test_init_db_reconciles_additive_columns(tmp_path: Path, monkeypatch) -> None:
+def test_init_db_bootstraps_fresh_sqlite_database(tmp_path: Path, monkeypatch) -> None:
+    database_path = tmp_path / "fresh.db"
+    monkeypatch.setenv("ELEVENWRITER_DATABASE_URL", f"sqlite:///{database_path}")
+    monkeypatch.setenv("ELEVENWRITER_DATA_DIR", str(tmp_path / "var"))
+    reset_settings_cache()
+    reset_db_state()
+
+    status = init_db(auto_upgrade=True)
+
+    assert status.schema_up_to_date is True
+    assert status.version_table_present is True
+    assert status.current_revision == status.head_revision
+
+    check_connection = sqlite3.connect(database_path)
+    try:
+        table_names = {
+            row[0]
+            for row in check_connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        assert "alembic_version" in table_names
+        assert "camera_source_inventory" in table_names
+        revision = check_connection.execute("SELECT version_num FROM alembic_version").fetchone()
+        assert revision is not None
+        assert revision[0] == status.head_revision
+    finally:
+        check_connection.close()
+        reset_db_state()
+        reset_settings_cache()
+
+
+def test_init_db_upgrades_legacy_schema_and_stamps_revision(tmp_path: Path, monkeypatch) -> None:
     database_path = tmp_path / "legacy.db"
     connection = sqlite3.connect(database_path)
     try:
@@ -188,7 +221,8 @@ def test_init_db_reconciles_additive_columns(tmp_path: Path, monkeypatch) -> Non
     reset_settings_cache()
     reset_db_state()
 
-    init_db()
+    status = init_db(auto_upgrade=True)
+    assert status.schema_up_to_date is True
 
     check_connection = sqlite3.connect(database_path)
     try:
@@ -213,7 +247,39 @@ def test_init_db_reconciles_additive_columns(tmp_path: Path, monkeypatch) -> Non
         assert "retry_attempts" in scheduled_task_columns
         assert "retry_backoff_seconds" in scheduled_task_columns
         assert "disposition_note" in alert_columns
+        revision = check_connection.execute("SELECT version_num FROM alembic_version").fetchone()
+        assert revision is not None
+        assert revision[0] == status.head_revision
+        table_names = {
+            row[0]
+            for row in check_connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        assert "camera_inventory" in table_names
+        assert "camera_source_inventory" in table_names
     finally:
         check_connection.close()
         reset_db_state()
         reset_settings_cache()
+
+
+def test_init_db_requires_explicit_migration_when_auto_upgrade_disabled(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    database_path = tmp_path / "uninitialized.db"
+    monkeypatch.setenv("ELEVENWRITER_DATABASE_URL", f"sqlite:///{database_path}")
+    monkeypatch.setenv("ELEVENWRITER_DATA_DIR", str(tmp_path / "var"))
+    monkeypatch.setenv("ELEVENWRITER_DATABASE_AUTO_MIGRATE", "false")
+    reset_settings_cache()
+    reset_db_state()
+
+    with pytest.raises(DatabaseMigrationRequiredError):
+        init_db(auto_upgrade=False)
+
+    status = inspect_database_revision(get_engine())
+    assert status.version_table_present is False
+
+    reset_db_state()
+    reset_settings_cache()

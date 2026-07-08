@@ -31,15 +31,17 @@ class HealthResponse(ForteModel):
     warning_count: int
 
 
-class DatabaseColumnAuditRead(ForteModel):
-    table_name: str
-    column_name: str
-    present: bool
-
-
 class DatabaseIndexAuditRead(ForteModel):
     index_name: str
     present: bool
+
+
+class DatabaseMigrationStatusRead(ForteModel):
+    current_revision: str | None
+    head_revision: str
+    version_table_present: bool
+    has_application_tables: bool
+    schema_up_to_date: bool
 
 
 class DatabaseTableCountRead(ForteModel):
@@ -60,7 +62,7 @@ class DatabaseDiagnosticsRead(ForteModel):
     warning_count: int
     warnings: list[str]
     notes: list[str]
-    required_columns: list[DatabaseColumnAuditRead]
+    migration: DatabaseMigrationStatusRead
     spatial_indexes: list[DatabaseIndexAuditRead]
     table_counts: list[DatabaseTableCountRead]
 
@@ -148,6 +150,8 @@ class RuntimeSnapshotRead(ForteModel):
     app_version: str
     database_backend: str
     spatial_backend: str
+    database_revision: str | None = None
+    database_head_revision: str | None = None
     row_counts: list[DatabaseTableCountRead]
     data_layers: list["DataLayerRead"]
     source_trust_profiles: list["SourceTrustProfileRead"]

@@ -7,6 +7,7 @@ from sqlalchemy import delete, func, insert, select
 from sqlalchemy.orm import Session
 
 from src.config import get_settings
+from src.migrations import inspect_database_revision
 from src.models import (
     AlertORM,
     CameraInventoryORM,
@@ -126,6 +127,7 @@ RESTORE_ORDER: tuple[tuple[str, object], ...] = (
 
 def build_runtime_snapshot(session: Session) -> dict[str, object]:
     settings = get_settings()
+    revision_status = inspect_database_revision(session.get_bind())
     row_counts_before = collect_table_counts(session)
     export_log = log_runtime_snapshot_export(session, row_counts=row_counts_before)
     session.commit()
@@ -135,6 +137,8 @@ def build_runtime_snapshot(session: Session) -> dict[str, object]:
         "app_version": settings.app_version,
         "database_backend": session.get_bind().dialect.name,
         "spatial_backend": settings.spatial_backend,
+        "database_revision": revision_status.current_revision,
+        "database_head_revision": revision_status.head_revision,
         "row_counts": collect_table_counts(session),
     }
     snapshot.update(serialize_snapshot_sections(session))

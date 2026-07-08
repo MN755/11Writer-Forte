@@ -17,7 +17,7 @@ This repo intentionally removes the frontend runtime. The only operator-facing i
 - Camera inventory materialization that turns imported/public traffic camera observations into persisted geospatial camera records with provenance
 - Camera source inventory lifecycle that graduates observed camera endpoints into a backend-native candidate registry with rule-based readiness scoring
 - Storage-object ledger that tracks retained artifacts, retention class, lifecycle state, and provenance for imports and camera-derived references
-- SQLAlchemy storage foundation that runs on SQLite for local development and Postgres/PostGIS-oriented URLs for deployment
+- Alembic-managed SQLAlchemy storage foundation that runs on SQLite for local development and Postgres/PostGIS-oriented URLs for deployment
 - Optional ClickHouse analytics/archive backend that can mirror runtime facts and archive observation data to Cloudflare R2 over the S3-compatible API
 - PostGIS-aware spatial query path that persists WKT alongside GeoJSON and automatically provisions spatial indexes on PostgreSQL
 - Local import pipeline for JSON, JSONL, TXT, and SQLite inputs with row-level dedupe inside each layer
@@ -37,6 +37,8 @@ docker-compose.yml
 
 ## Quick start
 
+Platform-specific deployment, migration, backup, and recovery steps live in [OPERATIONS_RUNBOOK.md](OPERATIONS_RUNBOOK.md).
+
 ```bash
 cd app/server
 python -m venv .venv
@@ -45,6 +47,7 @@ python -m venv .venv
 python -m pip install --upgrade pip
 python -m pip install -e .[dev]
 elevenwriter init-db
+elevenwriter verify-db
 elevenwriter seed-integrity
 uvicorn src.main:app --reload --port 8000
 ```
@@ -59,6 +62,8 @@ Upstream camera/webcam inventory and local parity notes live in [UPSTREAM_CAMERA
 elevenwriter status
 elevenwriter doctor
 elevenwriter init-db
+elevenwriter migrate-db
+elevenwriter verify-db
 elevenwriter seed-integrity
 elevenwriter add-layer marine-track "Marine Track" --temporal-resolution live --data-latency low
 elevenwriter list-layers
@@ -113,7 +118,9 @@ elevenwriter fuse-events --bbox "-96,29,-94,31" --distance-km 10
 elevenwriter show-event-products 1
 elevenwriter export-event-product 1 cited_summary ./exports/event-1-summary.txt --max-redaction-level public
 elevenwriter export-event-bundle 1 ./exports/event-1-bundle.json --max-redaction-level public
+elevenwriter backup-runtime ./exports/runtime-snapshot.json
 elevenwriter export-runtime-snapshot ./exports/runtime-snapshot.json
+elevenwriter restore-runtime ./exports/runtime-snapshot.json --replace-existing
 elevenwriter restore-runtime-snapshot ./exports/runtime-snapshot.json --replace-existing
 elevenwriter add-source-sync-schedule nightly-sync 1 300 --retry-attempts 3 --retry-backoff-seconds 5
 elevenwriter add-geofence-scan-schedule nightly-watch 300
@@ -136,7 +143,20 @@ docker compose up --build
 docker compose --profile clickhouse up --build
 ```
 
-By default the compose stack starts the API, a scheduler worker, and PostGIS-ready Postgres. The optional `clickhouse` profile starts a self-hosted ClickHouse server on `8123`/`9000`; Forte will only use it if you also set the ClickHouse env vars below. The compose file also mounts [`app/server/11writer-r2-storage.xml`](app/server/11writer-r2-storage.xml), and `elevenwriter write-clickhouse-r2-config` now targets that mounted file automatically when you run it from the repo root, so the generated R2 disk policy lands where Docker actually reads it.
+By default the compose stack starts the API, a scheduler worker, and PostGIS-ready Postgres. The API and worker now wait for PostgreSQL health and run `elevenwriter migrate-db` before process startup, so fresh bootstraps and normal upgrades converge on the Alembic head revision instead of runtime schema mutation. The optional `clickhouse` profile starts a self-hosted ClickHouse server on `8123`/`9000`; Forte will only use it if you also set the ClickHouse env vars below. The compose file also mounts [`app/server/11writer-r2-storage.xml`](app/server/11writer-r2-storage.xml), and `elevenwriter write-clickhouse-r2-config` now targets that mounted file automatically when you run it from the repo root, so the generated R2 disk policy lands where Docker actually reads it.
+
+## Database workflow
+
+```bash
+elevenwriter init-db
+elevenwriter migrate-db
+elevenwriter verify-db
+```
+
+- `init-db` boots a fresh database or upgrades an existing one to the Alembic head revision.
+- `migrate-db` is the explicit upgrade command for deployment workflows.
+- `verify-db` is the non-destructive preflight that checks connectivity, Alembic revision state, PostGIS readiness, and table visibility.
+- Long-running API and worker processes no longer rely on `create_all()` or additive column patching as the primary schema evolution path.
 
 ### Optional ClickHouse + R2 env
 
@@ -173,9 +193,9 @@ ELEVENWRITER_CLICKHOUSE_R2_CACHE_SIZE=10Gi
 - Observations preserve raw text or raw structured content alongside extracted location and trust metadata.
 - Trust scoring is rule-based first, seeded with starter integrity sources such as the New York Times, NPR, BBC, and Smithsonian.
 - SQLite remains supported for local ingestion inputs and lightweight runtime mode, but primary backend storage targets Postgres/PostGIS deployment.
-- Postgres runtime now auto-enables `postgis` plus GiST expression indexes for observation points and geofence geometries, while SQLite keeps the Python fallback path for local runs and tests.
-- The headless CLI now includes a `doctor` command and the API exposes `/api/operations/database`, so operators can audit connectivity, additive schema drift, table counts, and PostGIS readiness without freestyling SQL in production.
-- Runtime backup and recovery now have a first-class path too: `/api/operations/runtime/export`, `/api/operations/runtime/restore`, and matching CLI commands serialize the core backend state in dependency-safe order and log custody records for both export and restore.
+- Postgres migrations now install `postgis` plus the required GiST expression indexes for observation points and geofence geometries, while SQLite keeps the Python fallback path for local runs and tests.
+- The headless CLI now includes `init-db`, `migrate-db`, `verify-db`, and `doctor`, and the API exposes `/api/operations/database`, so operators can audit connectivity, Alembic revision state, table counts, and PostGIS readiness without freestyling SQL in production.
+- Runtime backup and recovery now have a first-class path too: `/api/operations/runtime/export`, `/api/operations/runtime/restore`, and matching `backup-runtime` / `restore-runtime` CLI commands serialize the core backend state in dependency-safe order and log custody records for both export and restore.
 - Runtime snapshot coverage now extends across newer operational subsystems too, including scheduler task/run state, source-run history, camera/source registries, storage objects, and maintenance-task lineage, so recovery testing is following the real backend instead of freezing at an older shape.
 - The storage-core slice is real now, not a manifesto: `/api/storage/objects` plus the `list-storage-objects`, `add-storage-object`, `promote-storage-object`, and `transition-storage-object` CLI commands expose a first-class artifact ledger with retention classes, tiering, and lifecycle controls.
 - Imports and camera materialization now auto-register storage manifests, so raw local files plus camera image/stream/page references get tracked as storage objects with expiration windows and custody events instead of disappearing into the void.

@@ -2,6 +2,7 @@ FROM python:3.11-slim
 
 WORKDIR /srv/11writer
 
+COPY alembic.ini ./
 COPY pyproject.toml ./
 COPY src ./src
 
