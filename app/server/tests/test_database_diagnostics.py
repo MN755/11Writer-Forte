@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 from src.config import reset_settings_cache
+from src.migrations import DatabaseRevisionStatus
 from src.services import database_diagnostics_service
 
 
@@ -16,8 +17,10 @@ def test_database_diagnostics_endpoint_reports_sqlite_runtime(client: TestClient
     assert payload["postgis_expected"] is False
     assert payload["postgis_extension_installed"] is None
     assert payload["warning_count"] == 0
-    assert "SQLite/Python spatial fallback" in payload["notes"][0]
-    assert all(item["present"] is True for item in payload["required_columns"])
+    assert payload["migration"]["version_table_present"] is True
+    assert payload["migration"]["schema_up_to_date"] is True
+    assert any("SQLite/Python spatial fallback" in note for note in payload["notes"])
+    assert any("Alembic revision status" in note for note in payload["notes"])
     table_counts = {item["table_name"]: item["row_count"] for item in payload["table_counts"]}
     assert table_counts["observations"] == 0
     assert table_counts["alerts"] == 0
@@ -50,13 +53,20 @@ def test_database_diagnostics_marks_missing_postgis_prerequisites(monkeypatch) -
 
     monkeypatch.setattr(
         database_diagnostics_service,
-        "collect_required_column_statuses",
-        lambda _engine: [{"table_name": "observations", "column_name": "location_wkt", "present": True}],
+        "collect_table_counts",
+        lambda _session: [{"table_name": "observations", "row_count": 42}],
     )
     monkeypatch.setattr(
         database_diagnostics_service,
-        "collect_table_counts",
-        lambda _session: [{"table_name": "observations", "row_count": 42}],
+        "inspect_database_revision",
+        lambda _engine: DatabaseRevisionStatus(
+            current_revision="20260707_0000",
+            head_revision="20260707_0001",
+            head_revisions=("20260707_0001",),
+            version_table_present=True,
+            has_application_tables=True,
+            schema_up_to_date=False,
+        ),
     )
     monkeypatch.setattr(
         database_diagnostics_service,
@@ -78,9 +88,9 @@ def test_database_diagnostics_marks_missing_postgis_prerequisites(monkeypatch) -
     assert payload["database_connected"] is True
     assert payload["postgis_expected"] is True
     assert payload["postgis_extension_installed"] is False
-    assert payload["warning_count"] == 2
-    assert "PostGIS extension is not installed" in payload["warnings"][0]
-    assert "idx_observations_location_wkt_gist" in payload["warnings"][1]
-    assert payload["notes"] == []
+    assert payload["warning_count"] == 3
+    assert "Alembic head revision" in payload["warnings"][0]
+    assert "PostGIS extension is not installed" in payload["warnings"][1]
+    assert "idx_observations_location_wkt_gist" in payload["warnings"][2]
 
     reset_settings_cache()

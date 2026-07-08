@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     app_env: str = "local"
     api_prefix: str = "/api"
     database_url: str = "sqlite:///./var/11writer_forte.db"
+    database_auto_migrate: bool = False
     data_dir: Path = Field(default=Path("./var"))
     import_row_limit: int = 5000
     scheduler_poll_seconds: float = 30.0

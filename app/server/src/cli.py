@@ -9,7 +9,8 @@ from pydantic import TypeAdapter
 from sqlalchemy import select
 
 from src.config import get_settings
-from src.db import get_session_factory, init_db
+from src.db import get_engine, get_session_factory, init_db
+from src.migrations import upgrade_database
 from src.models import (
     AlertORM,
     CustodyLogORM,
@@ -25,7 +26,6 @@ from src.models import (
 from src.schemas import (
     CameraSourceOpsExportSummaryRead,
     CameraSourceMaterializationResponse,
-    CameraSourceInventoryRead,
     CameraSourceOpsReportIndexRead,
     CameraSourceSummaryRead,
     ClickHouseArchiveResultRead,
@@ -219,6 +219,49 @@ def resolve_scheduler_poll_seconds(value: float | None) -> float:
     return max(0.0, get_settings().scheduler_poll_seconds)
 
 
+def print_database_diagnostics(serializable: dict[str, object]) -> None:
+    typer.echo(
+        "status="
+        f"{serializable['status']} backend={serializable['database_backend']} "
+        f"connected={serializable['database_connected']} spatial={serializable['spatial_backend']} "
+        f"warnings={serializable['warning_count']}"
+    )
+    migration = serializable["migration"]
+    typer.echo(
+        "migration="
+        f"current={migration['current_revision']} "
+        f"head={migration['head_revision']} "
+        f"version_table_present={migration['version_table_present']} "
+        f"schema_up_to_date={migration['schema_up_to_date']}"
+    )
+    typer.echo(
+        "postgis_expected="
+        f"{serializable['postgis_expected']} "
+        f"postgis_installed={serializable['postgis_extension_installed']} "
+        f"postgis_version={serializable['postgis_version']}"
+    )
+    typer.echo(f"scheduler_poll_seconds={serializable['scheduler_poll_seconds']}")
+    typer.echo("table_counts:")
+    for item in serializable["table_counts"]:
+        typer.echo(f"  {item['table_name']}: {item['row_count']}")
+    if serializable["warnings"]:
+        typer.echo("warnings:")
+        for warning in serializable["warnings"]:
+            typer.echo(f"  - {warning}")
+    if serializable["notes"]:
+        typer.echo("notes:")
+        for note in serializable["notes"]:
+            typer.echo(f"  - {note}")
+
+
+def write_database_diagnostics(output_path: Path | None, serializable: dict[str, object]) -> None:
+    if output_path is None:
+        return
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(serializable, indent=2), encoding="utf-8")
+    typer.echo(f"wrote diagnostics to {output_path}")
+
+
 @app.command("status")
 def status() -> None:
     settings = get_settings()
@@ -231,42 +274,33 @@ def status() -> None:
 
 @app.command("doctor")
 def doctor(output_path: Path | None = None) -> None:
-    init_db()
     session = get_session_factory()()
     try:
         report = build_database_diagnostics(session)
         serializable = TypeAdapter(DatabaseDiagnosticsRead).validate_python(report).model_dump(mode="json")
         print_banner()
-        typer.echo(
-            "status="
-            f"{serializable['status']} backend={serializable['database_backend']} "
-            f"connected={serializable['database_connected']} spatial={serializable['spatial_backend']} "
-            f"warnings={serializable['warning_count']}"
-        )
-        typer.echo(
-            "postgis_expected="
-            f"{serializable['postgis_expected']} "
-            f"postgis_installed={serializable['postgis_extension_installed']} "
-            f"postgis_version={serializable['postgis_version']}"
-        )
-        typer.echo(f"scheduler_poll_seconds={serializable['scheduler_poll_seconds']}")
-        typer.echo("table_counts:")
-        for item in serializable["table_counts"]:
-            typer.echo(f"  {item['table_name']}: {item['row_count']}")
-        if serializable["warnings"]:
-            typer.echo("warnings:")
-            for warning in serializable["warnings"]:
-                typer.echo(f"  - {warning}")
-        if serializable["notes"]:
-            typer.echo("notes:")
-            for note in serializable["notes"]:
-                typer.echo(f"  - {note}")
-        if output_path is not None:
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            output_path.write_text(json.dumps(serializable, indent=2), encoding="utf-8")
-            typer.echo(f"wrote diagnostics to {output_path}")
+        print_database_diagnostics(serializable)
+        write_database_diagnostics(output_path, serializable)
     finally:
         session.close()
+
+
+@app.command("verify-db")
+def verify_db(
+    output_path: Path | None = None,
+    fail_on_warnings: bool = True,
+) -> None:
+    session = get_session_factory()()
+    try:
+        report = build_database_diagnostics(session)
+        serializable = TypeAdapter(DatabaseDiagnosticsRead).validate_python(report).model_dump(mode="json")
+        print_banner()
+        print_database_diagnostics(serializable)
+        write_database_diagnostics(output_path, serializable)
+    finally:
+        session.close()
+    if fail_on_warnings and int(serializable["warning_count"]) > 0:
+        raise typer.Exit(code=1)
 
 
 @app.command("show-clickhouse-status")
@@ -440,8 +474,20 @@ def rehydrate_clickhouse_observations_command(archive_glob_url: str) -> None:
 
 @app.command("init-db")
 def init_database() -> None:
-    init_db()
-    typer.echo("database initialized")
+    status = init_db(auto_upgrade=True)
+    typer.echo(
+        f"database initialized at revision {status.current_revision} "
+        f"(head={status.head_revision})"
+    )
+
+
+@app.command("migrate-db")
+def migrate_database(revision: str = "head") -> None:
+    status = upgrade_database(get_engine(), revision=revision)
+    typer.echo(
+        f"database migrated to revision {status.current_revision} "
+        f"(head={status.head_revision})"
+    )
 
 
 @app.command("seed-integrity")
@@ -2151,6 +2197,8 @@ def export_runtime_snapshot_command(output_path: Path) -> None:
             metadata_json={
                 "database_backend": serializable["database_backend"],
                 "spatial_backend": serializable["spatial_backend"],
+                "database_revision": serializable["database_revision"],
+                "database_head_revision": serializable["database_head_revision"],
             },
             actor="cli_export",
         )
@@ -2158,6 +2206,11 @@ def export_runtime_snapshot_command(output_path: Path) -> None:
         typer.echo(f"exported runtime snapshot to {output_path}")
     finally:
         session.close()
+
+
+@app.command("backup-runtime")
+def backup_runtime_command(output_path: Path) -> None:
+    export_runtime_snapshot_command(output_path)
 
 
 @app.command("restore-runtime-snapshot")
@@ -2188,6 +2241,14 @@ def restore_runtime_snapshot_command(
             typer.echo(f"{item['table_name']}: {item['row_count']}")
     finally:
         session.close()
+
+
+@app.command("restore-runtime")
+def restore_runtime_command(
+    input_path: Path,
+    replace_existing: bool = False,
+) -> None:
+    restore_runtime_snapshot_command(input_path=input_path, replace_existing=replace_existing)
 
 
 @app.command("add-local-import-schedule")
