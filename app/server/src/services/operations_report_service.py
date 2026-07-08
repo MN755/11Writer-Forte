@@ -13,6 +13,7 @@ from src.models import (
     LocalImportRunORM,
     ObservationORM,
     ScheduledTaskRunORM,
+    SourceDeadLetterORM,
     SourceRunORM,
 )
 from src.services.clickhouse_service import build_clickhouse_diagnostics
@@ -52,6 +53,18 @@ def build_operations_report(
             apply_time_filters(
                 select(SourceRunORM).order_by(SourceRunORM.source_run_id.desc()).limit(limit),
                 SourceRunORM.started_at,
+                since=since,
+                until=until,
+            )
+        )
+    )
+    source_dead_letters = list(
+        session.scalars(
+            apply_time_filters(
+                select(SourceDeadLetterORM)
+                .order_by(SourceDeadLetterORM.source_dead_letter_id.desc())
+                .limit(limit),
+                SourceDeadLetterORM.created_at,
                 since=since,
                 until=until,
             )
@@ -130,6 +143,13 @@ def build_operations_report(
                 since,
                 until,
             ),
+            "source_dead_letter_count": count_records(
+                session,
+                SourceDeadLetterORM,
+                SourceDeadLetterORM.created_at,
+                since,
+                until,
+            ),
             "scheduled_task_run_count": count_records(
                 session,
                 ScheduledTaskRunORM,
@@ -190,6 +210,7 @@ def build_operations_report(
         "camera_source_report_index": camera_source_report_index,
         "import_runs": import_runs,
         "source_runs": source_runs,
+        "source_dead_letters": source_dead_letters,
         "scheduled_task_runs": scheduled_task_runs,
         "alerts": alerts,
         "custody_logs": custody_logs,

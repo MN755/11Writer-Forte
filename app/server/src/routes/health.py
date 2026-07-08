@@ -1,8 +1,10 @@
 from fastapi import APIRouter, Depends
+from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 
 from src.config import get_settings
 from src.db import get_db
+from src.metrics import render_metrics
 from src.schemas import HealthResponse
 from src.services.database_diagnostics_service import build_database_diagnostics
 
@@ -17,7 +19,7 @@ def health(session: Session = Depends(get_db)) -> HealthResponse:
         status=str(diagnostics["status"]),
         app_name=settings.app_name,
         app_version=settings.app_version,
-        database_url=settings.database_url,
+        database_url=str(diagnostics["database_url"]),
         database_backend=str(diagnostics["database_backend"]),
         database_connected=bool(diagnostics["database_connected"]),
         spatial_backend=settings.spatial_backend,
@@ -25,4 +27,11 @@ def health(session: Session = Depends(get_db)) -> HealthResponse:
             diagnostics["postgis_extension_installed"]
         ),
         warning_count=int(diagnostics["warning_count"]),
+        api_auth_enabled=settings.api_auth_enabled,
+        metrics_enabled=settings.metrics_enabled,
     )
+
+
+@router.get("/metrics", response_class=PlainTextResponse)
+def metrics(session: Session = Depends(get_db)) -> PlainTextResponse:
+    return PlainTextResponse(render_metrics(session), media_type="text/plain; version=0.0.4")

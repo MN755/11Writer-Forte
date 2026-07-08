@@ -338,8 +338,57 @@ class SourceRunORM(Base):
     status: Mapped[str] = mapped_column(String(30), default="queued")
     started_at: Mapped[datetime] = mapped_column(default=utcnow)
     finished_at: Mapped[datetime | None] = mapped_column(default=None)
+    adapter_kind: Mapped[str] = mapped_column(String(60), default="unknown")
+    fetch_mode: Mapped[str] = mapped_column(String(30), default="pull")
+    records_seen: Mapped[int] = mapped_column(Integer, default=0)
     records_imported: Mapped[int] = mapped_column(Integer, default=0)
+    records_skipped: Mapped[int] = mapped_column(Integer, default=0)
+    records_failed: Mapped[int] = mapped_column(Integer, default=0)
+    cursor_text: Mapped[str | None] = mapped_column(Text, default=None)
+    last_event_id: Mapped[str | None] = mapped_column(String(255), default=None)
+    last_offset: Mapped[int | None] = mapped_column(Integer, default=None)
+    checkpoint_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     error_text: Mapped[str | None] = mapped_column(Text, default=None)
     output_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
     source: Mapped[SourceDefinitionORM] = relationship(back_populates="runs")
+
+
+class SourceCheckpointORM(TimestampMixin, Base):
+    __tablename__ = "source_checkpoints"
+
+    source_checkpoint_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    source_id: Mapped[int] = mapped_column(ForeignKey("source_definitions.source_id"), unique=True, index=True)
+    adapter_kind: Mapped[str] = mapped_column(String(60), default="unknown")
+    fetch_mode: Mapped[str] = mapped_column(String(30), default="pull")
+    status: Mapped[str] = mapped_column(String(30), default="idle")
+    cursor_text: Mapped[str | None] = mapped_column(Text, default=None)
+    last_event_id: Mapped[str | None] = mapped_column(String(255), default=None)
+    last_offset: Mapped[int | None] = mapped_column(Integer, default=None)
+    checkpoint_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    last_seen_at: Mapped[datetime | None] = mapped_column(default=None)
+    last_success_at: Mapped[datetime | None] = mapped_column(default=None)
+    last_failure_at: Mapped[datetime | None] = mapped_column(default=None)
+    failure_count: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class SourceDeadLetterORM(TimestampMixin, Base):
+    __tablename__ = "source_dead_letters"
+
+    source_dead_letter_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    source_id: Mapped[int] = mapped_column(ForeignKey("source_definitions.source_id"), index=True)
+    source_run_id: Mapped[int | None] = mapped_column(ForeignKey("source_runs.source_run_id"), default=None, index=True)
+    adapter_kind: Mapped[str] = mapped_column(String(60), default="unknown")
+    source_kind: Mapped[str] = mapped_column(String(40), default="unknown", index=True)
+    stage: Mapped[str] = mapped_column(String(40), default="normalize")
+    status: Mapped[str] = mapped_column(String(30), default="pending", index=True)
+    failure_reason: Mapped[str] = mapped_column(Text, default="")
+    record_key: Mapped[str | None] = mapped_column(String(255), default=None)
+    record_hash: Mapped[str | None] = mapped_column(String(64), default=None, index=True)
+    raw_payload_text: Mapped[str | None] = mapped_column(Text, default=None)
+    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    cursor_text: Mapped[str | None] = mapped_column(Text, default=None)
+    checkpoint_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    replay_count: Mapped[int] = mapped_column(Integer, default=0)
+    last_replayed_at: Mapped[datetime | None] = mapped_column(default=None)
+    last_error_text: Mapped[str | None] = mapped_column(Text, default=None)

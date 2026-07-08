@@ -58,6 +58,8 @@ from src.schemas import (
     StorageReportRead,
     SourceDefinitionCreate,
     SourceDefinitionUpdate,
+    SourceCheckpointRead,
+    SourceDeadLetterRead,
     SourceInventorySummaryRead,
     SourceOpsExportSummaryRead,
     SourceOpsReportIndexRead,
@@ -98,6 +100,7 @@ from src.services.redaction_service import enforce_export_redaction
 from src.services.runtime_snapshot_service import build_runtime_snapshot
 from src.services.runtime_snapshot_service import restore_runtime_snapshot
 from src.services.scheduler_runtime_service import run_scheduler_worker
+from src.services.source_runtime_service import run_source_runtime_worker
 from src.services.scheduler_service import (
     build_scheduler_inventory_summary,
     build_scheduler_ops_export_summary,
@@ -121,9 +124,13 @@ from src.services.source_service import (
     build_source_ops_export_summary,
     build_source_ops_report_index,
     create_source_definition,
+    list_source_checkpoints,
+    list_source_dead_letters,
     list_source_definitions,
     list_source_runs,
+    replay_dead_letter_record,
     run_source_definition,
+    run_source_runtime_cycle,
     update_source_definition,
 )
 from src.services.trust_service import seed_default_integrity_sources
@@ -199,6 +206,67 @@ def build_http_source_metadata(
         metadata["basic_auth_username"] = basic_auth_username
         metadata["basic_auth_password_env"] = basic_auth_password_env
     return metadata
+
+
+def build_runtime_source_metadata(
+    *,
+    event_format: str = "json",
+    request_timeout_seconds: float = 30.0,
+    retry_attempts: int = 3,
+    retry_backoff_seconds: float = 0.0,
+    header: list[str] | None = None,
+    basic_auth_username: str | None = None,
+    basic_auth_password_env: str | None = None,
+    max_messages_per_run: int | None = None,
+    send_text: str | None = None,
+) -> dict[str, object]:
+    metadata = build_http_source_metadata(
+        timeout_seconds=request_timeout_seconds,
+        retry_attempts=retry_attempts,
+        retry_backoff_seconds=retry_backoff_seconds,
+        skip_unchanged=False,
+        header=header or [],
+        basic_auth_username=basic_auth_username,
+        basic_auth_password_env=basic_auth_password_env,
+    )
+    metadata["event_format"] = event_format
+    if max_messages_per_run is not None:
+        metadata["max_messages_per_run"] = max_messages_per_run
+    if send_text is not None:
+        metadata["send_text"] = send_text
+    return metadata
+
+
+def create_source_from_cli(
+    *,
+    name: str,
+    source_kind: str,
+    layer: str,
+    target_uri: str,
+    notes: str = "",
+    integrity_source: bool = False,
+    metadata_json: dict[str, object] | None = None,
+) -> int:
+    init_db()
+    session = get_session_factory()()
+    try:
+        source = create_source_definition(
+            session,
+            SourceDefinitionCreate(
+                name=name,
+                source_kind=source_kind,
+                layer_key=layer,
+                target_uri=target_uri,
+                notes=notes,
+                integrity_source=integrity_source,
+                metadata_json=metadata_json or {},
+            ),
+        )
+        print_banner()
+        typer.echo(f"source {source.source_id} created for {source.target_uri}")
+        return source.source_id
+    finally:
+        session.close()
 
 
 def parse_json_object_option(value: str | None, option_name: str) -> dict[str, object] | None:
@@ -709,6 +777,179 @@ def add_source_http_xml(
         session.close()
 
 
+@app.command("add-source-http-jsonl")
+def add_source_http_jsonl(
+    name: str,
+    target_uri: str,
+    layer: str,
+    notes: str = "",
+    integrity_source: bool = False,
+    timeout_seconds: float = 30.0,
+    retry_attempts: int = 3,
+    retry_backoff_seconds: float = 0.0,
+    skip_unchanged: bool = True,
+    header: list[str] = typer.Option(default_factory=list),
+    basic_auth_username: str | None = None,
+    basic_auth_password_env: str | None = None,
+) -> None:
+    create_source_from_cli(
+        name=name,
+        source_kind="http_jsonl",
+        layer=layer,
+        target_uri=target_uri,
+        notes=notes,
+        integrity_source=integrity_source,
+        metadata_json=build_http_source_metadata(
+            timeout_seconds=timeout_seconds,
+            retry_attempts=retry_attempts,
+            retry_backoff_seconds=retry_backoff_seconds,
+            skip_unchanged=skip_unchanged,
+            header=header,
+            basic_auth_username=basic_auth_username,
+            basic_auth_password_env=basic_auth_password_env,
+        ),
+    )
+
+
+@app.command("add-source-rss")
+def add_source_rss(
+    name: str,
+    target_uri: str,
+    layer: str,
+    notes: str = "",
+    integrity_source: bool = False,
+    timeout_seconds: float = 30.0,
+    retry_attempts: int = 3,
+    retry_backoff_seconds: float = 0.0,
+    skip_unchanged: bool = True,
+    header: list[str] = typer.Option(default_factory=list),
+    basic_auth_username: str | None = None,
+    basic_auth_password_env: str | None = None,
+) -> None:
+    create_source_from_cli(
+        name=name,
+        source_kind="rss",
+        layer=layer,
+        target_uri=target_uri,
+        notes=notes,
+        integrity_source=integrity_source,
+        metadata_json=build_http_source_metadata(
+            timeout_seconds=timeout_seconds,
+            retry_attempts=retry_attempts,
+            retry_backoff_seconds=retry_backoff_seconds,
+            skip_unchanged=skip_unchanged,
+            header=header,
+            basic_auth_username=basic_auth_username,
+            basic_auth_password_env=basic_auth_password_env,
+        ),
+    )
+
+
+@app.command("add-source-sqlite-file")
+def add_source_sqlite_file(
+    name: str,
+    source_path: Path,
+    layer: str,
+    notes: str = "",
+    integrity_source: bool = False,
+) -> None:
+    create_source_from_cli(
+        name=name,
+        source_kind="sqlite_file",
+        layer=layer,
+        target_uri=str(source_path),
+        notes=notes,
+        integrity_source=integrity_source,
+        metadata_json={"skip_unchanged": True},
+    )
+
+
+@app.command("add-source-webhook")
+def add_source_webhook(
+    name: str,
+    layer: str,
+    target_uri: str = "webhook://managed",
+    notes: str = "",
+    integrity_source: bool = False,
+    event_format: str = "json",
+) -> None:
+    create_source_from_cli(
+        name=name,
+        source_kind="webhook_ingest",
+        layer=layer,
+        target_uri=target_uri,
+        notes=notes,
+        integrity_source=integrity_source,
+        metadata_json={"event_format": event_format, "skip_unchanged": False},
+    )
+
+
+@app.command("add-source-sse")
+def add_source_sse(
+    name: str,
+    target_uri: str,
+    layer: str,
+    notes: str = "",
+    integrity_source: bool = False,
+    event_format: str = "json",
+    timeout_seconds: float = 30.0,
+    retry_attempts: int = 3,
+    retry_backoff_seconds: float = 0.0,
+    header: list[str] = typer.Option(default_factory=list),
+    basic_auth_username: str | None = None,
+    basic_auth_password_env: str | None = None,
+) -> None:
+    create_source_from_cli(
+        name=name,
+        source_kind="sse_stream",
+        layer=layer,
+        target_uri=target_uri,
+        notes=notes,
+        integrity_source=integrity_source,
+        metadata_json=build_runtime_source_metadata(
+            event_format=event_format,
+            request_timeout_seconds=timeout_seconds,
+            retry_attempts=retry_attempts,
+            retry_backoff_seconds=retry_backoff_seconds,
+            header=header,
+            basic_auth_username=basic_auth_username,
+            basic_auth_password_env=basic_auth_password_env,
+        ),
+    )
+
+
+@app.command("add-source-websocket")
+def add_source_websocket(
+    name: str,
+    target_uri: str,
+    layer: str,
+    notes: str = "",
+    integrity_source: bool = False,
+    event_format: str = "json",
+    max_messages_per_run: int = 20,
+    header: list[str] = typer.Option(default_factory=list),
+    basic_auth_username: str | None = None,
+    basic_auth_password_env: str | None = None,
+    send_text: str | None = None,
+) -> None:
+    create_source_from_cli(
+        name=name,
+        source_kind="websocket_stream",
+        layer=layer,
+        target_uri=target_uri,
+        notes=notes,
+        integrity_source=integrity_source,
+        metadata_json=build_runtime_source_metadata(
+            event_format=event_format,
+            header=header,
+            basic_auth_username=basic_auth_username,
+            basic_auth_password_env=basic_auth_password_env,
+            max_messages_per_run=max_messages_per_run,
+            send_text=send_text,
+        ),
+    )
+
+
 @app.command("list-sources")
 def list_sources() -> None:
     init_db()
@@ -738,10 +979,76 @@ def run_source(source_id: int) -> None:
         session.close()
 
 
+@app.command("run-source-runtime")
+def run_source_runtime_command(source_id: int | None = None) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        result = run_source_runtime_cycle(session, source_id=source_id, actor="cli_source_runtime")
+        print_banner()
+        typer.echo(
+            f"sources={result['source_count']} seen={result['records_seen']} imported={result['records_imported']} failed={result['records_failed']}"
+        )
+        typer.echo(f"source_runs={result['source_run_ids']}")
+    finally:
+        session.close()
+
+
+@app.command("list-source-checkpoints")
+def list_source_checkpoints_command() -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        rows = list_source_checkpoints(session)
+        serializable = TypeAdapter(list[SourceCheckpointRead]).validate_python(rows).dump_python(mode="json")
+        print_banner()
+        for row in serializable:
+            typer.echo(
+                f"{row['source_id']} | {row['adapter_kind']} | {row['fetch_mode']} | status={row['status']} | cursor={row['cursor_text']} | event_id={row['last_event_id']} | offset={row['last_offset']}"
+            )
+    finally:
+        session.close()
+
+
+@app.command("list-source-dead-letters")
+def list_source_dead_letters_command(
+    source_id: int | None = None,
+    status: str | None = None,
+    limit: int = 200,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        rows = list_source_dead_letters(session, source_id=source_id, status=status, limit=limit)
+        serializable = TypeAdapter(list[SourceDeadLetterRead]).validate_python(rows).dump_python(mode="json")
+        print_banner()
+        for row in serializable:
+            typer.echo(
+                f"{row['source_dead_letter_id']} | source={row['source_id']} | {row['adapter_kind']} | {row['status']} | stage={row['stage']} | key={row['record_key']} | reason={row['failure_reason']}"
+            )
+    finally:
+        session.close()
+
+
+@app.command("replay-source-dead-letter")
+def replay_source_dead_letter_command(source_dead_letter_id: int) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        row = replay_dead_letter_record(session, source_dead_letter_id, actor="cli_source_replay")
+        print_banner()
+        typer.echo(
+            f"dead_letter={row.source_dead_letter_id} status={row.status} replay_count={row.replay_count}"
+        )
+    finally:
+        session.close()
+
+
 @app.command("update-source")
 def update_source_command(
     source_id: int,
     name: str | None = None,
+    source_kind: str | None = None,
     layer: str | None = None,
     target_uri: str | None = None,
     enabled: bool | None = typer.Option(default=None),
@@ -755,6 +1062,8 @@ def update_source_command(
         payload: dict[str, object] = {}
         if name is not None:
             payload["name"] = name
+        if source_kind is not None:
+            payload["source_kind"] = source_kind
         if layer is not None:
             payload["layer_key"] = layer
         if target_uri is not None:
@@ -809,10 +1118,26 @@ def show_source_ops_command(source_id: int) -> None:
             f"source={source.source_id} name={source.name} kind={source.source_kind} enabled={source.enabled} layer={source.layer_key}"
         )
         typer.echo(f"target_uri={source.target_uri}")
+        checkpoint = detail.get("checkpoint")
+        if checkpoint is not None:
+            typer.echo(
+                "checkpoint="
+                f"{checkpoint.source_checkpoint_id} adapter={checkpoint.adapter_kind} fetch_mode={checkpoint.fetch_mode} "
+                f"status={checkpoint.status} cursor={checkpoint.cursor_text} event_id={checkpoint.last_event_id} "
+                f"offset={checkpoint.last_offset} failures={checkpoint.failure_count}"
+            )
+        dead_letters = detail.get("dead_letters", [])
+        typer.echo(f"dead_letters={len(dead_letters)}")
+        for row in dead_letters[:10]:
+            typer.echo(
+                f"  dlq {row.source_dead_letter_id} | {row.status} | stage={row.stage} | key={row.record_key} | reason={row.failure_reason}"
+            )
         typer.echo("recent_runs:")
         for row in detail["recent_runs"][:10]:
             typer.echo(
-                f"  {row.source_run_id} | {row.status} | import_run={row.import_run_id} | records={row.records_imported} | started={row.started_at}"
+                f"  {row.source_run_id} | {row.status} | {row.adapter_kind}/{row.fetch_mode} | "
+                f"import_run={row.import_run_id} | imported={row.records_imported} | skipped={row.records_skipped} | "
+                f"failed={row.records_failed} | cursor={row.cursor_text} | event_id={row.last_event_id} | offset={row.last_offset}"
             )
         typer.echo("storage_objects:")
         for row in detail["storage_objects"][:10]:
@@ -840,10 +1165,12 @@ def show_source_summary_command(stale_after_hours: float = 24.0) -> None:
             "totals="
             f"{serializable['total_count']} enabled={serializable['enabled_count']} disabled={serializable['disabled_count']} "
             f"stale={serializable['stale_count']} failing={serializable['failing_count']} "
-            f"scheduled={serializable['scheduled_count']} unscheduled={serializable['unscheduled_count']}"
+            f"scheduled={serializable['scheduled_count']} unscheduled={serializable['unscheduled_count']} "
+            f"runtime_active={serializable['runtime_active_count']} runtime_degraded={serializable['runtime_degraded_count']} "
+            f"dead_letter_pending={serializable['dead_letter_pending_count']}"
         )
         typer.echo(f"stale_before={serializable['stale_before']}")
-        for group_name in ("source_kind_counts", "layer_counts", "latest_status_counts"):
+        for group_name in ("source_kind_counts", "layer_counts", "latest_status_counts", "fetch_mode_counts"):
             typer.echo(f"{group_name}:")
             for item in serializable[group_name]:
                 typer.echo(
@@ -871,14 +1198,17 @@ def show_source_report_index_command(
         serializable = TypeAdapter(SourceOpsReportIndexRead).validate_python(report).model_dump(mode="json")
         print_banner()
         typer.echo(
-            f"sync_tasks={serializable['sync_task_count']} sync_runs={serializable['sync_run_count']} sync_failures={serializable['sync_failure_count']}"
+            f"sync_tasks={serializable['sync_task_count']} sync_runs={serializable['sync_run_count']} sync_failures={serializable['sync_failure_count']} "
+            f"runtime_degraded={serializable['runtime_degraded_count']} dead_letter_pending={serializable['pending_dead_letter_count']}"
         )
         typer.echo(
             f"latest_run_at={serializable['latest_run_at']} stale_after_hours={serializable['stale_after_hours']}"
         )
         inventory = serializable["inventory_summary"]
         typer.echo(
-            f"inventory total={inventory['total_count']} stale={inventory['stale_count']} failing={inventory['failing_count']} unscheduled={inventory['unscheduled_count']}"
+            f"inventory total={inventory['total_count']} stale={inventory['stale_count']} failing={inventory['failing_count']} "
+            f"unscheduled={inventory['unscheduled_count']} runtime_active={inventory['runtime_active_count']} "
+            f"runtime_degraded={inventory['runtime_degraded_count']}"
         )
         typer.echo("recent_runs:")
         for row in serializable["recent_runs"]:
@@ -899,6 +1229,16 @@ def show_source_report_index_command(
         for row in serializable["unscheduled_sources"]:
             typer.echo(
                 f"  {row['source']['source_id']} | {row['source']['name']} | enabled={row['source']['enabled']}"
+            )
+        typer.echo("runtime_degraded_sources:")
+        for row in serializable["runtime_degraded_sources"]:
+            typer.echo(
+                f"  {row['source']['source_id']} | {row['source']['name']} | runtime={row['runtime_state']} | pending_dlq={row['pending_dead_letter_count']}"
+            )
+        typer.echo("pending_dead_letter_sources:")
+        for row in serializable["pending_dead_letter_sources"]:
+            typer.echo(
+                f"  {row['source']['source_id']} | {row['source']['name']} | pending_dlq={row['pending_dead_letter_count']} | replayed_dlq={row['replayed_dead_letter_count']}"
             )
     finally:
         session.close()
@@ -2282,6 +2622,36 @@ def add_source_sync_schedule(
         session.close()
 
 
+@app.command("add-source-runtime-schedule")
+def add_source_runtime_schedule(
+    name: str,
+    interval_seconds: int,
+    source_id: int | None = None,
+    notes: str = "",
+    retry_attempts: int = 1,
+    retry_backoff_seconds: float = 0.0,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        task = create_scheduled_task(
+            session,
+            ScheduledTaskCreate(
+                name=name,
+                task_type="source_runtime",
+                interval_seconds=interval_seconds,
+                retry_attempts=retry_attempts,
+                retry_backoff_seconds=retry_backoff_seconds,
+                source_id=source_id,
+                notes=notes,
+            ),
+        )
+        print_banner()
+        typer.echo(f"scheduled task {task.task_id} created for source runtime")
+    finally:
+        session.close()
+
+
 @app.command("add-storage-lifecycle-schedule")
 def add_storage_lifecycle_schedule(
     name: str,
@@ -2735,6 +3105,41 @@ def scheduler_worker_command(
     )
     typer.echo(
         f"scheduler worker stopped | iterations={result.iterations} runs_created={result.runs_created}"
+    )
+
+
+@app.command("source-runtime-worker")
+def source_runtime_worker_command(
+    poll_seconds: float | None = None,
+    once: bool = False,
+    max_iterations: int | None = None,
+    source_id: int | None = None,
+) -> None:
+    init_db()
+    resolved_poll_seconds = resolve_scheduler_poll_seconds(poll_seconds)
+    print_banner()
+    typer.echo(
+        "source runtime worker starting "
+        f"| poll_seconds={resolved_poll_seconds} | once={once} | max_iterations={max_iterations} | source_id={source_id}"
+    )
+
+    def on_iteration(iteration: int, cycle: dict[str, object]) -> None:
+        typer.echo(
+            f"iteration={iteration} sources={cycle['source_count']} imported={cycle['records_imported']} failed={cycle['records_failed']}"
+        )
+
+    result = run_source_runtime_worker(
+        get_session_factory(),
+        poll_seconds=resolved_poll_seconds,
+        actor="cli_source_runtime_worker",
+        once=once,
+        max_iterations=max_iterations,
+        source_id=source_id,
+        on_iteration=on_iteration,
+    )
+    typer.echo(
+        "source runtime worker stopped "
+        f"| iterations={result.iterations} imported={result.records_imported} failed={result.records_failed}"
     )
 
 

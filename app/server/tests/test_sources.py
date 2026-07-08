@@ -2,14 +2,19 @@ from __future__ import annotations
 
 import base64
 import json
+import sqlite3
 import threading
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from websockets.exceptions import ConnectionClosedOK
 
 from src.db import get_session_factory
+from src.metrics import render_metrics
+from src.models import SourceDeadLetterORM
+from src.services.source_runtime_service import run_source_runtime_worker
 from src.services.source_service import run_source_definition
 
 
@@ -74,6 +79,33 @@ def basic_auth_xml_server(payload: str, *, username: str, password: str):
     thread.start()
     try:
         yield f"http://127.0.0.1:{server.server_port}/feed.xml", state
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+@contextmanager
+def static_text_server(payload: str, *, content_type: str, path: str = "/feed") -> tuple[str, dict[str, object]]:
+    state = {"requests": 0, "last_headers": {}}
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            state["requests"] += 1
+            state["last_headers"] = dict(self.headers.items())
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
+            self.end_headers()
+            self.wfile.write(payload.encode("utf-8"))
+
+        def log_message(self, format: str, *args: object) -> None:  # noqa: A003
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}{path}", state
     finally:
         server.shutdown()
         server.server_close()
@@ -162,6 +194,20 @@ def test_source_definition_run_creates_import_and_history(client: TestClient, tm
         and row["action"] in {"storage_registered", "storage_refreshed"}
         for row in custody_rows
     )
+
+
+def test_source_definition_rejects_embedded_credentials(client: TestClient) -> None:
+    response = client.post(
+        "/api/sources",
+        json={
+            "name": "credential-leak-source",
+            "source_kind": "http_json",
+            "layer_key": "marine-track",
+            "target_uri": "https://operator:secret@example.com/feed.json",
+        },
+    )
+    assert response.status_code == 409
+    assert "must not embed credentials" in response.json()["detail"]
 
 
 def test_source_sync_schedule_runs_source_definition(client: TestClient, tmp_path: Path) -> None:
@@ -259,7 +305,7 @@ def test_http_source_retries_and_records_fetch_metadata(client: TestClient) -> N
         assert run_payload["output_json"]["attempt_count"] == 2
         assert run_payload["output_json"]["http_status"] == 200
         assert run_payload["output_json"]["content_type"] == "application/json"
-        assert run_payload["output_json"]["headers"]["X-Test-Token"] == "forte"
+        assert run_payload["output_json"]["headers"]["X-Test-Token"] == "***REDACTED***"
         assert run_payload["output_json"]["cached_path"].endswith(".json")
 
         assert state["requests"] == 2
@@ -491,6 +537,7 @@ def test_http_xml_source_uses_env_basic_auth_and_parses_records(
         assert run_payload["output_json"]["materialized_content_type"] == "application/json"
         assert run_payload["output_json"]["cached_record_count"] == 1
         assert run_payload["output_json"]["cached_path"].endswith(".json")
+        assert run_payload["output_json"]["headers"]["Authorization"] == "***REDACTED***"
 
         observations_response = client.get("/api/observations", params={"layer_key": "mndot-loop-feed"})
         assert observations_response.status_code == 200
@@ -662,3 +709,384 @@ def test_source_summary_and_report_index_capture_stale_failing_and_unscheduled_s
     healthy_ops = client.get(f"/api/sources/{healthy_source_id}/ops")
     assert healthy_ops.status_code == 200
     assert healthy_ops.json()["storage_objects"]
+
+
+def test_http_jsonl_source_captures_dead_letters_and_failed_replay(client: TestClient) -> None:
+    payload = "\n".join(
+        [
+            json.dumps({"title": "good-1", "url": "https://jsonl.example.com/1", "lat": 29.71, "lon": -95.31}),
+            "{bad json",
+            json.dumps({"title": "good-2", "url": "https://jsonl.example.com/2", "lat": 29.72, "lon": -95.32}),
+        ]
+    )
+    with static_text_server(payload, content_type="application/x-ndjson", path="/feed.jsonl") as (target_uri, _):
+        source_response = client.post(
+            "/api/sources",
+            json={
+                "name": "jsonl-source",
+                "source_kind": "http_jsonl",
+                "layer_key": "jsonl-feed",
+                "target_uri": target_uri,
+                "metadata_json": {
+                    "retry_attempts": 1,
+                    "request_timeout_seconds": 5,
+                },
+            },
+        )
+        assert source_response.status_code == 200
+        source_id = source_response.json()["source_id"]
+
+        run_response = client.post(f"/api/sources/{source_id}/run")
+        assert run_response.status_code == 200
+        run_payload = run_response.json()
+        assert run_payload["records_imported"] == 2
+        assert run_payload["records_failed"] == 1
+        assert run_payload["output_json"]["cached_path"].endswith(".jsonl")
+
+        checkpoint_response = client.get("/api/sources/checkpoints")
+        assert checkpoint_response.status_code == 200
+        checkpoints = checkpoint_response.json()
+        checkpoint = next(row for row in checkpoints if row["source_id"] == source_id)
+        assert checkpoint["adapter_kind"] == "http_jsonl"
+        assert checkpoint["fetch_mode"] == "pull"
+
+        dead_letter_response = client.get("/api/sources/dead-letters", params={"source_id": source_id})
+        assert dead_letter_response.status_code == 200
+        dead_letters = dead_letter_response.json()
+        assert len(dead_letters) == 1
+        assert dead_letters[0]["status"] == "pending"
+        assert "Invalid JSONL" in dead_letters[0]["failure_reason"]
+
+        replay_response = client.post(f"/api/sources/dead-letters/{dead_letters[0]['source_dead_letter_id']}/replay")
+        assert replay_response.status_code == 409
+        assert "Invalid JSON payload" in replay_response.json()["detail"]
+
+        session = get_session_factory()()
+        try:
+            stored = session.get(SourceDeadLetterORM, dead_letters[0]["source_dead_letter_id"])
+            assert stored is not None
+            assert stored.last_error_text is not None
+            assert "Invalid JSON payload" in stored.last_error_text
+        finally:
+            session.close()
+
+        report_response = client.get("/api/operations/report")
+        assert report_response.status_code == 200
+        report = report_response.json()
+        assert report["summary"]["source_dead_letter_count"] == 1
+        assert report["source_report_index"]["pending_dead_letter_count"] == 1
+        assert report["source_dead_letters"][0]["source_id"] == source_id
+
+        snapshot_response = client.get("/api/operations/runtime/export")
+        assert snapshot_response.status_code == 200
+        snapshot = snapshot_response.json()
+        assert snapshot["source_checkpoints"]
+        assert snapshot["source_dead_letters"]
+
+
+def test_sqlite_file_source_ingests_rows(client: TestClient, tmp_path: Path) -> None:
+    database_path = tmp_path / "managed-source.sqlite"
+    connection = sqlite3.connect(database_path)
+    try:
+        connection.execute("CREATE TABLE records (title TEXT, url TEXT, lat REAL, lon REAL)")
+        connection.execute(
+            "INSERT INTO records(title, url, lat, lon) VALUES (?, ?, ?, ?)",
+            ("sqlite row 1", "https://sqlite.example.com/1", 29.73, -95.33),
+        )
+        connection.execute(
+            "INSERT INTO records(title, url, lat, lon) VALUES (?, ?, ?, ?)",
+            ("sqlite row 2", "https://sqlite.example.com/2", 29.74, -95.34),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    source_response = client.post(
+        "/api/sources",
+        json={
+            "name": "sqlite-source",
+            "source_kind": "sqlite_file",
+            "layer_key": "sqlite-feed",
+            "target_uri": str(database_path),
+        },
+    )
+    assert source_response.status_code == 200
+    source_id = source_response.json()["source_id"]
+
+    run_response = client.post(f"/api/sources/{source_id}/run")
+    assert run_response.status_code == 200
+    assert run_response.json()["records_imported"] == 2
+
+    observations_response = client.get("/api/observations", params={"layer_key": "sqlite-feed"})
+    assert observations_response.status_code == 200
+    observations = observations_response.json()
+    assert len(observations) == 2
+    assert {row["content_json"]["table_name"] for row in observations} == {"records"}
+
+
+def test_rss_source_ingests_feed_entries(client: TestClient) -> None:
+    payload = """<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Watch Feed</title>
+    <item>
+      <title>Harbor update</title>
+      <link>https://rss.example.com/1</link>
+      <description>Dock activity increased.</description>
+      <guid>rss-1</guid>
+      <pubDate>Tue, 07 Jul 2026 12:00:00 GMT</pubDate>
+    </item>
+  </channel>
+</rss>
+"""
+    with static_text_server(payload, content_type="application/rss+xml", path="/feed.rss") as (target_uri, _):
+        source_response = client.post(
+            "/api/sources",
+            json={
+                "name": "rss-source",
+                "source_kind": "rss",
+                "layer_key": "rss-feed",
+                "target_uri": target_uri,
+            },
+        )
+        assert source_response.status_code == 200
+        source_id = source_response.json()["source_id"]
+
+        run_response = client.post(f"/api/sources/{source_id}/run")
+        assert run_response.status_code == 200
+        assert run_response.json()["records_imported"] == 1
+
+        observations_response = client.get("/api/observations", params={"layer_key": "rss-feed"})
+        assert observations_response.status_code == 200
+        observations = observations_response.json()
+        assert len(observations) == 1
+        assert observations[0]["content_json"]["guid"] == "rss-1"
+        assert observations[0]["content_json"]["url"] == "https://rss.example.com/1"
+
+
+def test_webhook_source_ingests_and_replays_dead_letter_payload(client: TestClient) -> None:
+    source_response = client.post(
+        "/api/sources",
+        json={
+            "name": "webhook-source",
+            "source_kind": "webhook_ingest",
+            "layer_key": "webhook-feed",
+            "target_uri": "webhook://managed",
+            "metadata_json": {"event_format": "json"},
+        },
+    )
+    assert source_response.status_code == 200
+    source_id = source_response.json()["source_id"]
+
+    webhook_response = client.post(
+        f"/api/sources/{source_id}/webhook",
+        content=json.dumps(
+            {"title": "push event", "url": "https://webhook.example.com/1", "lat": 29.75, "lon": -95.35}
+        ),
+        headers={"Content-Type": "application/json"},
+    )
+    assert webhook_response.status_code == 200
+    webhook_run = webhook_response.json()
+    assert webhook_run["fetch_mode"] == "push"
+    assert webhook_run["records_imported"] == 1
+
+    checkpoints_response = client.get("/api/sources/checkpoints")
+    assert checkpoints_response.status_code == 200
+    checkpoint = next(row for row in checkpoints_response.json() if row["source_id"] == source_id)
+    assert checkpoint["fetch_mode"] == "push"
+    assert checkpoint["last_offset"] == 1
+    assert checkpoint["status"] == "idle"
+
+    session = get_session_factory()()
+    try:
+        dead_letter = SourceDeadLetterORM(
+            source_id=source_id,
+            source_run_id=webhook_run["source_run_id"],
+            adapter_kind="webhook_ingest",
+            source_kind="webhook_ingest",
+            stage="replay_test",
+            status="pending",
+            failure_reason="manual replay test",
+            payload_json={
+                "title": "replayed push event",
+                "url": "https://webhook.example.com/2",
+                "lat": 29.76,
+                "lon": -95.36,
+            },
+        )
+        session.add(dead_letter)
+        session.commit()
+        dead_letter_id = dead_letter.source_dead_letter_id
+    finally:
+        session.close()
+
+    replay_response = client.post(f"/api/sources/dead-letters/{dead_letter_id}/replay")
+    assert replay_response.status_code == 200
+    replay_payload = replay_response.json()
+    assert replay_payload["status"] == "replayed"
+    assert replay_payload["replay_count"] == 1
+
+    observations_response = client.get("/api/observations", params={"layer_key": "webhook-feed"})
+    assert observations_response.status_code == 200
+    observations = observations_response.json()
+    assert len(observations) == 2
+
+
+def test_sse_runtime_source_runs_via_scheduler_and_tracks_checkpoint(client: TestClient) -> None:
+    payload = "\n".join(
+        [
+            "id: 42",
+            'data: {"title":"stream-1","url":"https://sse.example.com/1","lat":29.77,"lon":-95.37}',
+            "",
+            "id: 43",
+            'data: {"title":"stream-2","url":"https://sse.example.com/2","lat":29.78,"lon":-95.38}',
+            "",
+        ]
+    )
+    with static_text_server(payload, content_type="text/event-stream", path="/events") as (target_uri, state):
+        source_response = client.post(
+            "/api/sources",
+            json={
+                "name": "sse-source",
+                "source_kind": "sse_stream",
+                "layer_key": "sse-feed",
+                "target_uri": target_uri,
+                "metadata_json": {"event_format": "json"},
+            },
+        )
+        assert source_response.status_code == 200
+        source_id = source_response.json()["source_id"]
+
+        task_response = client.post(
+            "/api/scheduler/tasks",
+            json={
+                "name": "sse-runtime",
+                "task_type": "source_runtime",
+                "interval_seconds": 60,
+                "source_id": source_id,
+            },
+        )
+        assert task_response.status_code == 200
+        task_id = task_response.json()["task_id"]
+
+        run_response = client.post(f"/api/scheduler/tasks/{task_id}/run")
+        assert run_response.status_code == 200
+        assert run_response.json()["records_affected"] == 2
+
+        ops_response = client.get(f"/api/sources/{source_id}/ops")
+        assert ops_response.status_code == 200
+        ops_payload = ops_response.json()
+        assert ops_payload["checkpoint"]["fetch_mode"] == "stream"
+        assert ops_payload["checkpoint"]["last_event_id"] == "43"
+        assert ops_payload["checkpoint"]["last_offset"] == 2
+        assert ops_payload["report_status"]["runtime_state"] == "active"
+        assert state["last_headers"].get("Last-Event-ID") is None
+
+        resume_response = client.post(f"/api/sources/{source_id}/runtime")
+        assert resume_response.status_code == 200
+        normalized_headers = {str(key).lower(): value for key, value in state["last_headers"].items()}
+        assert normalized_headers.get("last-event-id") == "43"
+
+        report_index = client.get("/api/sources/report-index")
+        assert report_index.status_code == 200
+        assert report_index.json()["inventory_summary"]["runtime_active_count"] >= 1
+
+
+def test_websocket_runtime_source_uses_checkpoint_templates(client: TestClient, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    sent_payloads: list[list[object]] = []
+    message_batches = [
+        [
+            json.dumps({"title": "ws-1", "url": "https://ws.example.com/1", "lat": 29.79, "lon": -95.39}),
+            json.dumps({"title": "ws-2", "url": "https://ws.example.com/2", "lat": 29.80, "lon": -95.40}),
+        ],
+        [
+            json.dumps({"title": "ws-3", "url": "https://ws.example.com/3", "lat": 29.81, "lon": -95.41}),
+            json.dumps({"title": "ws-4", "url": "https://ws.example.com/4", "lat": 29.82, "lon": -95.42}),
+        ],
+    ]
+
+    class FakeWebsocket:
+        def __init__(self, messages: list[str]) -> None:
+            self._messages = iter(messages)
+            self.sent: list[object] = []
+
+        def __enter__(self) -> "FakeWebsocket":
+            sent_payloads.append(self.sent)
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> bool:  # type: ignore[no-untyped-def]
+            return False
+
+        def send(self, payload: object) -> None:
+            self.sent.append(payload)
+
+        def recv(self) -> str:
+            try:
+                return next(self._messages)
+            except StopIteration as exc:
+                raise ConnectionClosedOK(None, None) from exc
+
+    def fake_websocket_connect(*args, **kwargs):  # type: ignore[no-untyped-def]
+        assert message_batches
+        return FakeWebsocket(message_batches.pop(0))
+
+    monkeypatch.setattr("src.services.source_adapter_service.websocket_connect", fake_websocket_connect)
+
+    source_response = client.post(
+        "/api/sources",
+        json={
+            "name": "websocket-source",
+            "source_kind": "websocket_stream",
+            "layer_key": "websocket-feed",
+            "target_uri": "wss://example.invalid/stream",
+            "metadata_json": {
+                "event_format": "json",
+                "max_messages_per_run": 2,
+                "send_json": {"resume_offset": "{last_offset}", "checkpoint_offset": "{checkpoint_last_offset}"},
+            },
+        },
+    )
+    assert source_response.status_code == 200
+    source_id = source_response.json()["source_id"]
+
+    first_runtime = client.post(f"/api/sources/{source_id}/runtime")
+    assert first_runtime.status_code == 200
+    assert first_runtime.json()["records_imported"] == 2
+
+    second_runtime = client.post(f"/api/sources/{source_id}/runtime")
+    assert second_runtime.status_code == 200
+    assert second_runtime.json()["records_imported"] == 2
+
+    assert json.loads(str(sent_payloads[0][0])) == {"checkpoint_offset": "", "resume_offset": ""}
+    assert json.loads(str(sent_payloads[1][0])) == {"checkpoint_offset": "2", "resume_offset": "2"}
+
+    ops_response = client.get(f"/api/sources/{source_id}/ops")
+    assert ops_response.status_code == 200
+    assert ops_response.json()["checkpoint"]["last_offset"] == 4
+
+
+def test_source_runtime_worker_emits_iterations_metric(client: TestClient, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    iteration_cycles = [
+        {"source_count": 1, "source_run_ids": [11], "records_seen": 2, "records_imported": 2, "records_failed": 0},
+        {"source_count": 1, "source_run_ids": [12], "records_seen": 1, "records_imported": 1, "records_failed": 0},
+    ]
+
+    def fake_runtime_cycle(session, *, source_id=None, actor="source_runtime"):  # type: ignore[no-untyped-def]
+        assert iteration_cycles
+        return iteration_cycles.pop(0)
+
+    monkeypatch.setattr("src.services.source_runtime_service.run_source_runtime_cycle", fake_runtime_cycle)
+
+    result = run_source_runtime_worker(
+        get_session_factory(),
+        poll_seconds=0.0,
+        once=False,
+        max_iterations=2,
+        actor="test_source_runtime_worker",
+    )
+    assert result.iterations == 2
+    assert result.source_run_ids == [11, 12]
+    assert result.records_imported == 3
+
+    metrics_text = render_metrics()
+    assert "elevenwriter_source_runtime_worker_iterations_total 2" in metrics_text

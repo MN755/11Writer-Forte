@@ -6,10 +6,12 @@ from sqlalchemy.orm import Session
 from src.db import get_db
 from src.schemas import DatabaseDiagnosticsRead
 from src.schemas import OperationsReportRead
+from src.schemas import RuntimeDiagnosticsRead
 from src.schemas import RuntimeRestoreResultRead
 from src.schemas import RuntimeSnapshotRead
 from src.services.database_diagnostics_service import build_database_diagnostics
 from src.services.operations_report_service import build_operations_report
+from src.services.runtime_diagnostics_service import build_runtime_diagnostics
 from src.services.runtime_snapshot_service import build_runtime_snapshot
 from src.services.runtime_snapshot_service import restore_runtime_snapshot
 
@@ -29,6 +31,14 @@ def operations_report(
 @router.get("/database", response_model=DatabaseDiagnosticsRead)
 def database_diagnostics(session: Session = Depends(get_db)) -> dict[str, object]:
     return build_database_diagnostics(session)
+
+
+@router.get("/diagnostics", response_model=RuntimeDiagnosticsRead)
+def runtime_diagnostics(
+    limit: int = Query(default=10, ge=1, le=50),
+    session: Session = Depends(get_db),
+) -> dict[str, object]:
+    return build_runtime_diagnostics(session, limit=limit)
 
 
 @router.get("/runtime/export", response_model=RuntimeSnapshotRead)

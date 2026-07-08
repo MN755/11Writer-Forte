@@ -25,9 +25,12 @@ from src.models import (
     SituationProductORM,
     StorageObjectORM,
     SourceDefinitionORM,
+    SourceCheckpointORM,
+    SourceDeadLetterORM,
     SourceRunORM,
     SourceTrustProfileORM,
 )
+from src.services.redaction_service import sanitize_url
 
 TABLE_COUNT_MODELS: tuple[tuple[str, object], ...] = (
     ("data_layers", DataLayerORM),
@@ -47,6 +50,8 @@ TABLE_COUNT_MODELS: tuple[tuple[str, object], ...] = (
     ("scheduled_tasks", ScheduledTaskORM),
     ("scheduled_task_runs", ScheduledTaskRunORM),
     ("source_runs", SourceRunORM),
+    ("source_checkpoints", SourceCheckpointORM),
+    ("source_dead_letters", SourceDeadLetterORM),
     ("situation_products", SituationProductORM),
     ("custody_logs", CustodyLogORM),
 )
@@ -95,7 +100,7 @@ def build_database_diagnostics(session: Session) -> dict[str, object]:
     return {
         "status": status,
         "database_backend": backend,
-        "database_url": settings.database_url,
+        "database_url": sanitize_url(settings.database_url),
         "database_connected": connected,
         "spatial_backend": settings.spatial_backend,
         "scheduler_poll_seconds": settings.scheduler_poll_seconds,
