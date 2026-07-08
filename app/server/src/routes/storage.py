@@ -3,23 +3,42 @@ from sqlalchemy.orm import Session
 
 from src.db import get_db
 from src.schemas import (
+    StorageActionResultRead,
+    StorageArchiveRequest,
     StorageLifecycleSweepResultRead,
+    StorageManifestRead,
     StorageObjectCreate,
     StorageObjectPromoteRequest,
     StorageObjectRead,
     StorageObjectTransitionRequest,
+    StorageQuarantineRequest,
+    StorageRehydrateRequest,
     StorageReportRead,
+    StorageUnquarantineRequest,
 )
 from src.services.storage_service import (
+    archive_storage_object,
     build_storage_report,
     create_storage_object,
+    get_storage_manifest_for_object,
     list_storage_objects,
     promote_storage_object,
+    prune_storage_object,
+    quarantine_storage_object,
+    rehydrate_storage_object,
+    request_storage_object_rehydration,
     sweep_expired_storage_objects,
     transition_storage_object,
+    unquarantine_storage_object,
+    verify_storage_object,
 )
 
 router = APIRouter(prefix="/storage", tags=["storage"])
+
+
+def raise_storage_http_error(exc: ValueError) -> None:
+    status_code = 404 if "does not exist" in str(exc) else 400
+    raise HTTPException(status_code=status_code, detail=str(exc)) from exc
 
 
 @router.get("/objects", response_model=list[StorageObjectRead])
@@ -64,6 +83,7 @@ def run_storage_sweep_route(
     retention_class: str | None = None,
     limit: int = Query(default=100, ge=1, le=1000),
     dry_run: bool = False,
+    operations: list[str] | None = Query(default=None),
     session: Session = Depends(get_db),
 ) -> object:
     return sweep_expired_storage_objects(
@@ -71,6 +91,7 @@ def run_storage_sweep_route(
         retention_class=retention_class,
         limit=limit,
         dry_run=dry_run,
+        operations=operations,
     )
 
 
@@ -83,7 +104,7 @@ def promote_storage_object_route(
     try:
         return promote_storage_object(session, storage_object_id, payload)
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise_storage_http_error(exc)
 
 
 @router.patch("/objects/{storage_object_id}/transition", response_model=StorageObjectRead)
@@ -95,4 +116,110 @@ def transition_storage_object_route(
     try:
         return transition_storage_object(session, storage_object_id, payload)
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise_storage_http_error(exc)
+
+
+@router.get("/objects/{storage_object_id}/manifest", response_model=StorageManifestRead)
+def get_storage_manifest_route(
+    storage_object_id: int,
+    session: Session = Depends(get_db),
+) -> object:
+    try:
+        return get_storage_manifest_for_object(session, storage_object_id)
+    except ValueError as exc:
+        raise_storage_http_error(exc)
+
+
+@router.post("/objects/{storage_object_id}/archive", response_model=StorageActionResultRead)
+def archive_storage_object_route(
+    storage_object_id: int,
+    payload: StorageArchiveRequest | None = None,
+    session: Session = Depends(get_db),
+) -> object:
+    try:
+        return archive_storage_object(
+            session,
+            storage_object_id,
+            prune_local=(payload.prune_local if payload is not None else False),
+        )
+    except ValueError as exc:
+        raise_storage_http_error(exc)
+
+
+@router.post("/objects/{storage_object_id}/verify", response_model=StorageActionResultRead)
+def verify_storage_object_route(
+    storage_object_id: int,
+    session: Session = Depends(get_db),
+) -> object:
+    try:
+        return verify_storage_object(session, storage_object_id)
+    except ValueError as exc:
+        raise_storage_http_error(exc)
+
+
+@router.post("/objects/{storage_object_id}/request-rehydrate", response_model=StorageActionResultRead)
+def request_storage_object_rehydration_route(
+    storage_object_id: int,
+    session: Session = Depends(get_db),
+) -> object:
+    try:
+        return request_storage_object_rehydration(session, storage_object_id)
+    except ValueError as exc:
+        raise_storage_http_error(exc)
+
+
+@router.post("/objects/{storage_object_id}/rehydrate", response_model=StorageActionResultRead)
+def rehydrate_storage_object_route(
+    storage_object_id: int,
+    payload: StorageRehydrateRequest | None = None,
+    session: Session = Depends(get_db),
+) -> object:
+    try:
+        request_payload = payload or StorageRehydrateRequest()
+        return rehydrate_storage_object(
+            session,
+            storage_object_id,
+            target_path=request_payload.target_path,
+            replace_existing=request_payload.replace_existing,
+        )
+    except ValueError as exc:
+        raise_storage_http_error(exc)
+
+
+@router.post("/objects/{storage_object_id}/prune", response_model=StorageActionResultRead)
+def prune_storage_object_route(
+    storage_object_id: int,
+    session: Session = Depends(get_db),
+) -> object:
+    try:
+        return prune_storage_object(session, storage_object_id)
+    except ValueError as exc:
+        raise_storage_http_error(exc)
+
+
+@router.post("/objects/{storage_object_id}/quarantine", response_model=StorageActionResultRead)
+def quarantine_storage_object_route(
+    storage_object_id: int,
+    payload: StorageQuarantineRequest,
+    session: Session = Depends(get_db),
+) -> object:
+    try:
+        return quarantine_storage_object(session, storage_object_id, reason=payload.reason)
+    except ValueError as exc:
+        raise_storage_http_error(exc)
+
+
+@router.post("/objects/{storage_object_id}/unquarantine", response_model=StorageActionResultRead)
+def unquarantine_storage_object_route(
+    storage_object_id: int,
+    payload: StorageUnquarantineRequest | None = None,
+    session: Session = Depends(get_db),
+) -> object:
+    try:
+        return unquarantine_storage_object(
+            session,
+            storage_object_id,
+            note=payload.note if payload is not None else None,
+        )
+    except ValueError as exc:
+        raise_storage_http_error(exc)

@@ -16,6 +16,15 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./var/11writer_forte.db"
     database_auto_migrate: bool = False
     data_dir: Path = Field(default=Path("./var"))
+    storage_archive_backend: Literal["local", "r2"] = "local"
+    storage_archive_dir: Path = Field(default=Path("artifacts/archive"))
+    storage_rehydrate_dir: Path = Field(default=Path("artifacts/rehydrated"))
+    storage_s3_endpoint: str | None = None
+    storage_s3_bucket: str | None = None
+    storage_s3_access_key_id: str | None = None
+    storage_s3_secret_access_key: str | None = None
+    storage_s3_region: str = "auto"
+    storage_s3_prefix: str = "11writer-artifacts"
     import_row_limit: int = 5000
     scheduler_poll_seconds: float = 30.0
     allowed_origins: list[str] = Field(default_factory=list)
@@ -48,6 +57,8 @@ class Settings(BaseSettings):
 
     def ensure_runtime_dirs(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
+        self.storage_archive_dir_effective.mkdir(parents=True, exist_ok=True)
+        self.storage_rehydrate_dir_effective.mkdir(parents=True, exist_ok=True)
 
     @property
     def sqlalchemy_connect_args(self) -> dict[str, object]:
@@ -94,6 +105,47 @@ class Settings(BaseSettings):
         if self.clickhouse_r2_storage_mode == "r2_disk" and self.clickhouse_r2_storage_configured:
             return self.clickhouse_r2_storage_policy
         return None
+
+    @property
+    def storage_archive_dir_effective(self) -> Path:
+        if self.storage_archive_dir.is_absolute():
+            return self.storage_archive_dir
+        return (self.data_dir / self.storage_archive_dir).resolve()
+
+    @property
+    def storage_rehydrate_dir_effective(self) -> Path:
+        if self.storage_rehydrate_dir.is_absolute():
+            return self.storage_rehydrate_dir
+        return (self.data_dir / self.storage_rehydrate_dir).resolve()
+
+    @property
+    def storage_s3_endpoint_effective(self) -> str | None:
+        return self.storage_s3_endpoint or self.clickhouse_r2_endpoint
+
+    @property
+    def storage_s3_bucket_effective(self) -> str | None:
+        return self.storage_s3_bucket or self.clickhouse_r2_bucket
+
+    @property
+    def storage_s3_access_key_id_effective(self) -> str | None:
+        return self.storage_s3_access_key_id or self.clickhouse_r2_access_key_id
+
+    @property
+    def storage_s3_secret_access_key_effective(self) -> str | None:
+        return self.storage_s3_secret_access_key or self.clickhouse_r2_secret_access_key
+
+    @property
+    def storage_s3_region_effective(self) -> str:
+        return self.storage_s3_region or self.clickhouse_r2_region
+
+    @property
+    def storage_r2_configured(self) -> bool:
+        return bool(
+            self.storage_s3_endpoint_effective
+            and self.storage_s3_bucket_effective
+            and self.storage_s3_access_key_id_effective
+            and self.storage_s3_secret_access_key_effective
+        )
 
 
 @lru_cache(maxsize=1)

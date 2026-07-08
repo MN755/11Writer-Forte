@@ -93,7 +93,17 @@ elevenwriter show-camera-report-index --layer traffic-camera-feed --source-domai
 elevenwriter export-camera-summary ./exports/camera-summary.json --layer traffic-camera-feed
 elevenwriter add-camera-refresh-schedule mndot-camera-refresh 300 --layer traffic-camera-feed --source-domain 511mn.org --limit 1000
 elevenwriter list-storage-objects --owner-type camera_inventory --retention-class operational
+elevenwriter show-storage-report
+elevenwriter show-storage-manifest 1
 elevenwriter add-storage-object manual:casefile:1 report_export event 42 file:///tmp/casefile-42.json --storage-tier hot --retention-class investigative
+elevenwriter archive-storage-object 1
+elevenwriter verify-storage-object 1
+elevenwriter request-storage-rehydration 1
+elevenwriter rehydrate-storage-object 1 ./var/restored/casefile-42.json --replace-existing
+elevenwriter quarantine-storage-object 1 "checksum mismatch"
+elevenwriter unquarantine-storage-object 1 --note "review complete"
+elevenwriter prune-storage-object 1
+elevenwriter run-storage-lifecycle --operation archive --operation verify --operation prune
 elevenwriter promote-storage-object 1 event 42 --storage-tier archive --retention-class permanent
 elevenwriter transition-storage-object 1 archived --storage-tier archive
 elevenwriter show-clickhouse-status
@@ -158,9 +168,42 @@ elevenwriter verify-db
 - `verify-db` is the non-destructive preflight that checks connectivity, Alembic revision state, PostGIS readiness, and table visibility.
 - Long-running API and worker processes no longer rely on `create_all()` or additive column patching as the primary schema evolution path.
 
+## Artifact lifecycle workflow
+
+Managed artifacts now run through an executable lifecycle engine instead of just sitting in a ledger row pretending that counts as storage management.
+
+```bash
+elevenwriter show-storage-report
+elevenwriter show-storage-manifest 42
+elevenwriter archive-storage-object 42
+elevenwriter verify-storage-object 42
+elevenwriter request-storage-rehydration 42
+elevenwriter rehydrate-storage-object 42 ./var/restored/artifact.bin --replace-existing
+elevenwriter prune-storage-object 42
+elevenwriter run-storage-lifecycle --operation archive --operation verify --operation prune --operation expire
+```
+
+- `archive-storage-object` copies the local artifact into the configured archive backend, verifies checksum and byte size, then marks archival state.
+- `verify-storage-object` re-checks the current canonical or archive replica and writes a custody record.
+- `request-storage-rehydration` marks the artifact for operator or scheduler pickup, while `rehydrate-storage-object` performs the download immediately.
+- `prune-storage-object` only removes safe managed local replicas after a verified archive copy exists and the retention window has actually elapsed.
+- `show-storage-manifest` is the replica/custody view: canonical URI, transfer state, verification timestamps, and all known locations.
+- `run-storage-lifecycle` and `storage_lifecycle` scheduler tasks accept `archive`, `verify`, `rehydrate`, `prune`, and `expire` operations.
+
+Exports and cached source payload artifacts register with this lifecycle engine automatically. Camera/import reference rows stay in the ledger, but they are not treated as destructive-prune targets.
+
 ### Optional ClickHouse + R2 env
 
 ```bash
+ELEVENWRITER_STORAGE_ARCHIVE_BACKEND=local
+ELEVENWRITER_STORAGE_ARCHIVE_DIR=artifacts/archive
+ELEVENWRITER_STORAGE_REHYDRATE_DIR=artifacts/rehydrated
+ELEVENWRITER_STORAGE_S3_ENDPOINT=https://<ACCOUNT_ID>.r2.cloudflarestorage.com
+ELEVENWRITER_STORAGE_S3_BUCKET=11writer-artifacts
+ELEVENWRITER_STORAGE_S3_ACCESS_KEY_ID=<R2_ACCESS_KEY_ID>
+ELEVENWRITER_STORAGE_S3_SECRET_ACCESS_KEY=<R2_SECRET_ACCESS_KEY>
+ELEVENWRITER_STORAGE_S3_REGION=auto
+ELEVENWRITER_STORAGE_S3_PREFIX=11writer-artifacts
 ELEVENWRITER_CLICKHOUSE_ENABLED=true
 ELEVENWRITER_CLICKHOUSE_URL=http://127.0.0.1:8123
 ELEVENWRITER_CLICKHOUSE_DATABASE=elevenwriter
@@ -196,6 +239,7 @@ ELEVENWRITER_CLICKHOUSE_R2_CACHE_SIZE=10Gi
 - Postgres migrations now install `postgis` plus the required GiST expression indexes for observation points and geofence geometries, while SQLite keeps the Python fallback path for local runs and tests.
 - The headless CLI now includes `init-db`, `migrate-db`, `verify-db`, and `doctor`, and the API exposes `/api/operations/database`, so operators can audit connectivity, Alembic revision state, table counts, and PostGIS readiness without freestyling SQL in production.
 - Runtime backup and recovery now have a first-class path too: `/api/operations/runtime/export`, `/api/operations/runtime/restore`, and matching `backup-runtime` / `restore-runtime` CLI commands serialize the core backend state in dependency-safe order and log custody records for both export and restore.
+- Artifact storage has an actual execution layer now too: `/api/storage/objects/{id}/archive`, `/verify`, `/request-rehydrate`, `/rehydrate`, `/prune`, `/quarantine`, `/unquarantine`, plus `show-storage-manifest` and lifecycle sweeps turn managed artifacts into verified replicas with custody history instead of leaving operators with metadata cosplay.
 - Runtime snapshot coverage now extends across newer operational subsystems too, including scheduler task/run state, source-run history, camera/source registries, storage objects, and maintenance-task lineage, so recovery testing is following the real backend instead of freezing at an older shape.
 - The storage-core slice is real now, not a manifesto: `/api/storage/objects` plus the `list-storage-objects`, `add-storage-object`, `promote-storage-object`, and `transition-storage-object` CLI commands expose a first-class artifact ledger with retention classes, tiering, and lifecycle controls.
 - Imports and camera materialization now auto-register storage manifests, so raw local files plus camera image/stream/page references get tracked as storage objects with expiration windows and custody events instead of disappearing into the void.

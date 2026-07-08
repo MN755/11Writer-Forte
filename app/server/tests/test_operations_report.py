@@ -113,6 +113,11 @@ def test_operations_report_summarizes_runtime_activity(client: TestClient, tmp_p
     assert payload["custody_logs"]
     assert payload["storage_report"]["total_count"] >= 2
     assert payload["storage_report"]["active_count"] >= 2
+    assert "archive_pending_count" in payload["storage_report"]
+    assert "verification_failure_count" in payload["storage_report"]
+    assert "rehydration_pending_count" in payload["storage_report"]
+    assert "transfer_status_counts" in payload["storage_report"]
+    assert "problem_objects" in payload["storage_report"]
     assert payload["clickhouse_diagnostics"]["status"] == "disabled"
     assert payload["clickhouse_diagnostics"]["enabled"] is False
     assert payload["clickhouse_diagnostics"]["storage_mode"] == "archive_only"
@@ -173,6 +178,7 @@ def test_operations_report_summarizes_runtime_activity(client: TestClient, tmp_p
     assert camera_report_response.status_code == 200
     camera_payload = camera_report_response.json()
     assert camera_payload["storage_report"]["total_count"] >= 5
+    assert "archive_pending_count" in camera_payload["storage_report"]
     assert any(
         bucket["key"] == "operational" for bucket in camera_payload["storage_report"]["retention_class_counts"]
     )
