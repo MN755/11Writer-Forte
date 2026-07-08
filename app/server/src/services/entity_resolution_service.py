@@ -1,37 +1,58 @@
 from __future__ import annotations
 
 import re
+from collections import Counter, defaultdict
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from hashlib import sha1
+from typing import Iterable
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from src.models import CustodyLogORM, EntityORM, EntityObservationLinkORM, ObservationORM
 from src.schemas import EntityResolutionRequest
-from src.services.observation_service import query_observations
+from src.services.observation_service import (
+    extract_observation_timestamp,
+    extract_point,
+    haversine_km,
+    query_observations,
+)
 
 
 EMAIL_RE = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE)
 PHONE_RE = re.compile(r"\+?\d[\d\-\s().]{6,}\d")
 
 SIGNAL_SPECS: dict[str, tuple[str, ...]] = {
-    "person": ("email", "phone", "handle", "username", "passport_number", "full_name", "person_name"),
-    "organization": ("organization", "org_name", "company", "employer"),
+    "person": (
+        "email",
+        "phone",
+        "handle",
+        "username",
+        "passport_number",
+        "full_name",
+        "person_name",
+        "display_name",
+    ),
+    "organization": ("organization", "org_name", "company", "employer", "operator", "owner"),
     "vessel": ("vessel_name", "ship_name", "imo", "mmsi", "callsign"),
-    "vehicle": ("tail_number", "registration"),
+    "vehicle": ("tail_number", "registration", "license_plate"),
 }
 DISPLAY_PRIORITY = (
     "vessel_name",
     "ship_name",
     "full_name",
     "person_name",
+    "display_name",
     "organization",
     "org_name",
     "company",
+    "operator",
+    "owner",
     "employer",
     "callsign",
     "registration",
+    "license_plate",
     "tail_number",
     "handle",
     "username",
@@ -50,15 +71,19 @@ PRIMARY_SIGNAL_PRIORITY = (
     "callsign",
     "tail_number",
     "registration",
+    "license_plate",
     "handle",
     "username",
     "vessel_name",
     "ship_name",
     "full_name",
     "person_name",
+    "display_name",
     "organization",
     "org_name",
     "company",
+    "operator",
+    "owner",
     "employer",
 )
 BASE_CONFIDENCE = {
@@ -70,17 +95,36 @@ BASE_CONFIDENCE = {
     "callsign": 0.78,
     "tail_number": 0.78,
     "registration": 0.76,
+    "license_plate": 0.76,
     "handle": 0.74,
     "username": 0.72,
     "vessel_name": 0.62,
     "ship_name": 0.62,
     "full_name": 0.58,
     "person_name": 0.58,
+    "display_name": 0.58,
     "organization": 0.58,
     "org_name": 0.58,
     "company": 0.58,
+    "operator": 0.58,
+    "owner": 0.56,
     "employer": 0.54,
 }
+HARD_SIGNAL_KEYS = {
+    "imo",
+    "mmsi",
+    "passport_number",
+    "email",
+    "phone",
+    "callsign",
+    "tail_number",
+    "registration",
+    "license_plate",
+    "handle",
+    "username",
+}
+SOFT_MATCH_MAX_DISTANCE_KM = 50.0
+SOFT_MATCH_MAX_TIME_HOURS = 72.0
 
 
 @dataclass(frozen=True)
@@ -89,6 +133,15 @@ class EntitySignal:
     signal_key: str
     normalized_value: str
     raw_value: str
+
+
+@dataclass(frozen=True)
+class EntityObservationProfile:
+    entity_type: str
+    observation: ObservationORM
+    signals: tuple[EntitySignal, ...]
+    hard_signals: tuple[EntitySignal, ...]
+    soft_signals: tuple[EntitySignal, ...]
 
 
 @dataclass
@@ -130,15 +183,16 @@ def materialize_entities(
         entity = session.scalar(select(EntityORM).where(EntityORM.slug == slug))
         created_new = entity is None
         confidence_score = compute_entity_confidence(component)
+        primary_signal = choose_primary_signal(component)
         canonical_name = choose_canonical_name(component)
-        metadata = build_entity_metadata(component, confidence_score)
+        metadata = build_entity_metadata(component, confidence_score, primary_signal)
 
         if entity is None:
             entity = EntityORM(
                 slug=slug,
                 entity_type=component["entity_type"],
                 canonical_name=canonical_name,
-                resolution_basis="rule_based",
+                resolution_basis="rule_based_evidence_graph",
                 confidence_score=confidence_score,
                 redaction_level=request.redaction_level,
                 metadata_json=metadata,
@@ -150,9 +204,10 @@ def materialize_entities(
             entity.confidence_score = confidence_score
             entity.redaction_level = request.redaction_level
             entity.metadata_json = metadata
+            entity.resolution_basis = "rule_based_evidence_graph"
 
         log_entity_resolution(session, entity, component, confidence_score, created_new, actor=actor)
-        ensure_entity_links(session, entity, component, confidence_score, actor=actor)
+        ensure_entity_links(session, entity, component, confidence_score, primary_signal, actor=actor)
         results.append(
             MaterializedEntity(
                 entity=entity,
@@ -175,76 +230,231 @@ def build_resolution_components(
     entity_type: str | None,
     min_observations: int,
 ) -> list[dict[str, object]]:
-    node_details: dict[tuple[str, str, str], EntitySignal] = {}
-    node_observations: dict[tuple[str, str, str], set[int]] = {}
-    node_domains: dict[tuple[str, str, str], set[str]] = {}
-    node_layers: dict[tuple[str, str, str], set[str]] = {}
-    observation_index = {observation.observation_id: observation for observation in observations}
-    parents: dict[tuple[str, str, str], tuple[str, str, str]] = {}
+    profiles = build_entity_observation_profiles(observations, entity_type=entity_type)
+    if not profiles:
+        return []
 
-    for observation in observations:
-        grouped: dict[str, list[EntitySignal]] = {}
-        for signal in extract_entity_signals(observation, entity_type=entity_type):
-            grouped.setdefault(signal.entity_type, []).append(signal)
-            node = (signal.entity_type, signal.signal_key, signal.normalized_value)
-            node_details[node] = signal
-            node_observations.setdefault(node, set()).add(observation.observation_id)
-            if observation.source_domain:
-                node_domains.setdefault(node, set()).add(observation.source_domain)
-            node_layers.setdefault(node, set()).add(observation.layer_key)
-            parents.setdefault(node, node)
+    parents = list(range(len(profiles)))
+    link_rows: list[dict[str, object]] = []
 
-        for signals in grouped.values():
-            if not signals:
+    for left_index, left_profile in enumerate(profiles):
+        for right_index in range(left_index + 1, len(profiles)):
+            right_profile = profiles[right_index]
+            link_details = classify_profile_link(left_profile, right_profile)
+            if link_details is None:
                 continue
-            first = (signals[0].entity_type, signals[0].signal_key, signals[0].normalized_value)
-            for signal in signals[1:]:
-                current = (signal.entity_type, signal.signal_key, signal.normalized_value)
-                union_nodes(parents, first, current)
+            union_profile_roots(parents, left_index, right_index)
+            link_rows.append({"left_index": left_index, "right_index": right_index, **link_details})
 
-    components: dict[tuple[str, str, str], dict[str, object]] = {}
-    for node, signal in node_details.items():
-        root = find_root(parents, node)
-        component = components.setdefault(
-            root,
-            {
-                "entity_type": signal.entity_type,
-                "signals": [],
-                "signal_keys": set(),
-                "observations": set(),
-                "domains": set(),
-                "layers": set(),
-            },
-        )
-        component["signals"].append(signal)
-        component["signal_keys"].add(signal.signal_key)
-        component["observations"].update(node_observations.get(node, set()))
-        component["domains"].update(node_domains.get(node, set()))
-        component["layers"].update(node_layers.get(node, set()))
+    grouped_indexes: dict[int, list[int]] = defaultdict(list)
+    for index in range(len(profiles)):
+        grouped_indexes[find_profile_root(parents, index)].append(index)
 
     rows: list[dict[str, object]] = []
-    for component in components.values():
-        observation_ids = sorted(component["observations"])
-        if len(observation_ids) < min_observations:
+    for component_indexes in grouped_indexes.values():
+        component = build_resolution_component(profiles, component_indexes, link_rows)
+        if len(component["observations"]) < min_observations:
             continue
-        component["observations"] = [
-            observation_index[observation_id]
-            for observation_id in observation_ids
-            if observation_id in observation_index
-        ]
-        component["domains"] = sorted(component["domains"])
-        component["layers"] = sorted(component["layers"])
-        component["signal_keys"] = sorted(component["signal_keys"])
         rows.append(component)
 
     rows.sort(
         key=lambda row: (
+            -compute_entity_confidence(row),
             -len(row["observations"]),
             row["entity_type"],
             choose_canonical_name(row).lower(),
         )
     )
     return rows
+
+
+def build_entity_observation_profiles(
+    observations: list[ObservationORM],
+    *,
+    entity_type: str | None,
+) -> list[EntityObservationProfile]:
+    profiles: list[EntityObservationProfile] = []
+    for observation in observations:
+        grouped: dict[str, dict[tuple[str, str, str], EntitySignal]] = defaultdict(dict)
+        for signal in extract_entity_signals(observation, entity_type=entity_type):
+            grouped[signal.entity_type][(signal.entity_type, signal.signal_key, signal.normalized_value)] = signal
+        for resolved_type, signals_by_key in grouped.items():
+            signals = tuple(sorted(signals_by_key.values(), key=signal_sort_key))
+            hard_signals = tuple(signal for signal in signals if signal.signal_key in HARD_SIGNAL_KEYS)
+            soft_signals = tuple(signal for signal in signals if signal.signal_key not in HARD_SIGNAL_KEYS)
+            profiles.append(
+                EntityObservationProfile(
+                    entity_type=resolved_type,
+                    observation=observation,
+                    signals=signals,
+                    hard_signals=hard_signals,
+                    soft_signals=soft_signals,
+                )
+            )
+    return profiles
+
+
+def build_resolution_component(
+    profiles: list[EntityObservationProfile],
+    component_indexes: list[int],
+    link_rows: list[dict[str, object]],
+) -> dict[str, object]:
+    component_profiles = [profiles[index] for index in component_indexes]
+    observations = sorted(
+        {profile.observation.observation_id: profile.observation for profile in component_profiles}.values(),
+        key=lambda observation: observation.observation_id,
+    )
+    domains = sorted({observation.source_domain for observation in observations if observation.source_domain})
+    layers = sorted({observation.layer_key for observation in observations})
+    signal_support = build_signal_support(component_profiles)
+    support_rows = sorted_signal_support_rows(signal_support)
+    signal_rows = [row["signal"] for row in support_rows]
+    hard_signal_keys = sorted({row["signal"].signal_key for row in support_rows if row["signal_class"] == "hard"})
+    soft_signal_keys = sorted({row["signal"].signal_key for row in support_rows if row["signal_class"] == "soft"})
+    signal_keys = sorted({row["signal"].signal_key for row in support_rows})
+    component_edge_rows = [
+        row
+        for row in link_rows
+        if row["left_index"] in component_indexes and row["right_index"] in component_indexes
+    ]
+    link_reason_counts = Counter(row["reason"] for row in component_edge_rows)
+    link_reasons = [
+        {"reason": reason, "count": count}
+        for reason, count in sorted(link_reason_counts.items(), key=lambda item: (-item[1], item[0]))
+    ]
+    return {
+        "entity_type": component_profiles[0].entity_type,
+        "signals": signal_rows,
+        "signal_keys": signal_keys,
+        "hard_signal_keys": hard_signal_keys,
+        "soft_signal_keys": soft_signal_keys,
+        "observations": observations,
+        "domains": domains,
+        "layers": layers,
+        "signal_support": support_rows,
+        "link_reasons": link_reasons,
+        "evidence_strength": classify_component_evidence_strength(
+            hard_signal_keys=hard_signal_keys,
+            signal_support=support_rows,
+            domains=domains,
+            observations=observations,
+            link_reasons=link_reasons,
+        ),
+    }
+
+
+def build_signal_support(
+    profiles: list[EntityObservationProfile],
+) -> dict[tuple[str, str], dict[str, object]]:
+    support: dict[tuple[str, str], dict[str, object]] = {}
+    for profile in profiles:
+        for signal in profile.signals:
+            key = (signal.signal_key, signal.normalized_value)
+            entry = support.setdefault(
+                key,
+                {
+                    "signal": signal,
+                    "signal_class": "hard" if signal.signal_key in HARD_SIGNAL_KEYS else "soft",
+                    "observation_ids": set(),
+                    "raw_value_counts": Counter(),
+                },
+            )
+            entry["observation_ids"].add(profile.observation.observation_id)
+            entry["raw_value_counts"][signal.raw_value] += 1
+    return support
+
+
+def sorted_signal_support_rows(
+    support: dict[tuple[str, str], dict[str, object]],
+) -> list[dict[str, object]]:
+    rows = []
+    for entry in support.values():
+        raw_values = sorted(entry["raw_value_counts"].items(), key=lambda item: (-item[1], item[0].lower()))
+        rows.append(
+            {
+                "signal": entry["signal"],
+                "signal_class": entry["signal_class"],
+                "observation_count": len(entry["observation_ids"]),
+                "raw_values": [value for value, _ in raw_values],
+                "raw_value_counts": dict(entry["raw_value_counts"]),
+            }
+        )
+    return sorted(
+        rows,
+        key=lambda row: (
+            primary_signal_rank(row["signal"].signal_key),
+            -int(row["observation_count"]),
+            row["signal"].normalized_value,
+        ),
+    )
+
+
+def classify_profile_link(
+    left: EntityObservationProfile,
+    right: EntityObservationProfile,
+) -> dict[str, object] | None:
+    if left.entity_type != right.entity_type:
+        return None
+
+    shared_hard = collect_shared_signals(left.hard_signals, right.hard_signals)
+    if shared_hard:
+        return {"reason": "shared_hard_signal", "strength": "anchored", "shared_signals": shared_hard}
+
+    shared_all = collect_shared_signals(left.signals, right.signals)
+    if len(shared_all) >= 2:
+        return {"reason": "multi_signal_match", "strength": "corroborated", "shared_signals": shared_all}
+
+    shared_soft = collect_shared_signals(left.soft_signals, right.soft_signals)
+    if shared_soft and profiles_are_contextually_consistent(left, right):
+        return {
+            "reason": "soft_signal_context_match",
+            "strength": "contextual",
+            "shared_signals": shared_soft,
+        }
+
+    return None
+
+
+def collect_shared_signals(
+    left_signals: Iterable[EntitySignal],
+    right_signals: Iterable[EntitySignal],
+) -> list[dict[str, str]]:
+    left_map = {(signal.signal_key, signal.normalized_value): signal for signal in left_signals}
+    right_map = {(signal.signal_key, signal.normalized_value): signal for signal in right_signals}
+    shared_keys = sorted(set(left_map) & set(right_map), key=lambda item: (primary_signal_rank(item[0]), item[1]))
+    return [
+        {
+            "signal_key": signal_key,
+            "normalized_value": normalized_value,
+            "left_raw_value": left_map[(signal_key, normalized_value)].raw_value,
+            "right_raw_value": right_map[(signal_key, normalized_value)].raw_value,
+        }
+        for signal_key, normalized_value in shared_keys
+    ]
+
+
+def profiles_are_contextually_consistent(
+    left: EntityObservationProfile,
+    right: EntityObservationProfile,
+) -> bool:
+    left_time = normalize_timestamp(extract_observation_timestamp(left.observation) or left.observation.created_at)
+    right_time = normalize_timestamp(extract_observation_timestamp(right.observation) or right.observation.created_at)
+    time_delta_hours = abs((left_time - right_time).total_seconds()) / 3600.0
+
+    left_point = extract_point(left.observation)
+    right_point = extract_point(right.observation)
+    distance_km = haversine_km(left_point, right_point) if left_point and right_point else None
+
+    if distance_km is not None and time_delta_hours <= SOFT_MATCH_MAX_TIME_HOURS and distance_km <= SOFT_MATCH_MAX_DISTANCE_KM:
+        return True
+    if distance_km is not None and distance_km <= 10.0:
+        return True
+    if time_delta_hours <= 6.0 and (
+        left.observation.layer_key == right.observation.layer_key
+        or left.observation.source_domain == right.observation.source_domain
+    ):
+        return True
+    return False
 
 
 def extract_entity_signals(
@@ -259,19 +469,17 @@ def extract_entity_signals(
         if entity_type is not None and resolved_type != entity_type:
             continue
         for key in keys:
-            value = payload.get(key)
-            if value is None:
-                continue
-            normalized = normalize_signal_value(key, value)
-            if not normalized:
-                continue
-            signal = EntitySignal(
-                entity_type=resolved_type,
-                signal_key=key,
-                normalized_value=normalized,
-                raw_value=str(value).strip(),
-            )
-            signals[(signal.entity_type, signal.signal_key, signal.normalized_value)] = signal
+            for value in iter_payload_values_for_key(payload, key):
+                normalized = normalize_signal_value(key, value)
+                if not normalized:
+                    continue
+                signal = EntitySignal(
+                    entity_type=resolved_type,
+                    signal_key=key,
+                    normalized_value=normalized,
+                    raw_value=str(value).strip(),
+                )
+                signals[(signal.entity_type, signal.signal_key, signal.normalized_value)] = signal
 
     for email in EMAIL_RE.findall(observation.content_text or ""):
         normalized = normalize_signal_value("email", email)
@@ -297,7 +505,35 @@ def extract_entity_signals(
         )
         signals[(signal.entity_type, signal.signal_key, signal.normalized_value)] = signal
 
-    return list(signals.values())
+    return sorted(signals.values(), key=signal_sort_key)
+
+
+def iter_payload_values_for_key(payload: object, signal_key: str) -> Iterable[object]:
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            if key == signal_key:
+                yield from flatten_signal_values(value)
+            if isinstance(value, (dict, list)):
+                yield from iter_payload_values_for_key(value, signal_key)
+    elif isinstance(payload, list):
+        for item in payload:
+            yield from iter_payload_values_for_key(item, signal_key)
+
+
+def flatten_signal_values(value: object) -> Iterable[object]:
+    if isinstance(value, list):
+        for item in value:
+            yield from flatten_signal_values(item)
+        return
+    if isinstance(value, dict):
+        for key in ("value", "text", "name", "display_name"):
+            nested = value.get(key)
+            if isinstance(nested, str) and nested.strip():
+                yield nested
+                return
+        return
+    if isinstance(value, (str, int, float)):
+        yield value
 
 
 def normalize_signal_value(signal_key: str, value: object) -> str | None:
@@ -311,68 +547,120 @@ def normalize_signal_value(signal_key: str, value: object) -> str | None:
         return digits if len(digits) >= 7 else None
     if signal_key in {"handle", "username"}:
         return text.lstrip("@").strip().lower()
-    if signal_key in {"imo", "mmsi", "callsign", "tail_number", "registration", "passport_number"}:
+    if signal_key in {"imo", "mmsi", "callsign", "tail_number", "registration", "license_plate", "passport_number"}:
         return re.sub(r"[^A-Z0-9]", "", text.upper())
     return " ".join(text.casefold().split())
 
 
 def choose_canonical_name(component: dict[str, object]) -> str:
-    signals: list[EntitySignal] = component["signals"]
+    support_rows: list[dict[str, object]] = component["signal_support"]
     for signal_key in DISPLAY_PRIORITY:
-        for signal in signals:
-            if signal.signal_key == signal_key:
-                return signal.raw_value
-    return signals[0].raw_value
+        matches = [row for row in support_rows if row["signal"].signal_key == signal_key]
+        if not matches:
+            continue
+        best = sorted(
+            matches,
+            key=lambda row: (-int(row["observation_count"]), -len(row["raw_values"]), row["raw_values"][0].lower()),
+        )[0]
+        return best["raw_values"][0]
+    return support_rows[0]["raw_values"][0]
+
+
+def choose_primary_signal(component: dict[str, object]) -> dict[str, object]:
+    support_rows: list[dict[str, object]] = component["signal_support"]
+    best = sorted(
+        support_rows,
+        key=lambda row: (
+            primary_signal_rank(row["signal"].signal_key),
+            -int(row["observation_count"]),
+            row["signal"].normalized_value,
+        ),
+    )[0]
+    return {
+        "signal_key": best["signal"].signal_key,
+        "normalized_value": best["signal"].normalized_value,
+        "raw_value": best["raw_values"][0],
+        "signal_class": best["signal_class"],
+        "observation_count": int(best["observation_count"]),
+    }
 
 
 def build_entity_slug(component: dict[str, object]) -> str:
     entity_type = component["entity_type"]
-    signals: list[EntitySignal] = component["signals"]
-    primary_signal = sorted(
-        signals,
-        key=lambda signal: (
-            PRIMARY_SIGNAL_PRIORITY.index(signal.signal_key)
-            if signal.signal_key in PRIMARY_SIGNAL_PRIORITY
-            else len(PRIMARY_SIGNAL_PRIORITY),
-            signal.normalized_value,
-        ),
-    )[0]
-    basis = f"{entity_type}:{primary_signal.signal_key}:{primary_signal.normalized_value}"
+    primary_signal = choose_primary_signal(component)
+    basis = f"{entity_type}:{primary_signal['signal_key']}:{primary_signal['normalized_value']}"
     return f"entity-{sha1(basis.encode('utf-8')).hexdigest()[:12]}"
 
 
 def compute_entity_confidence(component: dict[str, object]) -> float:
     observations: list[ObservationORM] = component["observations"]
-    signals: list[EntitySignal] = component["signals"]
     domains: list[str] = component["domains"]
     layers: list[str] = component["layers"]
-    base = max(BASE_CONFIDENCE.get(signal.signal_key, 0.55) for signal in signals)
-    score = (
-        base
-        + min(0.15, 0.05 * max(0, len(observations) - 1))
-        + min(0.1, 0.05 * max(0, len(domains) - 1))
-        + min(0.06, 0.03 * max(0, len(layers) - 1))
-    )
-    return round(min(score, 0.99), 2)
+    support_rows: list[dict[str, object]] = component["signal_support"]
+    primary_signal = choose_primary_signal(component)
+    base = BASE_CONFIDENCE.get(primary_signal["signal_key"], 0.55)
+    hard_signal_count = sum(1 for row in support_rows if row["signal_class"] == "hard")
+    corroborated_signal_count = sum(1 for row in support_rows if int(row["observation_count"]) > 1)
+    evidence_strength = str(component["evidence_strength"])
+
+    score = base
+    score += min(0.16, 0.04 * max(0, len(observations) - 1))
+    score += min(0.1, 0.05 * max(0, len(domains) - 1))
+    score += min(0.06, 0.03 * max(0, len(layers) - 1))
+    score += min(0.06, 0.03 * max(0, hard_signal_count - 1))
+    score += min(0.04, 0.02 * max(0, corroborated_signal_count - 1))
+
+    if evidence_strength == "anchored":
+        score += 0.04
+    elif evidence_strength == "corroborated":
+        score += 0.02
+    elif evidence_strength == "soft_correlated":
+        score -= 0.04
+
+    if hard_signal_count == 0 and len(domains) < 2:
+        score -= 0.05
+    if hard_signal_count == 0:
+        score = min(score, 0.82)
+
+    return round(min(max(score, 0.35), 0.99), 2)
 
 
-def build_entity_metadata(component: dict[str, object], confidence_score: float) -> dict[str, object]:
+def build_entity_metadata(
+    component: dict[str, object],
+    confidence_score: float,
+    primary_signal: dict[str, object],
+) -> dict[str, object]:
     observations: list[ObservationORM] = component["observations"]
-    signals: list[EntitySignal] = component["signals"]
+    timeline = build_component_timeline(observations)
+    centroid_geojson, max_distance_km = build_component_geospatial_summary(observations)
     return {
         "confidence_score": confidence_score,
         "observation_ids": [observation.observation_id for observation in observations],
         "signal_keys": component["signal_keys"],
+        "hard_signal_keys": component["hard_signal_keys"],
+        "soft_signal_keys": component["soft_signal_keys"],
         "domains": component["domains"],
         "layers": component["layers"],
+        "observation_count": len(observations),
+        "source_domain_count": len(component["domains"]),
+        "layer_count": len(component["layers"]),
+        "started_at": timeline["started_at"],
+        "ended_at": timeline["ended_at"],
+        "centroid_geojson": centroid_geojson,
+        "max_observation_distance_km": max_distance_km,
+        "primary_signal": primary_signal,
+        "evidence_strength": component["evidence_strength"],
+        "link_reasons": component["link_reasons"],
         "signals": [
             {
-                "entity_type": signal.entity_type,
-                "signal_key": signal.signal_key,
-                "normalized_value": signal.normalized_value,
-                "raw_value": signal.raw_value,
+                "entity_type": row["signal"].entity_type,
+                "signal_key": row["signal"].signal_key,
+                "normalized_value": row["signal"].normalized_value,
+                "signal_class": row["signal_class"],
+                "observation_count": int(row["observation_count"]),
+                "raw_values": row["raw_values"],
             }
-            for signal in signals
+            for row in component["signal_support"]
         ],
     }
 
@@ -393,6 +681,10 @@ def log_entity_resolution(
         "confidence_score": confidence_score,
         "observation_ids": observation_ids,
         "signal_keys": component["signal_keys"],
+        "hard_signal_keys": component["hard_signal_keys"],
+        "soft_signal_keys": component["soft_signal_keys"],
+        "evidence_strength": component["evidence_strength"],
+        "link_reasons": component["link_reasons"],
     }
     session.add(
         CustodyLogORM(
@@ -419,6 +711,7 @@ def ensure_entity_links(
     entity: EntityORM,
     component: dict[str, object],
     confidence_score: float,
+    primary_signal: dict[str, object],
     *,
     actor: str,
 ) -> None:
@@ -429,7 +722,7 @@ def ensure_entity_links(
             select(EntityObservationLinkORM).where(EntityObservationLinkORM.entity_id == entity.entity_id)
         )
     }
-    match_basis = f"{entity.entity_type}:{component['signal_keys'][0]}"
+    match_basis = f"{entity.entity_type}:{primary_signal['signal_key']}"
     for observation in observations:
         if observation.observation_id in existing_ids:
             continue
@@ -458,23 +751,77 @@ def ensure_entity_links(
         existing_ids.add(observation.observation_id)
 
 
-def find_root(
-    parents: dict[tuple[str, str, str], tuple[str, str, str]],
-    node: tuple[str, str, str],
-) -> tuple[str, str, str]:
-    parent = parents[node]
-    if parent != node:
-        parents[node] = find_root(parents, parent)
-    return parents[node]
+def build_component_timeline(observations: list[ObservationORM]) -> dict[str, str | None]:
+    timestamps = [normalize_timestamp(extract_observation_timestamp(observation) or observation.created_at) for observation in observations]
+    if not timestamps:
+        return {"started_at": None, "ended_at": None}
+    return {"started_at": format_time(min(timestamps)), "ended_at": format_time(max(timestamps))}
 
 
-def union_nodes(
-    parents: dict[tuple[str, str, str], tuple[str, str, str]],
-    left: tuple[str, str, str],
-    right: tuple[str, str, str],
-) -> None:
-    left_root = find_root(parents, left)
-    right_root = find_root(parents, right)
+def build_component_geospatial_summary(
+    observations: list[ObservationORM],
+) -> tuple[dict[str, object] | None, float | None]:
+    points = [point for observation in observations if (point := extract_point(observation)) is not None]
+    if not points:
+        return None, None
+    centroid_lon = sum(point[0] for point in points) / len(points)
+    centroid_lat = sum(point[1] for point in points) / len(points)
+    centroid = (centroid_lon, centroid_lat)
+    max_distance = max(haversine_km(point, centroid) for point in points) if points else None
+    return (
+        {"type": "Point", "coordinates": [round(centroid_lon, 6), round(centroid_lat, 6)]},
+        round(max_distance, 3) if max_distance is not None else None,
+    )
+
+
+def classify_component_evidence_strength(
+    *,
+    hard_signal_keys: list[str],
+    signal_support: list[dict[str, object]],
+    domains: list[str],
+    observations: list[ObservationORM],
+    link_reasons: list[dict[str, object]],
+) -> str:
+    if hard_signal_keys and (len(domains) >= 2 or len(observations) >= 2):
+        return "anchored"
+    if any(row["reason"] == "multi_signal_match" for row in link_reasons):
+        return "corroborated"
+    if any(int(row["observation_count"]) > 1 for row in signal_support):
+        return "soft_correlated"
+    return "tentative"
+
+
+def find_profile_root(parents: list[int], index: int) -> int:
+    if parents[index] != index:
+        parents[index] = find_profile_root(parents, parents[index])
+    return parents[index]
+
+
+def union_profile_roots(parents: list[int], left_index: int, right_index: int) -> None:
+    left_root = find_profile_root(parents, left_index)
+    right_root = find_profile_root(parents, right_index)
     if left_root == right_root:
         return
     parents[right_root] = left_root
+
+
+def signal_sort_key(signal: EntitySignal) -> tuple[int, str, str]:
+    return (primary_signal_rank(signal.signal_key), signal.normalized_value, signal.raw_value.lower())
+
+
+def primary_signal_rank(signal_key: str) -> int:
+    if signal_key in PRIMARY_SIGNAL_PRIORITY:
+        return PRIMARY_SIGNAL_PRIORITY.index(signal_key)
+    return len(PRIMARY_SIGNAL_PRIORITY)
+
+
+def normalize_timestamp(value: datetime) -> datetime:
+    if value.tzinfo is not None:
+        return value
+    return value.replace(tzinfo=timezone.utc)
+
+
+def format_time(value: datetime | None) -> str | None:
+    if value is None:
+        return None
+    return normalize_timestamp(value).astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
