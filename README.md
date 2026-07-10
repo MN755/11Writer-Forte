@@ -20,6 +20,7 @@ Avoid OneDrive-synced or other cloud-synced folders for the primary checkout. Gi
 - Rule-based entity resolution that links observations into reusable entity records
 - Event fusion materialization plus exportable cited summaries and rule-based reports
 - Managed source definitions with persisted source-run history and scheduler-driven sync hooks
+- Managed source adapters now cover local files plus HTTP JSON, JSONL, text, XML, CSV, RSS/Atom, ArcGIS feature payloads, and CKAN package search catalogs
 - Camera inventory materialization that turns imported/public traffic camera observations into persisted geospatial camera records with provenance
 <<<<<<< HEAD
 - Storage-object ledger that tracks retained artifacts, retention class, lifecycle state, and provenance for imports and camera-derived references
@@ -77,6 +78,11 @@ elevenwriter import-local path/to/file.json --layer incident-feed
 elevenwriter list-imports
 elevenwriter add-source-file harbor-source ./feeds/harbor.json marine-track --skip-unchanged true
 elevenwriter add-source-http-json remote-feed https://example.com/feed.json remote-track --retry-attempts 3 --skip-unchanged true --header "Authorization: Bearer token"
+elevenwriter add-source-http-jsonl remote-jsonl https://example.com/feed.jsonl remote-track
+elevenwriter add-source-http-csv remote-csv https://example.com/feed.csv traffic-camera-feed
+elevenwriter add-source-rss port-alerts https://example.com/alerts.xml alert-feed
+elevenwriter add-source-arcgis-feature-json city-arcgis "https://example.com/arcgis/rest/services/Cameras/FeatureServer/0/query?where=1%3D1&outFields=*&f=json" traffic-camera-feed
+elevenwriter add-source-ckan-package-search state-catalog "https://data.example.gov/api/3/action/package_search?q=traffic" catalog-feed
 elevenwriter list-sources
 elevenwriter update-source 1 --enabled false --notes "Disabled for review"
 elevenwriter run-source 1

@@ -223,7 +223,7 @@ def normalize_payload(payload: dict[str, Any], record_format: str) -> ParsedObse
 
 
 def extract_domain(payload: dict[str, Any]) -> str | None:
-    for key in ("url", "source_url", "link", "domain", "page_url", "image_url", "stream_url"):
+    for key in ("url", "link", "page_url", "image_url", "stream_url", "domain", "source_url"):
         value = payload.get(key)
         if isinstance(value, str) and value.strip():
             return normalize_domain(value)

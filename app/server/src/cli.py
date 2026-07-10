@@ -737,6 +737,226 @@ def add_source_http_xml(
         session.close()
 
 
+@app.command("add-source-http-jsonl")
+def add_source_http_jsonl(
+    name: str,
+    target_uri: str,
+    layer: str,
+    notes: str = "",
+    integrity_source: bool = False,
+    timeout_seconds: float = 30.0,
+    retry_attempts: int = 3,
+    retry_backoff_seconds: float = 0.0,
+    skip_unchanged: bool = True,
+    header: list[str] = typer.Option(default_factory=list),
+    basic_auth_username: str | None = None,
+    basic_auth_password_env: str | None = None,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        source = create_source_definition(
+            session,
+            SourceDefinitionCreate(
+                name=name,
+                source_kind="http_jsonl",
+                layer_key=layer,
+                target_uri=target_uri,
+                notes=notes,
+                integrity_source=integrity_source,
+                metadata_json=build_http_source_metadata(
+                    timeout_seconds=timeout_seconds,
+                    retry_attempts=retry_attempts,
+                    retry_backoff_seconds=retry_backoff_seconds,
+                    skip_unchanged=skip_unchanged,
+                    header=header,
+                    basic_auth_username=basic_auth_username,
+                    basic_auth_password_env=basic_auth_password_env,
+                ),
+            ),
+        )
+        print_banner()
+        typer.echo(f"source {source.source_id} created for {source.target_uri}")
+    finally:
+        session.close()
+
+
+@app.command("add-source-http-csv")
+def add_source_http_csv(
+    name: str,
+    target_uri: str,
+    layer: str,
+    notes: str = "",
+    integrity_source: bool = False,
+    timeout_seconds: float = 30.0,
+    retry_attempts: int = 3,
+    retry_backoff_seconds: float = 0.0,
+    skip_unchanged: bool = True,
+    header: list[str] = typer.Option(default_factory=list),
+    basic_auth_username: str | None = None,
+    basic_auth_password_env: str | None = None,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        source = create_source_definition(
+            session,
+            SourceDefinitionCreate(
+                name=name,
+                source_kind="http_csv",
+                layer_key=layer,
+                target_uri=target_uri,
+                notes=notes,
+                integrity_source=integrity_source,
+                metadata_json=build_http_source_metadata(
+                    timeout_seconds=timeout_seconds,
+                    retry_attempts=retry_attempts,
+                    retry_backoff_seconds=retry_backoff_seconds,
+                    skip_unchanged=skip_unchanged,
+                    header=header,
+                    basic_auth_username=basic_auth_username,
+                    basic_auth_password_env=basic_auth_password_env,
+                ),
+            ),
+        )
+        print_banner()
+        typer.echo(f"source {source.source_id} created for {source.target_uri}")
+    finally:
+        session.close()
+
+
+@app.command("add-source-rss")
+def add_source_rss(
+    name: str,
+    target_uri: str,
+    layer: str,
+    notes: str = "",
+    integrity_source: bool = False,
+    timeout_seconds: float = 30.0,
+    retry_attempts: int = 3,
+    retry_backoff_seconds: float = 0.0,
+    skip_unchanged: bool = True,
+    header: list[str] = typer.Option(default_factory=list),
+    basic_auth_username: str | None = None,
+    basic_auth_password_env: str | None = None,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        source = create_source_definition(
+            session,
+            SourceDefinitionCreate(
+                name=name,
+                source_kind="rss",
+                layer_key=layer,
+                target_uri=target_uri,
+                notes=notes,
+                integrity_source=integrity_source,
+                metadata_json=build_http_source_metadata(
+                    timeout_seconds=timeout_seconds,
+                    retry_attempts=retry_attempts,
+                    retry_backoff_seconds=retry_backoff_seconds,
+                    skip_unchanged=skip_unchanged,
+                    header=header,
+                    basic_auth_username=basic_auth_username,
+                    basic_auth_password_env=basic_auth_password_env,
+                ),
+            ),
+        )
+        print_banner()
+        typer.echo(f"source {source.source_id} created for {source.target_uri}")
+    finally:
+        session.close()
+
+
+@app.command("add-source-arcgis-feature-json")
+def add_source_arcgis_feature_json(
+    name: str,
+    target_uri: str,
+    layer: str,
+    notes: str = "",
+    integrity_source: bool = False,
+    timeout_seconds: float = 30.0,
+    retry_attempts: int = 3,
+    retry_backoff_seconds: float = 0.0,
+    skip_unchanged: bool = True,
+    header: list[str] = typer.Option(default_factory=list),
+    basic_auth_username: str | None = None,
+    basic_auth_password_env: str | None = None,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        source = create_source_definition(
+            session,
+            SourceDefinitionCreate(
+                name=name,
+                source_kind="arcgis_feature_json",
+                layer_key=layer,
+                target_uri=target_uri,
+                notes=notes,
+                integrity_source=integrity_source,
+                metadata_json=build_http_source_metadata(
+                    timeout_seconds=timeout_seconds,
+                    retry_attempts=retry_attempts,
+                    retry_backoff_seconds=retry_backoff_seconds,
+                    skip_unchanged=skip_unchanged,
+                    header=header,
+                    basic_auth_username=basic_auth_username,
+                    basic_auth_password_env=basic_auth_password_env,
+                ),
+            ),
+        )
+        print_banner()
+        typer.echo(f"source {source.source_id} created for {source.target_uri}")
+    finally:
+        session.close()
+
+
+@app.command("add-source-ckan-package-search")
+def add_source_ckan_package_search(
+    name: str,
+    target_uri: str,
+    layer: str,
+    notes: str = "",
+    integrity_source: bool = False,
+    timeout_seconds: float = 30.0,
+    retry_attempts: int = 3,
+    retry_backoff_seconds: float = 0.0,
+    skip_unchanged: bool = True,
+    header: list[str] = typer.Option(default_factory=list),
+    basic_auth_username: str | None = None,
+    basic_auth_password_env: str | None = None,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        source = create_source_definition(
+            session,
+            SourceDefinitionCreate(
+                name=name,
+                source_kind="ckan_package_search",
+                layer_key=layer,
+                target_uri=target_uri,
+                notes=notes,
+                integrity_source=integrity_source,
+                metadata_json=build_http_source_metadata(
+                    timeout_seconds=timeout_seconds,
+                    retry_attempts=retry_attempts,
+                    retry_backoff_seconds=retry_backoff_seconds,
+                    skip_unchanged=skip_unchanged,
+                    header=header,
+                    basic_auth_username=basic_auth_username,
+                    basic_auth_password_env=basic_auth_password_env,
+                ),
+            ),
+        )
+        print_banner()
+        typer.echo(f"source {source.source_id} created for {source.target_uri}")
+    finally:
+        session.close()
+
+
 @app.command("list-sources")
 def list_sources() -> None:
     init_db()
