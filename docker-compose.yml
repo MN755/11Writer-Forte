@@ -17,6 +17,7 @@ services:
       ELEVENWRITER_DATABASE_URL: postgresql+psycopg://elevenwriter:elevenwriter@db:5432/elevenwriter
       ELEVENWRITER_APP_ENV: docker
       ELEVENWRITER_SCHEDULER_POLL_SECONDS: 5
+      ELEVENWRITER_DISCOVERY_ALLOW_PRIVATE_NETWORKS: ${ELEVENWRITER_DISCOVERY_ALLOW_PRIVATE_NETWORKS:-false}
       ELEVENWRITER_CLICKHOUSE_ENABLED: ${ELEVENWRITER_CLICKHOUSE_ENABLED:-false}
       ELEVENWRITER_CLICKHOUSE_URL: ${ELEVENWRITER_CLICKHOUSE_URL:-http://clickhouse:8123}
       ELEVENWRITER_CLICKHOUSE_DATABASE: ${ELEVENWRITER_CLICKHOUSE_DATABASE:-elevenwriter}
@@ -36,7 +37,9 @@ services:
     depends_on:
       - db
     ports:
-      - "8000:8000"
+      # The backend has no built-in multi-user authentication boundary. Keep the
+      # published API local by default; only override this behind a trusted boundary.
+      - "${ELEVENWRITER_API_BIND:-127.0.0.1}:8000:8000"
     command: uvicorn src.main:app --host 0.0.0.0 --port 8000
 
   worker:
@@ -46,6 +49,7 @@ services:
       ELEVENWRITER_DATABASE_URL: postgresql+psycopg://elevenwriter:elevenwriter@db:5432/elevenwriter
       ELEVENWRITER_APP_ENV: docker
       ELEVENWRITER_SCHEDULER_POLL_SECONDS: 5
+      ELEVENWRITER_DISCOVERY_ALLOW_PRIVATE_NETWORKS: ${ELEVENWRITER_DISCOVERY_ALLOW_PRIVATE_NETWORKS:-false}
       ELEVENWRITER_CLICKHOUSE_ENABLED: ${ELEVENWRITER_CLICKHOUSE_ENABLED:-false}
       ELEVENWRITER_CLICKHOUSE_URL: ${ELEVENWRITER_CLICKHOUSE_URL:-http://clickhouse:8123}
       ELEVENWRITER_CLICKHOUSE_DATABASE: ${ELEVENWRITER_CLICKHOUSE_DATABASE:-elevenwriter}

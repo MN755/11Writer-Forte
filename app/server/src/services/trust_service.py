@@ -46,9 +46,17 @@ def get_trust_profile(session: Session, domain: str | None) -> SourceTrustProfil
     normalized = normalize_domain(domain)
     if not normalized:
         return None
-    return session.scalar(
+    exact = session.scalar(
         select(SourceTrustProfileORM).where(SourceTrustProfileORM.domain == normalized)
     )
+    if exact is not None:
+        return exact
+    parents = [
+        profile
+        for profile in session.scalars(select(SourceTrustProfileORM))
+        if normalized.endswith(f".{profile.domain}")
+    ]
+    return max(parents, key=lambda profile: len(profile.domain), default=None)
 
 
 def resolve_trust(session: Session, domain: str | None) -> tuple[str, str, float]:

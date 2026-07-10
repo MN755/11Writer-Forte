@@ -18,6 +18,10 @@ class Settings(BaseSettings):
     import_row_limit: int = 5000
     scheduler_poll_seconds: float = 30.0
     allowed_origins: list[str] = Field(default_factory=list)
+    # Campaign payloads are operator-controlled API data.  They may request access to
+    # private targets, but that request is inert unless the server owner enables this
+    # deployment-level escape hatch as well.
+    discovery_allow_private_networks: bool = False
     clickhouse_enabled: bool = False
     clickhouse_url: str = "http://127.0.0.1:8123"
     clickhouse_database: str = "elevenwriter"

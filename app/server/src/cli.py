@@ -23,9 +23,16 @@ from src.models import (
     SourceTrustProfileORM,
 )
 from src.schemas import (
+    CandidateHealthCheckRead,
+    CandidateHealthScanRequest,
+    CandidateHealthScanResultRead,
+    CandidatePromotionRequest,
+    CandidatePromotionResultRead,
+    CandidateScoreExplanationRead,
+    CandidateSuppressionRead,
+    CandidateSuppressionRequest,
     CameraSourceOpsExportSummaryRead,
     CameraSourceMaterializationResponse,
-    CameraSourceInventoryRead,
     CameraSourceOpsReportIndexRead,
     CameraSourceSummaryRead,
     ClickHouseArchiveResultRead,
@@ -39,6 +46,17 @@ from src.schemas import (
     CameraMaterializationResponse,
     DataLayerCreate,
     DatabaseDiagnosticsRead,
+    DiscoveryCampaignCreate,
+    DiscoveryCampaignRead,
+    DiscoveryExportSummaryRead,
+    DiscoveryInventoryDiffRead,
+    DiscoveryLineageSummaryRead,
+    DiscoveryOpsSummaryRead,
+    DiscoveryRevisitRequest,
+    DiscoveryRevisitResultRead,
+    DiscoveryRunRead,
+    DiscoveryRunRequest,
+    DiscoveryRunResultRead,
     EventExportBundleRead,
     EventFusionRequest,
     EntityResolutionRequest,
@@ -61,6 +79,8 @@ from src.schemas import (
     SourceInventorySummaryRead,
     SourceOpsExportSummaryRead,
     SourceOpsReportIndexRead,
+    SourceCandidateDetailRead,
+    SourceCandidateRead,
 )
 from src.services.camera_source_service import (
     build_camera_source_inventory_ops_detail,
@@ -86,6 +106,25 @@ from src.services.camera_service import build_camera_ops_report_index
 from src.services.camera_service import build_camera_inventory_ops_detail
 from src.services.camera_service import build_camera_inventory_summary
 from src.services.database_diagnostics_service import build_database_diagnostics
+from src.services.discovery_service import (
+    build_candidate_lineage,
+    build_discovery_campaign_detail,
+    build_discovery_export_summary,
+    build_discovery_ops_summary,
+    build_source_candidate_detail,
+    check_candidate_health,
+    create_discovery_campaign,
+    diff_discovery_inventories,
+    explain_candidate_score,
+    list_discovery_campaigns,
+    list_discovery_runs,
+    list_source_candidates,
+    promote_source_candidate,
+    revisit_discovery,
+    run_discovery_campaign,
+    scan_candidate_health,
+    suppress_source_candidate,
+)
 from src.services.entity_resolution_service import materialize_entities
 from src.services.export_artifact_service import write_json_export_artifact, write_text_export_artifact
 from src.services.event_export_service import build_event_export_bundle
@@ -211,6 +250,20 @@ def parse_json_object_option(value: str | None, option_name: str) -> dict[str, o
     if not isinstance(parsed, dict):
         raise typer.BadParameter(f"{option_name} must decode to a JSON object.")
     return parsed
+
+
+def parse_json_value_option(value: str | None, option_name: str) -> object | None:
+    if value is None:
+        return None
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise typer.BadParameter(f"{option_name} must be valid JSON.") from exc
+
+
+def echo_model_json(schema_cls: type, value: object) -> None:
+    payload = schema_cls.model_validate(value).model_dump(mode="json")
+    typer.echo(json.dumps(payload, indent=2, sort_keys=True))
 
 
 def resolve_scheduler_poll_seconds(value: float | None) -> float:
@@ -2081,6 +2134,19 @@ def show_operations_report(hours: float | None = 24.0, limit: int = 10) -> None:
         typer.echo(
             f"source_sync_tasks={source_report['sync_task_count']} source_sync_runs={source_report['sync_run_count']} source_sync_failures={source_report['sync_failure_count']}"
         )
+        discovery_summary = report.get("discovery_ops_summary")
+        if discovery_summary is not None:
+            discovery_health = discovery_summary["health_summary"]
+            discovery_inventory = discovery_summary["inventory_summary"]
+            typer.echo(
+                "discovery="
+                f"{discovery_health['status']} campaigns={discovery_health['campaign_count']} "
+                f"running={discovery_health['running_run_count']} "
+                f"candidates={discovery_inventory['total_count']} "
+                f"promoted={discovery_inventory['promoted_count']} "
+                f"failing={discovery_inventory['failing_count']} "
+                f"stale={discovery_inventory['stale_count']}"
+            )
         camera_summary = report["camera_inventory_summary"]
         typer.echo(
             f"cameras={camera_summary['total_count']} active={camera_summary['active_count']} inactive={camera_summary['inactive_count']} stale={camera_summary['stale_count']}"
@@ -2804,6 +2870,592 @@ def update_schedule(
         typer.echo(
             f"task {task.task_id} | enabled={task.enabled} | every={task.interval_seconds}s | next={task.next_run_at}"
         )
+    finally:
+        session.close()
+
+
+@app.command("create-discovery-campaign")
+def create_discovery_campaign_command(
+    name: str,
+    description: str = "",
+    mode: str = "query_seeded",
+    status: str = "draft",
+    layer: str | None = None,
+    enabled: bool = True,
+    discovery_mode: list[str] = typer.Option(default_factory=list),
+    query: list[str] = typer.Option(default_factory=list),
+    seed: list[str] = typer.Option(default_factory=list),
+    search_template: list[str] = typer.Option(default_factory=list),
+    format_target: list[str] = typer.Option(default_factory=list),
+    locale: list[str] = typer.Option(default_factory=list),
+    language: list[str] = typer.Option(default_factory=list),
+    allow_domain: list[str] = typer.Option(default_factory=list),
+    deny_domain: list[str] = typer.Option(default_factory=list),
+    policy_json: str | None = None,
+    geo_json: str | None = None,
+    entities_json: str | None = None,
+    historical_backfill: bool = False,
+    recency_days: int | None = None,
+    max_depth: int = 2,
+    max_pages: int = 100,
+    max_candidates: int = 1000,
+) -> None:
+    parsed_policy = parse_json_object_option(policy_json, "--policy-json") or {}
+    parsed_geo = parse_json_object_option(geo_json, "--geo-json") or {}
+    parsed_entities = parse_json_value_option(entities_json, "--entities-json")
+    if parsed_entities is None:
+        entity_seeds: list[dict[str, object]] = []
+    elif isinstance(parsed_entities, dict):
+        entity_seeds = [parsed_entities]
+    elif isinstance(parsed_entities, list) and all(
+        isinstance(item, dict) for item in parsed_entities
+    ):
+        entity_seeds = parsed_entities
+    else:
+        raise typer.BadParameter("--entities-json must be an object or an array of objects.")
+
+    request_json: dict[str, object] = {}
+    if query:
+        request_json["queries"] = query
+    if search_template:
+        request_json["search_templates"] = search_template
+
+    payload = DiscoveryCampaignCreate(
+        name=name,
+        description=description,
+        mode=mode,
+        status=status,
+        enabled=enabled,
+        layer_key=layer,
+        query_text="\n".join(query),
+        modes_json=discovery_mode or [mode],
+        query_strings_json=query,
+        search_templates_json=search_template,
+        format_targets_json=format_target,
+        seed_urls_json=seed,
+        locale_variants_json=locale,
+        language_variants_json=language,
+        domain_allowlist_json=allow_domain,
+        domain_denylist_json=deny_domain,
+        target_geography_json=parsed_geo,
+        entity_seeds_json=entity_seeds,
+        historical_backfill=historical_backfill,
+        recency_days=recency_days,
+        max_depth=max_depth,
+        max_pages=max_pages,
+        max_candidates=max_candidates,
+        request_json=request_json,
+        crawl_policy_json=parsed_policy,
+    )
+
+    init_db()
+    session = get_session_factory()()
+    try:
+        campaign = create_discovery_campaign(session, payload, actor="cli_discovery")
+        serializable = DiscoveryCampaignRead.model_validate(campaign).model_dump(mode="json")
+        print_banner()
+        typer.echo(
+            f"campaign={serializable['campaign_id']} status={serializable['status']} "
+            f"mode={serializable['mode']} enabled={serializable['enabled']} name={serializable['name']}"
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.command("run-discovery")
+def run_discovery_command(
+    campaign_id: int,
+    resume: bool = True,
+    resume_run_id: int | None = None,
+    max_pages: int | None = None,
+    max_candidates: int | None = None,
+    max_seconds: float | None = None,
+    dry_run: bool = False,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        result = run_discovery_campaign(
+            session,
+            campaign_id,
+            DiscoveryRunRequest(
+                campaign_id=campaign_id,
+                actor="cli_discovery",
+                resume=resume,
+                resume_run_id=resume_run_id,
+                max_pages=max_pages,
+                max_candidates=max_candidates,
+                max_seconds=max_seconds,
+                dry_run=dry_run,
+            ),
+            actor="cli_discovery",
+        )
+        print_banner()
+        echo_model_json(DiscoveryRunResultRead, result)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.command("list-discovery-campaigns")
+def list_discovery_campaigns_command(
+    status: str | None = None,
+    enabled: bool | None = typer.Option(default=None),
+    limit: int = 200,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        rows = list_discovery_campaigns(
+            session,
+            status=status,
+            enabled=enabled,
+            limit=limit,
+        )
+        adapter = TypeAdapter(list[DiscoveryCampaignRead])
+        serializable = adapter.dump_python(adapter.validate_python(rows), mode="json")
+        print_banner()
+        for row in serializable:
+            typer.echo(
+                f"{row['campaign_id']} | {row['status']} | {row['mode']} | "
+                f"enabled={row['enabled']} | {row['name']}"
+            )
+    finally:
+        session.close()
+
+
+@app.command("show-discovery-campaign")
+def show_discovery_campaign_command(campaign_id: int) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        detail = build_discovery_campaign_detail(session, campaign_id)
+        campaign_value = detail.get("campaign", detail) if isinstance(detail, dict) else detail
+        print_banner()
+        echo_model_json(DiscoveryCampaignRead, campaign_value)
+        if isinstance(detail, dict):
+            for key in ("run_count", "candidate_count", "frontier_count", "promotion_count"):
+                if key in detail:
+                    typer.echo(f"{key}={detail[key]}")
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.command("list-discovery-runs")
+def list_discovery_runs_command(
+    campaign_id: int | None = None,
+    status: str | None = None,
+    limit: int = 200,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        rows = list_discovery_runs(
+            session,
+            campaign_id=campaign_id,
+            status=status,
+            limit=limit,
+        )
+        adapter = TypeAdapter(list[DiscoveryRunRead])
+        serializable = adapter.dump_python(adapter.validate_python(rows), mode="json")
+        print_banner()
+        for row in serializable:
+            run_id = row.get("discovery_run_id", row.get("run_id"))
+            typer.echo(
+                f"{run_id} | campaign={row['campaign_id']} | {row['status']} | "
+                f"started={row.get('started_at')} | finished={row.get('finished_at')}"
+            )
+    finally:
+        session.close()
+
+
+@app.command("list-discovery-candidates")
+def list_discovery_candidates_command(
+    campaign_id: int | None = None,
+    run_id: int | None = None,
+    status: str | None = None,
+    outcome: str | None = None,
+    candidate_type: str | None = None,
+    domain: str | None = None,
+    min_score: float | None = None,
+    limit: int = 200,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        rows = list_source_candidates(
+            session,
+            campaign_id=campaign_id,
+            run_id=run_id,
+            status=status,
+            score_bucket=outcome,
+            candidate_type=candidate_type,
+            domain=domain,
+            min_score=min_score,
+            limit=limit,
+        )
+        adapter = TypeAdapter(list[SourceCandidateRead])
+        serializable = adapter.dump_python(adapter.validate_python(rows), mode="json")
+        print_banner()
+        for row in serializable:
+            typer.echo(
+                f"{row['candidate_id']} | score={row['score']} | {row['score_bucket']} | "
+                f"{row['status']} | {row['candidate_type']} | {row['canonical_url']}"
+            )
+    finally:
+        session.close()
+
+
+@app.command("show-discovery-candidate")
+def show_discovery_candidate_command(candidate_id: int) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        detail = build_source_candidate_detail(session, candidate_id)
+        print_banner()
+        echo_model_json(SourceCandidateDetailRead, detail)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.command("explain-discovery-candidate")
+def explain_discovery_candidate_command(candidate_id: int) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        explanation = explain_candidate_score(session, candidate_id)
+        print_banner()
+        echo_model_json(CandidateScoreExplanationRead, explanation)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.command("show-discovery-lineage")
+def show_discovery_lineage_command(candidate_id: int) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        lineage = build_candidate_lineage(session, candidate_id)
+        print_banner()
+        echo_model_json(DiscoveryLineageSummaryRead, lineage)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.command("promote-discovery-candidate")
+def promote_discovery_candidate_command(
+    candidate_id: int,
+    reason: str,
+    source_kind: str | None = None,
+    source_name: str | None = None,
+    layer: str | None = None,
+    enabled: bool = True,
+    integrity_source: bool = False,
+    create_schedule: bool = True,
+    schedule_interval_seconds: int | None = None,
+    metadata_json: str | None = None,
+) -> None:
+    parsed_metadata = parse_json_object_option(metadata_json, "--metadata-json") or {}
+    init_db()
+    session = get_session_factory()()
+    try:
+        payload = CandidatePromotionRequest(
+            candidate_id=candidate_id,
+            source_kind=source_kind,
+            recommended_source_kind=source_kind,
+            source_name=source_name,
+            layer_key=layer,
+            enabled=enabled,
+            integrity_source=integrity_source,
+            create_schedule=create_schedule,
+            schedule_interval_seconds=schedule_interval_seconds,
+            reason=reason,
+            actor="cli_discovery",
+            metadata_json=parsed_metadata,
+        )
+        decision = promote_source_candidate(
+            session,
+            candidate_id,
+            payload,
+            actor="cli_discovery",
+        )
+        print_banner()
+        echo_model_json(CandidatePromotionResultRead, decision)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.command("suppress-discovery-candidate")
+def suppress_discovery_candidate_command(
+    candidate_id: int,
+    reason: str,
+    reason_code: str = "operator_suppressed",
+    expires_at: datetime | None = None,
+    metadata_json: str | None = None,
+) -> None:
+    parsed_metadata = parse_json_object_option(metadata_json, "--metadata-json") or {}
+    init_db()
+    session = get_session_factory()()
+    try:
+        suppression = suppress_source_candidate(
+            session,
+            candidate_id,
+            CandidateSuppressionRequest(
+                candidate_id=candidate_id,
+                scope="candidate",
+                reason_code=reason_code,
+                reason=reason,
+                actor="cli_discovery",
+                expires_at=expires_at,
+                metadata_json=parsed_metadata,
+            ),
+            actor="cli_discovery",
+        )
+        print_banner()
+        echo_model_json(CandidateSuppressionRead, suppression)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.command("revisit-discovery")
+def revisit_discovery_command(
+    candidate_id: int | None = None,
+    domain: str | None = None,
+    campaign_id: int | None = None,
+    force: bool = False,
+    include_suppressed: bool = False,
+    priority: float = 0.0,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        result = revisit_discovery(
+            session,
+            DiscoveryRevisitRequest(
+                candidate_id=candidate_id,
+                normalized_domain=domain,
+                campaign_id=campaign_id,
+                force=force,
+                include_suppressed=include_suppressed,
+                priority=priority,
+                actor="cli_discovery",
+            ),
+            actor="cli_discovery",
+        )
+        print_banner()
+        echo_model_json(DiscoveryRevisitResultRead, result)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.command("check-discovery-candidate-health")
+def check_discovery_candidate_health_command(candidate_id: int) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        result = check_candidate_health(session, candidate_id, actor="cli_discovery")
+        print_banner()
+        echo_model_json(CandidateHealthCheckRead, result)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.command("scan-discovery-health")
+def scan_discovery_health_command(
+    candidate_id: int | None = None,
+    domain: str | None = None,
+    campaign_id: int | None = None,
+    limit: int = 100,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        result = scan_candidate_health(
+            session,
+            CandidateHealthScanRequest(
+                candidate_id=candidate_id,
+                normalized_domain=domain,
+                campaign_id=campaign_id,
+                limit=limit,
+                actor="cli_discovery",
+            ),
+            actor="cli_discovery",
+        )
+        print_banner()
+        echo_model_json(CandidateHealthScanResultRead, result)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.command("list-failing-discovery-candidates")
+def list_failing_discovery_candidates_command(
+    stale_after_hours: float = 24.0,
+    limit: int = 100,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        summary = build_discovery_ops_summary(
+            session,
+            stale_after_hours=stale_after_hours,
+            limit=limit,
+        )
+        serializable = DiscoveryOpsSummaryRead.model_validate(summary).model_dump(mode="json")
+        print_banner()
+        emitted = False
+        for key in ("failing_candidates", "stale_candidates", "quarantined_candidates"):
+            rows = serializable.get(key, [])
+            if not rows:
+                continue
+            emitted = True
+            typer.echo(f"{key}:")
+            for row in rows:
+                typer.echo(
+                    f"  {row.get('candidate_id')} | {row.get('status')} | "
+                    f"score={row.get('score')} | {row.get('canonical_url')}"
+                )
+        if not emitted:
+            typer.echo("no failing, stale, or quarantined candidates")
+    finally:
+        session.close()
+
+
+@app.command("show-discovery-ops")
+def show_discovery_ops_command(
+    stale_after_hours: float = 24.0,
+    limit: int = 25,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        summary = build_discovery_ops_summary(
+            session,
+            stale_after_hours=stale_after_hours,
+            limit=limit,
+        )
+        print_banner()
+        echo_model_json(DiscoveryOpsSummaryRead, summary)
+    finally:
+        session.close()
+
+
+@app.command("export-discovery-summary")
+def export_discovery_summary_command(
+    output_path: Path,
+    stale_after_hours: float = 24.0,
+    candidate_limit: int = 500,
+    report_limit: int = 25,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        report = build_discovery_export_summary(
+            session,
+            stale_after_hours=stale_after_hours,
+            candidate_limit=candidate_limit,
+            report_limit=report_limit,
+        )
+        serializable = DiscoveryExportSummaryRead.model_validate(report).model_dump(mode="json")
+        write_json_export_artifact(
+            session,
+            payload=serializable,
+            object_kind="discovery_summary_export",
+            owner_type="discovery_export",
+            owner_id="scoped",
+            output_path=output_path,
+            source_uri="/api/discovery/export/summary",
+            observed_at=report["generated_at"],
+            metadata_json=serializable.get("filters_json", {}),
+            actor="cli_export",
+        )
+        print_banner()
+        typer.echo(f"exported discovery summary to {output_path}")
+    finally:
+        session.close()
+
+
+@app.command("diff-discovery-inventories")
+def diff_discovery_inventories_command(
+    from_run_id: int,
+    to_run_id: int,
+    campaign_id: int | None = None,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        result = diff_discovery_inventories(
+            session,
+            from_run_id=from_run_id,
+            to_run_id=to_run_id,
+            campaign_id=campaign_id,
+        )
+        print_banner()
+        echo_model_json(DiscoveryInventoryDiffRead, result)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.command("add-discovery-schedule")
+def add_discovery_schedule_command(
+    name: str,
+    campaign_id: int,
+    interval_seconds: int,
+    resume: bool = True,
+    max_pages: int | None = None,
+    notes: str = "",
+    retry_attempts: int = 1,
+    retry_backoff_seconds: float = 0.0,
+) -> None:
+    payload_json: dict[str, object] = {
+        "campaign_id": campaign_id,
+        "resume": resume,
+    }
+    if max_pages is not None:
+        payload_json["max_pages"] = max_pages
+    init_db()
+    session = get_session_factory()()
+    try:
+        task = create_scheduled_task(
+            session,
+            ScheduledTaskCreate(
+                name=name,
+                task_type="discovery_campaign",
+                interval_seconds=interval_seconds,
+                retry_attempts=retry_attempts,
+                retry_backoff_seconds=retry_backoff_seconds,
+                notes=notes,
+                payload_json=payload_json,
+            ),
+        )
+        print_banner()
+        typer.echo(
+            f"scheduled task {task.task_id} created for discovery campaign {campaign_id}"
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
     finally:
         session.close()
 

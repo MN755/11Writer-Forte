@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import hashlib
 import json
 import sqlite3
@@ -133,7 +134,9 @@ def infer_source_format(path: Path) -> str:
     suffix = path.suffix.lower()
     if suffix in {".json", ".jsonl"}:
         return "json"
-    if suffix in {".txt", ".log", ".csv"}:
+    if suffix == ".csv":
+        return "csv"
+    if suffix in {".txt", ".log"}:
         return "txt"
     if suffix in {".sqlite", ".sqlite3", ".db"}:
         return "sqlite"
@@ -143,6 +146,8 @@ def infer_source_format(path: Path) -> str:
 def iter_parsed_observations(path: Path, source_format: str) -> list[ParsedObservation]:
     if source_format == "json":
         return parse_json_observations(path)
+    if source_format == "csv":
+        return parse_csv_observations(path)
     if source_format == "sqlite":
         return parse_sqlite_observations(path)
     return parse_text_observations(path)
@@ -179,9 +184,19 @@ def parse_text_observations(path: Path) -> list[ParsedObservation]:
                 content_text=text,
                 content_json={"text": text},
                 location_geojson=None,
+                raw_hash=hashlib.sha256(text.encode("utf-8")).hexdigest(),
             )
         )
     return rows
+
+
+def parse_csv_observations(path: Path) -> list[ParsedObservation]:
+    with path.open("r", encoding="utf-8-sig", newline="") as handle:
+        reader = csv.DictReader(handle)
+        return [
+            normalize_payload({str(key): value for key, value in row.items()}, "csv")
+            for row in reader
+        ]
 
 
 def parse_sqlite_observations(path: Path) -> list[ParsedObservation]:
@@ -233,10 +248,18 @@ def extract_domain(payload: dict[str, Any]) -> str | None:
 def extract_location(payload: dict[str, Any]) -> dict[str, Any] | None:
     latitude = payload.get("latitude", payload.get("lat"))
     longitude = payload.get("longitude", payload.get("lon"))
-    if isinstance(latitude, (int, float)) and isinstance(longitude, (int, float)):
+    try:
+        parsed_latitude = float(latitude) if latitude is not None else None
+        parsed_longitude = float(longitude) if longitude is not None else None
+    except (TypeError, ValueError):
+        parsed_latitude = None
+        parsed_longitude = None
+    if parsed_latitude is not None and parsed_longitude is not None:
+        if not (-90.0 <= parsed_latitude <= 90.0 and -180.0 <= parsed_longitude <= 180.0):
+            return None
         return {
             "type": "Point",
-            "coordinates": [float(longitude), float(latitude)],
+            "coordinates": [parsed_longitude, parsed_latitude],
         }
     geometry = payload.get("geometry")
     if isinstance(geometry, dict) and geometry.get("type") and geometry.get("coordinates"):

@@ -562,6 +562,23 @@ def apply_camera_source_candidate(
     candidate: CameraSourceCandidate,
 ) -> dict[str, dict[str, object]]:
     changes: dict[str, dict[str, object]] = {}
+    status = (
+        record.status
+        if record.status in {"graduated", "ignored", "retired"}
+        else candidate.status
+    )
+    preserve_verified_state = (
+        candidate.verification_state == "observed"
+        and record.verification_state in {"reachable", "failed"}
+    )
+    verification_state = (
+        record.verification_state if preserve_verified_state else candidate.verification_state
+    )
+    last_checked_at = (
+        record.last_checked_at
+        if preserve_verified_state and record.last_checked_at is not None
+        else candidate.last_checked_at
+    )
     field_mapping = {
         "camera_inventory_id": candidate.camera_inventory_id,
         "observation_id": candidate.observation_id,
@@ -572,11 +589,11 @@ def apply_camera_source_candidate(
         "provider": candidate.provider,
         "endpoint_kind": candidate.endpoint_kind,
         "endpoint_url": candidate.endpoint_url,
-        "status": candidate.status,
-        "verification_state": candidate.verification_state,
+        "status": status,
+        "verification_state": verification_state,
         "active": candidate.active,
         "last_observed_at": candidate.last_observed_at,
-        "last_checked_at": candidate.last_checked_at,
+        "last_checked_at": last_checked_at,
         "confidence_score": candidate.confidence_score,
         "graduation_score": candidate.graduation_score,
         "metadata_json": merge_metadata(record.metadata_json, candidate.metadata_json),

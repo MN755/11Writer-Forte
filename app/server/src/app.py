@@ -12,6 +12,7 @@ from src.routes.camera_sources import router as camera_sources_router
 from src.routes.cameras import router as cameras_router
 from src.routes.clickhouse import router as clickhouse_router
 from src.routes.custody import router as custody_router
+from src.routes.discovery import router as discovery_router
 from src.routes.entities import router as entities_router
 from src.routes.events import layer_router
 from src.routes.events import router as events_router
@@ -50,6 +51,7 @@ def create_application() -> FastAPI:
     application.include_router(cameras_router, prefix=settings.api_prefix)
     application.include_router(clickhouse_router, prefix=settings.api_prefix)
     application.include_router(custody_router, prefix=settings.api_prefix)
+    application.include_router(discovery_router, prefix=settings.api_prefix)
     application.include_router(imports_router, prefix=settings.api_prefix)
     application.include_router(observations_router, prefix=settings.api_prefix)
     application.include_router(operations_router, prefix=settings.api_prefix)

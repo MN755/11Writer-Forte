@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import JSON, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -343,3 +343,455 @@ class SourceRunORM(Base):
     output_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
     source: Mapped[SourceDefinitionORM] = relationship(back_populates="runs")
+
+
+class DiscoveryCampaignORM(TimestampMixin, Base):
+    __tablename__ = "discovery_campaigns"
+
+    campaign_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(160), unique=True, index=True)
+    description: Mapped[str] = mapped_column(Text, default="")
+    mode: Mapped[str] = mapped_column(String(40), default="query_seeded", index=True)
+    status: Mapped[str] = mapped_column(String(30), default="draft", index=True)
+    enabled: Mapped[bool] = mapped_column(default=True, index=True)
+    layer_key: Mapped[str | None] = mapped_column(String(80), default=None, index=True)
+    query_text: Mapped[str] = mapped_column(Text, default="")
+    modes_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+    query_strings_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+    search_templates_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+    format_targets_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+    seed_urls_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+    locale_variants_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+    language_variants_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+    domain_allowlist_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+    domain_denylist_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+    target_geography_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    entity_seeds_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    historical_backfill: Mapped[bool] = mapped_column(default=False, index=True)
+    recency_days: Mapped[int | None] = mapped_column(Integer, default=None)
+    max_depth: Mapped[int] = mapped_column(Integer, default=2)
+    max_pages: Mapped[int] = mapped_column(Integer, default=100)
+    max_candidates: Mapped[int] = mapped_column(Integer, default=1000)
+    request_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    crawl_policy_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    scoring_weights_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    schedule_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    last_run_at: Mapped[datetime | None] = mapped_column(default=None, index=True)
+    last_completed_at: Mapped[datetime | None] = mapped_column(default=None)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+
+class DiscoveryRunORM(TimestampMixin, Base):
+    __tablename__ = "discovery_runs"
+
+    discovery_run_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    campaign_id: Mapped[int] = mapped_column(
+        ForeignKey("discovery_campaigns.campaign_id"),
+        index=True,
+    )
+    mode: Mapped[str] = mapped_column(String(40), default="query_seeded", index=True)
+    status: Mapped[str] = mapped_column(String(30), default="queued", index=True)
+    trigger_kind: Mapped[str] = mapped_column(String(30), default="manual", index=True)
+    actor: Mapped[str] = mapped_column(String(80), default="discovery_engine")
+    resumed_from_run_id: Mapped[int | None] = mapped_column(Integer, default=None, index=True)
+    started_at: Mapped[datetime] = mapped_column(default=utcnow, index=True)
+    finished_at: Mapped[datetime | None] = mapped_column(default=None)
+    pages_queued: Mapped[int] = mapped_column(Integer, default=0)
+    pages_fetched: Mapped[int] = mapped_column(Integer, default=0)
+    candidates_discovered: Mapped[int] = mapped_column(Integer, default=0)
+    candidates_updated: Mapped[int] = mapped_column(Integer, default=0)
+    error_count: Mapped[int] = mapped_column(Integer, default=0)
+    request_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    policy_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    frontier_checkpoint_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    stats_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    output_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    error_text: Mapped[str | None] = mapped_column(Text, default=None)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+
+class SourceCandidateORM(TimestampMixin, Base):
+    __tablename__ = "source_candidates"
+    __table_args__ = (
+        Index("ix_source_candidates_status_score", "status", "score"),
+        Index("ix_source_candidates_domain_status", "normalized_domain", "status"),
+    )
+
+    candidate_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    canonical_url_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    canonical_url: Mapped[str] = mapped_column(Text)
+    discovered_url: Mapped[str] = mapped_column(Text)
+    normalized_domain: Mapped[str] = mapped_column(String(255), index=True)
+    path_pattern: Mapped[str | None] = mapped_column(String(500), default=None, index=True)
+    first_campaign_id: Mapped[int | None] = mapped_column(
+        ForeignKey("discovery_campaigns.campaign_id"),
+        default=None,
+        index=True,
+    )
+    last_campaign_id: Mapped[int | None] = mapped_column(
+        ForeignKey("discovery_campaigns.campaign_id"),
+        default=None,
+        index=True,
+    )
+    first_run_id: Mapped[int | None] = mapped_column(
+        ForeignKey("discovery_runs.discovery_run_id"),
+        default=None,
+        index=True,
+    )
+    last_run_id: Mapped[int | None] = mapped_column(
+        ForeignKey("discovery_runs.discovery_run_id"),
+        default=None,
+        index=True,
+    )
+    parent_url: Mapped[str | None] = mapped_column(Text, default=None)
+    discovery_method: Mapped[str] = mapped_column(String(50), default="unknown", index=True)
+    candidate_type: Mapped[str] = mapped_column(String(60), default="unknown", index=True)
+    format_hint: Mapped[str] = mapped_column(String(60), default="unknown", index=True)
+    footprint_kind: Mapped[str] = mapped_column(String(40), default="unknown", index=True)
+    footprint_geojson: Mapped[dict[str, Any] | None] = mapped_column(JSON, default=None)
+    geo_hints_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    temporal_hints_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    format_hints_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    trust_hints_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    operational_hints_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    promotion_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    status: Mapped[str] = mapped_column(String(40), default="candidate", index=True)
+    score: Mapped[float] = mapped_column(Float, default=0.0, index=True)
+    score_bucket: Mapped[str] = mapped_column(String(40), default="keep_candidate", index=True)
+    score_breakdown_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    content_hash: Mapped[str | None] = mapped_column(String(64), default=None, index=True)
+    schema_hash: Mapped[str | None] = mapped_column(String(64), default=None, index=True)
+    first_seen_at: Mapped[datetime] = mapped_column(default=utcnow, index=True)
+    last_seen_at: Mapped[datetime] = mapped_column(default=utcnow, index=True)
+    last_changed_at: Mapped[datetime | None] = mapped_column(default=None)
+    last_checked_at: Mapped[datetime | None] = mapped_column(default=None, index=True)
+    last_revisited_at: Mapped[datetime | None] = mapped_column(default=None)
+    next_revisit_at: Mapped[datetime | None] = mapped_column(default=None, index=True)
+    revisit_count: Mapped[int] = mapped_column(Integer, default=0)
+    failure_count: Mapped[int] = mapped_column(Integer, default=0)
+    last_failure_at: Mapped[datetime | None] = mapped_column(default=None)
+    last_error_text: Mapped[str | None] = mapped_column(Text, default=None)
+    promoted_source_id: Mapped[int | None] = mapped_column(
+        ForeignKey("source_definitions.source_id"),
+        default=None,
+        index=True,
+    )
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+
+class DiscoveryFrontierEntryORM(TimestampMixin, Base):
+    __tablename__ = "discovery_frontier_entries"
+    __table_args__ = (
+        UniqueConstraint(
+            "discovery_run_id",
+            "canonical_url_hash",
+            name="uq_discovery_frontier_run_url_hash",
+        ),
+        Index("ix_discovery_frontier_run_state_priority", "discovery_run_id", "state", "priority"),
+        Index("ix_discovery_frontier_state_next_attempt", "state", "next_attempt_at"),
+    )
+
+    frontier_entry_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    discovery_run_id: Mapped[int] = mapped_column(
+        ForeignKey("discovery_runs.discovery_run_id"),
+        index=True,
+    )
+    campaign_id: Mapped[int] = mapped_column(
+        ForeignKey("discovery_campaigns.campaign_id"),
+        index=True,
+    )
+    candidate_id: Mapped[int | None] = mapped_column(
+        ForeignKey("source_candidates.candidate_id"),
+        default=None,
+        index=True,
+    )
+    canonical_url_hash: Mapped[str] = mapped_column(String(64), index=True)
+    canonical_url: Mapped[str] = mapped_column(Text)
+    discovered_url: Mapped[str] = mapped_column(Text)
+    priority: Mapped[float] = mapped_column(Float, default=0.0, index=True)
+    state: Mapped[str] = mapped_column(String(30), default="queued", index=True)
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, default=3)
+    depth: Mapped[int] = mapped_column(Integer, default=0)
+    parent_url: Mapped[str | None] = mapped_column(Text, default=None)
+    parent_candidate_id: Mapped[int | None] = mapped_column(
+        ForeignKey("source_candidates.candidate_id"),
+        default=None,
+        index=True,
+    )
+    discovery_method: Mapped[str] = mapped_column(String(50), default="unknown", index=True)
+    next_attempt_at: Mapped[datetime | None] = mapped_column(default=None, index=True)
+    last_attempt_at: Mapped[datetime | None] = mapped_column(default=None)
+    claimed_at: Mapped[datetime | None] = mapped_column(default=None)
+    fetched_at: Mapped[datetime | None] = mapped_column(default=None)
+    completed_at: Mapped[datetime | None] = mapped_column(default=None)
+    dead_lettered_at: Mapped[datetime | None] = mapped_column(default=None)
+    checkpoint_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    last_error_text: Mapped[str | None] = mapped_column(Text, default=None)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+
+class SourceCandidateRevisionORM(Base):
+    __tablename__ = "source_candidate_revisions"
+    __table_args__ = (
+        UniqueConstraint(
+            "candidate_id",
+            "revision_number",
+            name="uq_source_candidate_revision_number",
+        ),
+        Index("ix_source_candidate_revision_observed", "candidate_id", "observed_at"),
+    )
+
+    candidate_revision_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    candidate_id: Mapped[int] = mapped_column(ForeignKey("source_candidates.candidate_id"), index=True)
+    campaign_id: Mapped[int | None] = mapped_column(
+        ForeignKey("discovery_campaigns.campaign_id"),
+        default=None,
+        index=True,
+    )
+    discovery_run_id: Mapped[int | None] = mapped_column(
+        ForeignKey("discovery_runs.discovery_run_id"),
+        default=None,
+        index=True,
+    )
+    revision_number: Mapped[int] = mapped_column(Integer)
+    revision_kind: Mapped[str] = mapped_column(String(40), default="observed", index=True)
+    observed_at: Mapped[datetime] = mapped_column(default=utcnow, index=True)
+    status: Mapped[str] = mapped_column(String(40), default="candidate")
+    score: Mapped[float] = mapped_column(Float, default=0.0)
+    score_bucket: Mapped[str] = mapped_column(String(40), default="keep_candidate")
+    score_breakdown_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    content_hash: Mapped[str | None] = mapped_column(String(64), default=None)
+    schema_hash: Mapped[str | None] = mapped_column(String(64), default=None)
+    changed: Mapped[bool] = mapped_column(default=False)
+    reason: Mapped[str] = mapped_column(Text, default="")
+    snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class DiscoveryGraphEdgeORM(Base):
+    __tablename__ = "discovery_graph_edges"
+    __table_args__ = (
+        Index("ix_discovery_graph_child_run", "child_candidate_id", "discovery_run_id"),
+        Index("ix_discovery_graph_parent_run", "parent_candidate_id", "discovery_run_id"),
+    )
+
+    graph_edge_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    edge_key: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    campaign_id: Mapped[int] = mapped_column(
+        ForeignKey("discovery_campaigns.campaign_id"),
+        index=True,
+    )
+    discovery_run_id: Mapped[int] = mapped_column(
+        ForeignKey("discovery_runs.discovery_run_id"),
+        index=True,
+    )
+    parent_candidate_id: Mapped[int | None] = mapped_column(
+        ForeignKey("source_candidates.candidate_id"),
+        default=None,
+        index=True,
+    )
+    child_candidate_id: Mapped[int] = mapped_column(
+        ForeignKey("source_candidates.candidate_id"),
+        index=True,
+    )
+    parent_url: Mapped[str | None] = mapped_column(Text, default=None)
+    child_url: Mapped[str] = mapped_column(Text)
+    edge_type: Mapped[str] = mapped_column(String(40), default="discovered_from", index=True)
+    discovery_method: Mapped[str] = mapped_column(String(50), default="unknown", index=True)
+    depth: Mapped[int] = mapped_column(Integer, default=0)
+    evidence_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow, index=True)
+
+
+class CandidateHealthCheckORM(Base):
+    __tablename__ = "candidate_health_checks"
+    __table_args__ = (
+        Index("ix_candidate_health_candidate_checked", "candidate_id", "checked_at"),
+        Index("ix_candidate_health_status_checked", "status", "checked_at"),
+    )
+
+    health_check_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    candidate_id: Mapped[int] = mapped_column(ForeignKey("source_candidates.candidate_id"), index=True)
+    discovery_run_id: Mapped[int | None] = mapped_column(
+        ForeignKey("discovery_runs.discovery_run_id"),
+        default=None,
+        index=True,
+    )
+    checked_at: Mapped[datetime] = mapped_column(default=utcnow, index=True)
+    status: Mapped[str] = mapped_column(String(30), default="unknown", index=True)
+    reachable: Mapped[bool] = mapped_column(default=False, index=True)
+    http_status: Mapped[int | None] = mapped_column(Integer, default=None)
+    latency_ms: Mapped[float | None] = mapped_column(Float, default=None)
+    content_type: Mapped[str | None] = mapped_column(String(160), default=None)
+    content_length: Mapped[int | None] = mapped_column(Integer, default=None)
+    content_hash: Mapped[str | None] = mapped_column(String(64), default=None)
+    schema_hash: Mapped[str | None] = mapped_column(String(64), default=None)
+    changed: Mapped[bool] = mapped_column(default=False)
+    redirect_url: Mapped[str | None] = mapped_column(Text, default=None)
+    robots_allowed: Mapped[bool | None] = mapped_column(default=None)
+    error_type: Mapped[str | None] = mapped_column(String(80), default=None)
+    error_text: Mapped[str | None] = mapped_column(Text, default=None)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class CandidateSuppressionORM(Base):
+    __tablename__ = "candidate_suppressions"
+    __table_args__ = (
+        Index("ix_candidate_suppression_candidate_status", "candidate_id", "status"),
+        Index("ix_candidate_suppression_domain_status", "normalized_domain", "status"),
+    )
+
+    suppression_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    candidate_id: Mapped[int | None] = mapped_column(
+        ForeignKey("source_candidates.candidate_id"),
+        default=None,
+        index=True,
+    )
+    normalized_domain: Mapped[str | None] = mapped_column(String(255), default=None, index=True)
+    scope: Mapped[str] = mapped_column(String(30), default="candidate", index=True)
+    status: Mapped[str] = mapped_column(String(30), default="active", index=True)
+    reason_code: Mapped[str] = mapped_column(String(60), default="operator_suppressed", index=True)
+    reason: Mapped[str] = mapped_column(Text, default="")
+    actor: Mapped[str] = mapped_column(String(80), default="system")
+    created_at: Mapped[datetime] = mapped_column(default=utcnow, index=True)
+    expires_at: Mapped[datetime | None] = mapped_column(default=None, index=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(default=None)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+
+class CandidatePromotionDecisionORM(Base):
+    __tablename__ = "candidate_promotion_decisions"
+    __table_args__ = (
+        Index("ix_candidate_promotion_candidate_decided", "candidate_id", "decided_at"),
+        Index("ix_candidate_promotion_decision_decided", "decision", "decided_at"),
+    )
+
+    promotion_decision_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    candidate_id: Mapped[int] = mapped_column(ForeignKey("source_candidates.candidate_id"), index=True)
+    source_id: Mapped[int | None] = mapped_column(
+        ForeignKey("source_definitions.source_id"),
+        default=None,
+        index=True,
+    )
+    discovery_run_id: Mapped[int | None] = mapped_column(
+        ForeignKey("discovery_runs.discovery_run_id"),
+        default=None,
+        index=True,
+    )
+    decision: Mapped[str] = mapped_column(String(40), default="deferred", index=True)
+    recommended_source_kind: Mapped[str | None] = mapped_column(String(40), default=None, index=True)
+    recommended_schedule_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    score: Mapped[float] = mapped_column(Float, default=0.0)
+    score_bucket: Mapped[str] = mapped_column(String(40), default="keep_candidate")
+    score_breakdown_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    reason: Mapped[str] = mapped_column(Text, default="")
+    trust_reasoning_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    integrity_reasoning_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    health_risks_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    geo_relevance_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    evidence_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    actor: Mapped[str] = mapped_column(String(80), default="system")
+    decided_at: Mapped[datetime] = mapped_column(default=utcnow, index=True)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+
+class DiscoveryDomainPolicyORM(TimestampMixin, Base):
+    __tablename__ = "discovery_domain_policies"
+
+    domain_policy_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    normalized_domain: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    policy: Mapped[str] = mapped_column(String(30), default="allow", index=True)
+    robots_mode: Mapped[str] = mapped_column(String(30), default="respect", index=True)
+    enabled: Mapped[bool] = mapped_column(default=True, index=True)
+    allow_subdomains: Mapped[bool] = mapped_column(default=True)
+    crawl_delay_seconds: Mapped[float] = mapped_column(Float, default=1.0)
+    max_concurrency: Mapped[int] = mapped_column(Integer, default=1)
+    max_depth: Mapped[int] = mapped_column(Integer, default=2)
+    max_pages_per_run: Mapped[int] = mapped_column(Integer, default=100)
+    max_response_bytes: Mapped[int] = mapped_column(Integer, default=5_000_000)
+    request_timeout_seconds: Mapped[float] = mapped_column(Float, default=20.0)
+    retry_attempts: Mapped[int] = mapped_column(Integer, default=2)
+    retry_backoff_seconds: Mapped[float] = mapped_column(Float, default=1.0)
+    allowed_path_patterns_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+    denied_path_patterns_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+    allowed_content_types_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+    notes: Mapped[str] = mapped_column(Text, default="")
+    last_fetch_at: Mapped[datetime | None] = mapped_column(default=None)
+    next_allowed_at: Mapped[datetime | None] = mapped_column(default=None, index=True)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+
+class RobotsObservationORM(Base):
+    __tablename__ = "robots_observations"
+    __table_args__ = (
+        Index("ix_robots_observation_domain_fetched", "normalized_domain", "fetched_at"),
+    )
+
+    robots_observation_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    domain_policy_id: Mapped[int | None] = mapped_column(
+        ForeignKey("discovery_domain_policies.domain_policy_id"),
+        default=None,
+        index=True,
+    )
+    discovery_run_id: Mapped[int | None] = mapped_column(
+        ForeignKey("discovery_runs.discovery_run_id"),
+        default=None,
+        index=True,
+    )
+    normalized_domain: Mapped[str] = mapped_column(String(255), index=True)
+    robots_url: Mapped[str] = mapped_column(Text)
+    fetched_at: Mapped[datetime] = mapped_column(default=utcnow, index=True)
+    expires_at: Mapped[datetime | None] = mapped_column(default=None, index=True)
+    status: Mapped[str] = mapped_column(String(30), default="unknown", index=True)
+    http_status: Mapped[int | None] = mapped_column(Integer, default=None)
+    allowed: Mapped[bool | None] = mapped_column(default=None)
+    crawl_delay_seconds: Mapped[float | None] = mapped_column(Float, default=None)
+    sitemap_urls_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+    rules_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    content_hash: Mapped[str | None] = mapped_column(String(64), default=None)
+    error_text: Mapped[str | None] = mapped_column(Text, default=None)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class DiscoveryArtifactORM(Base):
+    __tablename__ = "discovery_artifacts"
+    __table_args__ = (
+        Index("ix_discovery_artifact_candidate_fetched", "candidate_id", "fetched_at"),
+        Index("ix_discovery_artifact_run_kind", "discovery_run_id", "artifact_kind"),
+    )
+
+    discovery_artifact_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    candidate_id: Mapped[int | None] = mapped_column(
+        ForeignKey("source_candidates.candidate_id"),
+        default=None,
+        index=True,
+    )
+    discovery_run_id: Mapped[int | None] = mapped_column(
+        ForeignKey("discovery_runs.discovery_run_id"),
+        default=None,
+        index=True,
+    )
+    frontier_entry_id: Mapped[int | None] = mapped_column(
+        ForeignKey("discovery_frontier_entries.frontier_entry_id"),
+        default=None,
+        index=True,
+    )
+    storage_object_id: Mapped[int | None] = mapped_column(
+        ForeignKey("storage_objects.storage_object_id"),
+        default=None,
+        index=True,
+    )
+    artifact_kind: Mapped[str] = mapped_column(String(50), default="fetched_document", index=True)
+    source_url: Mapped[str] = mapped_column(Text)
+    media_type: Mapped[str | None] = mapped_column(String(160), default=None)
+    content_hash: Mapped[str | None] = mapped_column(String(64), default=None, index=True)
+    byte_size: Mapped[int | None] = mapped_column(Integer, default=None)
+    fetched_at: Mapped[datetime] = mapped_column(default=utcnow, index=True)
+    object_uri: Mapped[str | None] = mapped_column(Text, default=None)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)

@@ -21,6 +21,7 @@ from src.services.camera_source_service import (
     build_camera_source_ops_report_index,
 )
 from src.services.camera_service import build_camera_inventory_summary, build_camera_ops_report_index
+from src.services.discovery_service import build_discovery_ops_summary
 from src.services.scheduler_service import build_scheduler_inventory_summary, build_scheduler_ops_report_index
 from src.services.source_service import build_source_inventory_summary, build_source_ops_report_index
 from src.services.storage_service import build_storage_report
@@ -97,6 +98,7 @@ def build_operations_report(
     scheduler_report_index = build_scheduler_ops_report_index(session, limit=limit)
     source_inventory_summary = build_source_inventory_summary(session)
     source_report_index = build_source_ops_report_index(session, limit=limit)
+    discovery_ops_summary = build_discovery_ops_summary(session, limit=limit)
 
     return {
         "generated_at": report_now(),
@@ -184,6 +186,7 @@ def build_operations_report(
         "scheduler_report_index": scheduler_report_index,
         "source_inventory_summary": source_inventory_summary,
         "source_report_index": source_report_index,
+        "discovery_ops_summary": discovery_ops_summary,
         "camera_inventory_summary": camera_inventory_summary,
         "camera_report_index": camera_report_index,
         "camera_source_inventory_summary": camera_source_inventory_summary,
