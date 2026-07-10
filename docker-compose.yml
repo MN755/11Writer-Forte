@@ -17,8 +17,7 @@ services:
       ELEVENWRITER_DATABASE_URL: postgresql+psycopg://elevenwriter:elevenwriter@db:5432/elevenwriter
       ELEVENWRITER_APP_ENV: docker
       ELEVENWRITER_SCHEDULER_POLL_SECONDS: 5
-<<<<<<< HEAD
-=======
+      ELEVENWRITER_DISCOVERY_ALLOW_PRIVATE_NETWORKS: ${ELEVENWRITER_DISCOVERY_ALLOW_PRIVATE_NETWORKS:-false}
       ELEVENWRITER_CLICKHOUSE_ENABLED: ${ELEVENWRITER_CLICKHOUSE_ENABLED:-false}
       ELEVENWRITER_CLICKHOUSE_URL: ${ELEVENWRITER_CLICKHOUSE_URL:-http://clickhouse:8123}
       ELEVENWRITER_CLICKHOUSE_DATABASE: ${ELEVENWRITER_CLICKHOUSE_DATABASE:-elevenwriter}
@@ -35,11 +34,12 @@ services:
       ELEVENWRITER_CLICKHOUSE_R2_STORAGE_PREFIX: ${ELEVENWRITER_CLICKHOUSE_R2_STORAGE_PREFIX:-11writer-clickhouse}
       ELEVENWRITER_CLICKHOUSE_R2_STORAGE_POLICY: ${ELEVENWRITER_CLICKHOUSE_R2_STORAGE_POLICY:-r2_main}
       ELEVENWRITER_CLICKHOUSE_R2_CACHE_SIZE: ${ELEVENWRITER_CLICKHOUSE_R2_CACHE_SIZE:-10Gi}
->>>>>>> 05aeee6 (chore: initialize repository)
     depends_on:
       - db
     ports:
-      - "8000:8000"
+      # The backend has no built-in multi-user authentication boundary. Keep the
+      # published API local by default; only override this behind a trusted boundary.
+      - "${ELEVENWRITER_API_BIND:-127.0.0.1}:8000:8000"
     command: uvicorn src.main:app --host 0.0.0.0 --port 8000
 
   worker:
@@ -49,8 +49,7 @@ services:
       ELEVENWRITER_DATABASE_URL: postgresql+psycopg://elevenwriter:elevenwriter@db:5432/elevenwriter
       ELEVENWRITER_APP_ENV: docker
       ELEVENWRITER_SCHEDULER_POLL_SECONDS: 5
-<<<<<<< HEAD
-=======
+      ELEVENWRITER_DISCOVERY_ALLOW_PRIVATE_NETWORKS: ${ELEVENWRITER_DISCOVERY_ALLOW_PRIVATE_NETWORKS:-false}
       ELEVENWRITER_CLICKHOUSE_ENABLED: ${ELEVENWRITER_CLICKHOUSE_ENABLED:-false}
       ELEVENWRITER_CLICKHOUSE_URL: ${ELEVENWRITER_CLICKHOUSE_URL:-http://clickhouse:8123}
       ELEVENWRITER_CLICKHOUSE_DATABASE: ${ELEVENWRITER_CLICKHOUSE_DATABASE:-elevenwriter}
@@ -67,15 +66,10 @@ services:
       ELEVENWRITER_CLICKHOUSE_R2_STORAGE_PREFIX: ${ELEVENWRITER_CLICKHOUSE_R2_STORAGE_PREFIX:-11writer-clickhouse}
       ELEVENWRITER_CLICKHOUSE_R2_STORAGE_POLICY: ${ELEVENWRITER_CLICKHOUSE_R2_STORAGE_POLICY:-r2_main}
       ELEVENWRITER_CLICKHOUSE_R2_CACHE_SIZE: ${ELEVENWRITER_CLICKHOUSE_R2_CACHE_SIZE:-10Gi}
->>>>>>> 05aeee6 (chore: initialize repository)
     depends_on:
       - db
     command: elevenwriter scheduler-worker
 
-<<<<<<< HEAD
-volumes:
-  postgres-data:
-=======
   clickhouse:
     image: clickhouse/clickhouse-server:26.6
     profiles: ["clickhouse"]
@@ -102,4 +96,3 @@ volumes:
 volumes:
   postgres-data:
   clickhouse-data:
->>>>>>> 05aeee6 (chore: initialize repository)

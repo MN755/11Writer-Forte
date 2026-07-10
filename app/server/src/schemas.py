@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 TrustLevel = Literal["trusted", "neutral", "blocked"]
@@ -11,15 +11,69 @@ ApprovalPolicy = Literal["auto_approve_stable", "manual_review", "always_review"
 StorageTier = Literal["hot", "warm", "archive"]
 RetentionClass = Literal["ephemeral", "operational", "investigative", "permanent"]
 StorageLifecycleStatus = Literal["active", "promoted", "degraded", "archived", "expired"]
-<<<<<<< HEAD
-=======
 CameraSourceStatus = Literal["candidate", "review", "ready", "graduated", "ignored", "retired"]
 CameraSourceVerificationState = Literal["unknown", "observed", "reachable", "failed"]
->>>>>>> 05aeee6 (chore: initialize repository)
 
 
 class ForteModel(BaseModel):
     model_config = ConfigDict(from_attributes=True)
+
+
+DISCOVERY_SNAPSHOT_ROW_SCHEMAS = {
+    "discovery_domain_policies": "DiscoveryDomainPolicyRead",
+    "discovery_campaigns": "DiscoveryCampaignRead",
+    "discovery_runs": "DiscoveryRunRead",
+    "source_candidates": "SourceCandidateRead",
+    "discovery_frontier_entries": "DiscoveryFrontierEntryRead",
+    "source_candidate_revisions": "SourceCandidateRevisionRead",
+    "discovery_graph_edges": "DiscoveryGraphEdgeRead",
+    "candidate_health_checks": "CandidateHealthCheckRead",
+    "candidate_suppressions": "CandidateSuppressionRead",
+    "candidate_promotion_decisions": "CandidatePromotionDecisionRead",
+    "robots_observations": "RobotsObservationRead",
+    "discovery_artifacts": "DiscoveryArtifactRead",
+}
+
+
+def validate_discovery_crawl_policy(value: dict[str, Any]) -> dict[str, Any]:
+    numeric_bounds: dict[str, tuple[float, float, bool]] = {
+        "crawl_delay_seconds": (0.0, 3600.0, False),
+        "max_concurrency": (1, 20, True),
+        "max_depth": (0, 10, True),
+        "max_pages_per_run": (1, 10_000, True),
+        "max_pages_per_domain": (1, 10_000, True),
+        "max_response_bytes": (1024, 100_000_000, True),
+        "request_timeout_seconds": (0.1, 300.0, False),
+        "retry_attempts": (1, 10, True),
+        "retry_backoff_seconds": (0.0, 300.0, False),
+        "max_seconds": (1.0, 86_400.0, False),
+        "robots_ttl_seconds": (300, 2_592_000, True),
+    }
+    for key, (minimum, maximum, integer_only) in numeric_bounds.items():
+        if key not in value:
+            continue
+        candidate = value[key]
+        if isinstance(candidate, bool) or not isinstance(candidate, (int, float)):
+            raise ValueError(f"Discovery crawl policy {key} must be numeric.")
+        if integer_only and not isinstance(candidate, int):
+            raise ValueError(f"Discovery crawl policy {key} must be an integer.")
+        if candidate < minimum or candidate > maximum:
+            raise ValueError(
+                f"Discovery crawl policy {key} must be between {minimum} and {maximum}."
+            )
+    for key in (
+        "robots_aware",
+        "allow_private_networks",
+        "allow_cross_domain_links",
+        "store_artifacts",
+    ):
+        if key in value and not isinstance(value[key], bool):
+            raise ValueError(f"Discovery crawl policy {key} must be a boolean.")
+    if "user_agent" in value and (
+        not isinstance(value["user_agent"], str) or len(value["user_agent"]) > 500
+    ):
+        raise ValueError("Discovery crawl policy user_agent must be a string of 500 characters or fewer.")
+    return value
 
 
 class HealthResponse(ForteModel):
@@ -79,21 +133,15 @@ class ClickHouseDiagnosticsRead(ForteModel):
     version: str | None
     current_database: str | None
     storage_policy: str | None
-<<<<<<< HEAD
-=======
     storage_mode: str
->>>>>>> 05aeee6 (chore: initialize repository)
     r2_configured: bool
     r2_endpoint: str | None
     r2_bucket: str | None
     r2_region: str | None
     r2_archive_root: str | None
-<<<<<<< HEAD
-=======
     r2_storage_ready: bool
     r2_storage_bucket: str | None
     r2_storage_root: str | None
->>>>>>> 05aeee6 (chore: initialize repository)
     warnings: list[str]
     notes: list[str]
 
@@ -104,10 +152,7 @@ class ClickHouseProvisionResultRead(ForteModel):
     observation_table: str
     storage_object_table: str
     storage_policy: str | None
-<<<<<<< HEAD
-=======
     storage_mode: str
->>>>>>> 05aeee6 (chore: initialize repository)
 
 
 class ClickHouseSyncResultRead(ForteModel):
@@ -133,12 +178,6 @@ class ClickHouseArchiveResultRead(ForteModel):
 
 class ClickHouseR2ConfigRead(ForteModel):
     generated_at: datetime
-<<<<<<< HEAD
-    archive_root_url: str
-    storage_xml: str
-    create_table_sql: str
-    archive_example_sql: str
-=======
     storage_mode: str
     archive_root_url: str
     storage_root_url: str
@@ -158,10 +197,12 @@ class ClickHouseRehydrateResultRead(ForteModel):
     archive_glob_url: str
     imported_row_count: int
     sql: str
->>>>>>> 05aeee6 (chore: initialize repository)
 
 
 class RuntimeSnapshotRead(ForteModel):
+    model_config = ConfigDict(from_attributes=True, extra="forbid")
+
+    snapshot_version: int = 1
     exported_at: datetime
     app_name: str
     app_version: str
@@ -170,6 +211,18 @@ class RuntimeSnapshotRead(ForteModel):
     row_counts: list[DatabaseTableCountRead]
     data_layers: list["DataLayerRead"]
     source_trust_profiles: list["SourceTrustProfileRead"]
+    discovery_domain_policies: list["DiscoveryDomainPolicyRead"] = Field(default_factory=list)
+    discovery_campaigns: list["DiscoveryCampaignRead"] = Field(default_factory=list)
+    discovery_runs: list["DiscoveryRunRead"] = Field(default_factory=list)
+    source_candidates: list["SourceCandidateRead"] = Field(default_factory=list)
+    discovery_frontier_entries: list["DiscoveryFrontierEntryRead"] = Field(default_factory=list)
+    source_candidate_revisions: list["SourceCandidateRevisionRead"] = Field(default_factory=list)
+    discovery_graph_edges: list["DiscoveryGraphEdgeRead"] = Field(default_factory=list)
+    candidate_health_checks: list["CandidateHealthCheckRead"] = Field(default_factory=list)
+    candidate_suppressions: list["CandidateSuppressionRead"] = Field(default_factory=list)
+    candidate_promotion_decisions: list["CandidatePromotionDecisionRead"] = Field(default_factory=list)
+    robots_observations: list["RobotsObservationRead"] = Field(default_factory=list)
+    discovery_artifacts: list["DiscoveryArtifactRead"] = Field(default_factory=list)
     geofences: list["GeofenceRead"]
     source_definitions: list["SourceDefinitionRead"]
     local_import_runs: list["LocalImportRunSummaryRead"]
@@ -177,10 +230,7 @@ class RuntimeSnapshotRead(ForteModel):
     entities: list["EntityRead"]
     observations: list["ObservationRead"]
     camera_inventory: list["CameraInventoryRead"]
-<<<<<<< HEAD
-=======
     camera_source_inventory: list["CameraSourceInventoryRead"]
->>>>>>> 05aeee6 (chore: initialize repository)
     storage_objects: list["StorageObjectRead"]
     event_observation_links: list["EventObservationLinkRead"]
     entity_observation_links: list["EntityObservationLinkRead"]
@@ -190,6 +240,55 @@ class RuntimeSnapshotRead(ForteModel):
     source_runs: list["SourceRunRead"]
     situation_products: list["SituationProductRead"]
     custody_logs: list["CustodyLogRead"]
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_snapshot_contract(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        version = int(value.get("snapshot_version", 1))
+        if version not in {1, 2}:
+            raise ValueError(f"Unsupported runtime snapshot version: {version}.")
+        if version < 2:
+            return value
+
+        raw_counts = value.get("row_counts", [])
+        row_counts = {
+            str(item.get("table_name")): int(item.get("row_count", 0))
+            for item in raw_counts
+            if isinstance(item, dict) and item.get("table_name") is not None
+        }
+        for section_name, schema_name in DISCOVERY_SNAPSHOT_ROW_SCHEMAS.items():
+            if section_name in row_counts and section_name not in value:
+                raise ValueError(
+                    f"Runtime snapshot section '{section_name}' is missing despite row_counts metadata."
+                )
+            rows = value.get(section_name, [])
+            if not isinstance(rows, list):
+                raise ValueError(f"Runtime snapshot section '{section_name}' must be a list.")
+            if section_name in row_counts and len(rows) != row_counts[section_name]:
+                raise ValueError(
+                    f"Runtime snapshot section '{section_name}' contains {len(rows)} rows; "
+                    f"row_counts declares {row_counts[section_name]}."
+                )
+            schema_cls = globals().get(schema_name)
+            if schema_cls is None:
+                continue
+            expected_fields = set(schema_cls.model_fields)
+            for row_index, row in enumerate(rows):
+                if not isinstance(row, dict):
+                    raise ValueError(
+                        f"Runtime snapshot section '{section_name}' row {row_index} must be an object."
+                    )
+                actual_fields = set(row)
+                missing_fields = sorted(expected_fields - actual_fields)
+                unknown_fields = sorted(actual_fields - expected_fields)
+                if missing_fields or unknown_fields:
+                    raise ValueError(
+                        f"Runtime snapshot section '{section_name}' row {row_index} has an "
+                        f"invalid field set; missing={missing_fields}, unknown={unknown_fields}."
+                    )
+        return value
 
 
 class RuntimeRestoreResultRead(ForteModel):
@@ -319,8 +418,6 @@ class StorageObjectTransitionRequest(ForteModel):
     metadata_json: dict[str, Any] = Field(default_factory=dict)
 
 
-<<<<<<< HEAD
-=======
 class StorageInventoryBucketRead(ForteModel):
     key: str
     total_count: int
@@ -352,7 +449,6 @@ class StorageLifecycleSweepResultRead(ForteModel):
     candidates: list[StorageObjectRead]
 
 
->>>>>>> 05aeee6 (chore: initialize repository)
 class CameraMaterializationRequest(ForteModel):
     layer_key: str | None = None
     source_domain: str | None = None
@@ -363,12 +459,9 @@ class CameraMaterializationResponse(ForteModel):
     created_count: int
     updated_count: int
     scanned_count: int
-<<<<<<< HEAD
-=======
     source_created_count: int = 0
     source_updated_count: int = 0
     source_scanned_endpoint_count: int = 0
->>>>>>> 05aeee6 (chore: initialize repository)
     cameras: list[CameraInventoryRead]
 
 
@@ -401,8 +494,6 @@ class CameraInventoryOpsDetailRead(ForteModel):
     refresh_tasks: list["ScheduledTaskRead"]
 
 
-<<<<<<< HEAD
-=======
 class CameraSourceInventoryRead(ForteModel):
     camera_source_inventory_id: int
     candidate_key: str
@@ -491,7 +582,6 @@ class CameraSourceOpsExportSummaryRead(ForteModel):
     sources: list[CameraSourceInventoryRead]
 
 
->>>>>>> 05aeee6 (chore: initialize repository)
 class EventObservationLinkRead(ForteModel):
     event_observation_link_id: int
     event_id: int
@@ -573,10 +663,15 @@ class SourceDefinitionCreate(ForteModel):
         "http_jsonl",
         "http_text",
         "http_xml",
-        "http_csv",
         "rss",
-        "arcgis_feature_json",
-        "ckan_package_search",
+        "web_search",
+        "web_crawl",
+        "web_discovery",
+        "websocket_stream",
+        "sse_stream",
+        "webhook_ingest",
+        "camera_image",
+        "camera_stream",
     ]
     layer_key: str
     target_uri: str
@@ -614,8 +709,6 @@ class SourceRunRead(ForteModel):
     output_json: dict[str, Any]
 
 
-<<<<<<< HEAD
-=======
 class SourceOpsDetailRead(ForteModel):
     source: SourceDefinitionRead
     recent_runs: list[SourceRunRead]
@@ -681,7 +774,6 @@ class SourceOpsExportSummaryRead(ForteModel):
     sources: list[SourceDefinitionRead]
 
 
->>>>>>> 05aeee6 (chore: initialize repository)
 class IntegritySeedResponse(ForteModel):
     created: int
     domains: list[str]
@@ -842,15 +934,15 @@ class ScheduledTaskCreate(ForteModel):
         "geofence_scan",
         "integrity_seed",
         "source_sync",
-<<<<<<< HEAD
-=======
         "storage_lifecycle",
         "clickhouse_sync",
         "clickhouse_archive",
->>>>>>> 05aeee6 (chore: initialize repository)
         "camera_inventory_refresh",
         "entity_resolution_refresh",
         "event_fusion_refresh",
+        "discovery_campaign",
+        "discovery_health_scan",
+        "discovery_revisit",
     ]
     interval_seconds: int = Field(ge=60)
     enabled: bool = True
@@ -897,8 +989,6 @@ class ScheduledTaskRunRead(ForteModel):
     output_json: dict[str, Any]
 
 
-<<<<<<< HEAD
-=======
 class ScheduledTaskOpsStatusRead(ForteModel):
     task: ScheduledTaskRead
     latest_run: ScheduledTaskRunRead | None
@@ -959,7 +1049,6 @@ class SchedulerOpsExportSummaryRead(ForteModel):
     tasks: list[ScheduledTaskRead]
 
 
->>>>>>> 05aeee6 (chore: initialize repository)
 class CameraRefreshTaskRunRead(ForteModel):
     task_run_id: int
     task_id: int
@@ -1022,10 +1111,6 @@ class OperationsReportRead(ForteModel):
     scope_since: datetime | None
     scope_until: datetime | None
     summary: OperationsSummaryRead
-<<<<<<< HEAD
-    camera_inventory_summary: CameraInventorySummaryRead
-    camera_report_index: CameraOpsReportIndexRead
-=======
     storage_report: StorageReportRead
     clickhouse_diagnostics: ClickHouseDiagnosticsRead
     scheduler_inventory_summary: SchedulerInventorySummaryRead
@@ -1036,7 +1121,7 @@ class OperationsReportRead(ForteModel):
     camera_report_index: CameraOpsReportIndexRead
     camera_source_inventory_summary: CameraSourceSummaryRead
     camera_source_report_index: CameraSourceOpsReportIndexRead
->>>>>>> 05aeee6 (chore: initialize repository)
+    discovery_ops_summary: "DiscoveryOpsSummaryRead | None" = None
     import_runs: list[LocalImportRunSummaryRead]
     source_runs: list[SourceRunRead]
     scheduled_task_runs: list[ScheduledTaskRunRead]
@@ -1060,3 +1145,818 @@ class EventExportBundleRead(ForteModel):
     products: list[SituationProductRead]
     custody_logs: list[CustodyLogRead]
     citations_json: list[dict[str, Any]]
+
+
+class DiscoveryCampaignCreate(ForteModel):
+    name: str = Field(min_length=1, max_length=160)
+    description: str = ""
+    mode: str = Field(default="query_seeded", max_length=40)
+    status: str = Field(default="draft", max_length=30)
+    enabled: bool = True
+    layer_key: str | None = Field(default=None, max_length=80)
+    query_text: str = ""
+    modes_json: list[str] = Field(default_factory=list)
+    query_strings_json: list[str] = Field(default_factory=list)
+    search_templates_json: list[str] = Field(default_factory=list)
+    format_targets_json: list[str] = Field(default_factory=list)
+    seed_urls_json: list[str] = Field(default_factory=list)
+    locale_variants_json: list[str] = Field(default_factory=list)
+    language_variants_json: list[str] = Field(default_factory=list)
+    domain_allowlist_json: list[str] = Field(default_factory=list)
+    domain_denylist_json: list[str] = Field(default_factory=list)
+    target_geography_json: dict[str, Any] = Field(default_factory=dict)
+    entity_seeds_json: list[dict[str, Any]] = Field(default_factory=list)
+    historical_backfill: bool = False
+    recency_days: int | None = Field(default=None, ge=0)
+    max_depth: int = Field(default=2, ge=0, le=10)
+    max_pages: int = Field(default=100, ge=1, le=10_000)
+    max_candidates: int = Field(default=1000, ge=1, le=100_000)
+    request_json: dict[str, Any] = Field(default_factory=dict)
+    crawl_policy_json: dict[str, Any] = Field(default_factory=dict)
+    scoring_weights_json: dict[str, Any] = Field(default_factory=dict)
+    schedule_json: dict[str, Any] = Field(default_factory=dict)
+    last_run_at: datetime | None = None
+    last_completed_at: datetime | None = None
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("crawl_policy_json")
+    @classmethod
+    def validate_crawl_policy(cls, value: dict[str, Any]) -> dict[str, Any]:
+        return validate_discovery_crawl_policy(value)
+
+    @field_validator("request_json")
+    @classmethod
+    def validate_request_crawl_policy(cls, value: dict[str, Any]) -> dict[str, Any]:
+        nested = value.get("crawl_policy")
+        if nested is None:
+            return value
+        if not isinstance(nested, dict):
+            raise ValueError("Discovery request crawl_policy must be a JSON object.")
+        validate_discovery_crawl_policy(nested)
+        return value
+
+
+class DiscoveryCampaignUpdate(ForteModel):
+    name: str | None = Field(default=None, min_length=1, max_length=160)
+    description: str | None = None
+    mode: str | None = Field(default=None, max_length=40)
+    status: str | None = Field(default=None, max_length=30)
+    enabled: bool | None = None
+    layer_key: str | None = Field(default=None, max_length=80)
+    query_text: str | None = None
+    modes_json: list[str] | None = None
+    query_strings_json: list[str] | None = None
+    search_templates_json: list[str] | None = None
+    format_targets_json: list[str] | None = None
+    seed_urls_json: list[str] | None = None
+    locale_variants_json: list[str] | None = None
+    language_variants_json: list[str] | None = None
+    domain_allowlist_json: list[str] | None = None
+    domain_denylist_json: list[str] | None = None
+    target_geography_json: dict[str, Any] | None = None
+    entity_seeds_json: list[dict[str, Any]] | None = None
+    historical_backfill: bool | None = None
+    recency_days: int | None = Field(default=None, ge=0)
+    max_depth: int | None = Field(default=None, ge=0, le=10)
+    max_pages: int | None = Field(default=None, ge=1, le=10_000)
+    max_candidates: int | None = Field(default=None, ge=1, le=100_000)
+    request_json: dict[str, Any] | None = None
+    crawl_policy_json: dict[str, Any] | None = None
+    scoring_weights_json: dict[str, Any] | None = None
+    schedule_json: dict[str, Any] | None = None
+    last_run_at: datetime | None = None
+    last_completed_at: datetime | None = None
+    metadata_json: dict[str, Any] | None = None
+
+    @field_validator("crawl_policy_json")
+    @classmethod
+    def validate_crawl_policy(
+        cls,
+        value: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        return validate_discovery_crawl_policy(value) if value is not None else None
+
+    @field_validator("request_json")
+    @classmethod
+    def validate_request_crawl_policy(
+        cls,
+        value: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        if value is None:
+            return None
+        nested = value.get("crawl_policy")
+        if nested is None:
+            return value
+        if not isinstance(nested, dict):
+            raise ValueError("Discovery request crawl_policy must be a JSON object.")
+        validate_discovery_crawl_policy(nested)
+        return value
+
+
+class DiscoveryCampaignRead(DiscoveryCampaignCreate):
+    campaign_id: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class DiscoveryRunCreate(ForteModel):
+    campaign_id: int
+    mode: str = Field(default="query_seeded", max_length=40)
+    status: str = Field(default="queued", max_length=30)
+    trigger_kind: str = Field(default="manual", max_length=30)
+    actor: str = Field(default="discovery_engine", max_length=80)
+    resumed_from_run_id: int | None = None
+    started_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    finished_at: datetime | None = None
+    pages_queued: int = Field(default=0, ge=0)
+    pages_fetched: int = Field(default=0, ge=0)
+    candidates_discovered: int = Field(default=0, ge=0)
+    candidates_updated: int = Field(default=0, ge=0)
+    error_count: int = Field(default=0, ge=0)
+    request_snapshot_json: dict[str, Any] = Field(default_factory=dict)
+    policy_snapshot_json: dict[str, Any] = Field(default_factory=dict)
+    frontier_checkpoint_json: dict[str, Any] = Field(default_factory=dict)
+    stats_json: dict[str, Any] = Field(default_factory=dict)
+    output_json: dict[str, Any] = Field(default_factory=dict)
+    error_text: str | None = None
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+
+
+class DiscoveryRunUpdate(ForteModel):
+    mode: str | None = Field(default=None, max_length=40)
+    status: str | None = Field(default=None, max_length=30)
+    trigger_kind: str | None = Field(default=None, max_length=30)
+    actor: str | None = Field(default=None, max_length=80)
+    resumed_from_run_id: int | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    pages_queued: int | None = Field(default=None, ge=0)
+    pages_fetched: int | None = Field(default=None, ge=0)
+    candidates_discovered: int | None = Field(default=None, ge=0)
+    candidates_updated: int | None = Field(default=None, ge=0)
+    error_count: int | None = Field(default=None, ge=0)
+    request_snapshot_json: dict[str, Any] | None = None
+    policy_snapshot_json: dict[str, Any] | None = None
+    frontier_checkpoint_json: dict[str, Any] | None = None
+    stats_json: dict[str, Any] | None = None
+    output_json: dict[str, Any] | None = None
+    error_text: str | None = None
+    metadata_json: dict[str, Any] | None = None
+
+
+class DiscoveryRunRead(DiscoveryRunCreate):
+    discovery_run_id: int
+    started_at: datetime
+    created_at: datetime
+    updated_at: datetime
+
+
+class DiscoveryRunRequest(ForteModel):
+    campaign_id: int | None = None
+    actor: str = Field(default="operator", max_length=80)
+    resume: bool = True
+    resume_run_id: int | None = None
+    max_pages: int | None = Field(default=None, ge=1, le=10_000)
+    max_candidates: int | None = Field(default=None, ge=1, le=100_000)
+    max_seconds: float | None = Field(default=None, gt=0.0, le=86_400.0)
+    dry_run: bool = False
+
+
+class DiscoveryRunResultRead(ForteModel):
+    run: DiscoveryRunRead
+    frontier_queued_count: int = 0
+    frontier_completed_count: int = 0
+    frontier_dead_letter_count: int = 0
+    candidate_ids: list[int] = Field(default_factory=list)
+
+
+class DiscoveryDomainPolicyCreate(ForteModel):
+    normalized_domain: str = Field(min_length=1, max_length=255)
+    policy: str = Field(default="allow", max_length=30)
+    robots_mode: str = Field(default="respect", max_length=30)
+    enabled: bool = True
+    allow_subdomains: bool = True
+    crawl_delay_seconds: float = Field(default=1.0, ge=0.0, le=3600.0)
+    max_concurrency: int = Field(default=1, ge=1, le=20)
+    max_depth: int = Field(default=2, ge=0, le=10)
+    max_pages_per_run: int = Field(default=100, ge=1, le=10_000)
+    max_response_bytes: int = Field(default=5_000_000, ge=1024, le=100_000_000)
+    request_timeout_seconds: float = Field(default=20.0, ge=0.1, le=300.0)
+    retry_attempts: int = Field(default=2, ge=1, le=10)
+    retry_backoff_seconds: float = Field(default=1.0, ge=0.0, le=300.0)
+    allowed_path_patterns_json: list[str] = Field(default_factory=list)
+    denied_path_patterns_json: list[str] = Field(default_factory=list)
+    allowed_content_types_json: list[str] = Field(default_factory=list)
+    notes: str = ""
+    last_fetch_at: datetime | None = None
+    next_allowed_at: datetime | None = None
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+
+
+class DiscoveryDomainPolicyUpdate(ForteModel):
+    policy: str | None = Field(default=None, max_length=30)
+    robots_mode: str | None = Field(default=None, max_length=30)
+    enabled: bool | None = None
+    allow_subdomains: bool | None = None
+    crawl_delay_seconds: float | None = Field(default=None, ge=0.0, le=3600.0)
+    max_concurrency: int | None = Field(default=None, ge=1, le=20)
+    max_depth: int | None = Field(default=None, ge=0, le=10)
+    max_pages_per_run: int | None = Field(default=None, ge=1, le=10_000)
+    max_response_bytes: int | None = Field(default=None, ge=1024, le=100_000_000)
+    request_timeout_seconds: float | None = Field(default=None, ge=0.1, le=300.0)
+    retry_attempts: int | None = Field(default=None, ge=1, le=10)
+    retry_backoff_seconds: float | None = Field(default=None, ge=0.0, le=300.0)
+    allowed_path_patterns_json: list[str] | None = None
+    denied_path_patterns_json: list[str] | None = None
+    allowed_content_types_json: list[str] | None = None
+    notes: str | None = None
+    last_fetch_at: datetime | None = None
+    next_allowed_at: datetime | None = None
+    metadata_json: dict[str, Any] | None = None
+
+
+class DiscoveryDomainPolicyRead(DiscoveryDomainPolicyCreate):
+    domain_policy_id: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class SourceCandidateCreate(ForteModel):
+    canonical_url_hash: str = Field(min_length=64, max_length=64)
+    canonical_url: str
+    discovered_url: str
+    normalized_domain: str = Field(min_length=1, max_length=255)
+    path_pattern: str | None = Field(default=None, max_length=500)
+    first_campaign_id: int | None = None
+    last_campaign_id: int | None = None
+    first_run_id: int | None = None
+    last_run_id: int | None = None
+    parent_url: str | None = None
+    discovery_method: str = Field(default="unknown", max_length=50)
+    candidate_type: str = Field(default="unknown", max_length=60)
+    format_hint: str = Field(default="unknown", max_length=60)
+    footprint_kind: str = Field(default="unknown", max_length=40)
+    footprint_geojson: dict[str, Any] | None = None
+    geo_hints_json: dict[str, Any] = Field(default_factory=dict)
+    temporal_hints_json: dict[str, Any] = Field(default_factory=dict)
+    format_hints_json: dict[str, Any] = Field(default_factory=dict)
+    trust_hints_json: dict[str, Any] = Field(default_factory=dict)
+    operational_hints_json: dict[str, Any] = Field(default_factory=dict)
+    promotion_json: dict[str, Any] = Field(default_factory=dict)
+    status: str = Field(default="candidate", max_length=40)
+    score: float = Field(default=0.0, ge=0.0, le=100.0)
+    score_bucket: str = Field(default="keep_candidate", max_length=40)
+    score_breakdown_json: dict[str, Any] = Field(default_factory=dict)
+    content_hash: str | None = Field(default=None, max_length=64)
+    schema_hash: str | None = Field(default=None, max_length=64)
+    first_seen_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    last_seen_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    last_changed_at: datetime | None = None
+    last_checked_at: datetime | None = None
+    last_revisited_at: datetime | None = None
+    next_revisit_at: datetime | None = None
+    revisit_count: int = Field(default=0, ge=0)
+    failure_count: int = Field(default=0, ge=0)
+    last_failure_at: datetime | None = None
+    last_error_text: str | None = None
+    promoted_source_id: int | None = None
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+
+
+class SourceCandidateUpdate(ForteModel):
+    canonical_url_hash: str | None = Field(default=None, min_length=64, max_length=64)
+    canonical_url: str | None = None
+    discovered_url: str | None = None
+    normalized_domain: str | None = Field(default=None, min_length=1, max_length=255)
+    path_pattern: str | None = Field(default=None, max_length=500)
+    first_campaign_id: int | None = None
+    last_campaign_id: int | None = None
+    first_run_id: int | None = None
+    last_run_id: int | None = None
+    parent_url: str | None = None
+    discovery_method: str | None = Field(default=None, max_length=50)
+    candidate_type: str | None = Field(default=None, max_length=60)
+    format_hint: str | None = Field(default=None, max_length=60)
+    footprint_kind: str | None = Field(default=None, max_length=40)
+    footprint_geojson: dict[str, Any] | None = None
+    geo_hints_json: dict[str, Any] | None = None
+    temporal_hints_json: dict[str, Any] | None = None
+    format_hints_json: dict[str, Any] | None = None
+    trust_hints_json: dict[str, Any] | None = None
+    operational_hints_json: dict[str, Any] | None = None
+    promotion_json: dict[str, Any] | None = None
+    status: str | None = Field(default=None, max_length=40)
+    score: float | None = Field(default=None, ge=0.0, le=100.0)
+    score_bucket: str | None = Field(default=None, max_length=40)
+    score_breakdown_json: dict[str, Any] | None = None
+    content_hash: str | None = Field(default=None, max_length=64)
+    schema_hash: str | None = Field(default=None, max_length=64)
+    first_seen_at: datetime | None = None
+    last_seen_at: datetime | None = None
+    last_changed_at: datetime | None = None
+    last_checked_at: datetime | None = None
+    last_revisited_at: datetime | None = None
+    next_revisit_at: datetime | None = None
+    revisit_count: int | None = Field(default=None, ge=0)
+    failure_count: int | None = Field(default=None, ge=0)
+    last_failure_at: datetime | None = None
+    last_error_text: str | None = None
+    promoted_source_id: int | None = None
+    metadata_json: dict[str, Any] | None = None
+
+
+class SourceCandidateRead(SourceCandidateCreate):
+    candidate_id: int
+    first_seen_at: datetime
+    last_seen_at: datetime
+    created_at: datetime
+    updated_at: datetime
+
+
+class DiscoveryFrontierEntryCreate(ForteModel):
+    discovery_run_id: int
+    campaign_id: int
+    candidate_id: int | None = None
+    canonical_url_hash: str = Field(min_length=64, max_length=64)
+    canonical_url: str
+    discovered_url: str
+    priority: float = 0.0
+    state: str = Field(default="queued", max_length=30)
+    attempt_count: int = Field(default=0, ge=0)
+    max_attempts: int = Field(default=3, ge=1, le=20)
+    depth: int = Field(default=0, ge=0, le=100)
+    parent_url: str | None = None
+    parent_candidate_id: int | None = None
+    discovery_method: str = Field(default="unknown", max_length=50)
+    next_attempt_at: datetime | None = None
+    last_attempt_at: datetime | None = None
+    claimed_at: datetime | None = None
+    fetched_at: datetime | None = None
+    completed_at: datetime | None = None
+    dead_lettered_at: datetime | None = None
+    checkpoint_json: dict[str, Any] = Field(default_factory=dict)
+    last_error_text: str | None = None
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+
+
+class DiscoveryFrontierEntryUpdate(ForteModel):
+    candidate_id: int | None = None
+    priority: float | None = None
+    state: str | None = Field(default=None, max_length=30)
+    attempt_count: int | None = Field(default=None, ge=0)
+    max_attempts: int | None = Field(default=None, ge=1, le=20)
+    depth: int | None = Field(default=None, ge=0, le=100)
+    parent_url: str | None = None
+    parent_candidate_id: int | None = None
+    discovery_method: str | None = Field(default=None, max_length=50)
+    next_attempt_at: datetime | None = None
+    last_attempt_at: datetime | None = None
+    claimed_at: datetime | None = None
+    fetched_at: datetime | None = None
+    completed_at: datetime | None = None
+    dead_lettered_at: datetime | None = None
+    checkpoint_json: dict[str, Any] | None = None
+    last_error_text: str | None = None
+    metadata_json: dict[str, Any] | None = None
+
+
+class DiscoveryFrontierEntryRead(DiscoveryFrontierEntryCreate):
+    frontier_entry_id: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class SourceCandidateRevisionCreate(ForteModel):
+    candidate_id: int
+    campaign_id: int | None = None
+    discovery_run_id: int | None = None
+    revision_number: int = Field(ge=1)
+    revision_kind: str = Field(default="observed", max_length=40)
+    observed_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    status: str = Field(default="candidate", max_length=40)
+    score: float = Field(default=0.0, ge=0.0, le=100.0)
+    score_bucket: str = Field(default="keep_candidate", max_length=40)
+    score_breakdown_json: dict[str, Any] = Field(default_factory=dict)
+    content_hash: str | None = Field(default=None, max_length=64)
+    schema_hash: str | None = Field(default=None, max_length=64)
+    changed: bool = False
+    reason: str = ""
+    snapshot_json: dict[str, Any] = Field(default_factory=dict)
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+
+
+class SourceCandidateRevisionUpdate(ForteModel):
+    revision_kind: str | None = Field(default=None, max_length=40)
+    observed_at: datetime | None = None
+    status: str | None = Field(default=None, max_length=40)
+    score: float | None = Field(default=None, ge=0.0, le=100.0)
+    score_bucket: str | None = Field(default=None, max_length=40)
+    score_breakdown_json: dict[str, Any] | None = None
+    content_hash: str | None = Field(default=None, max_length=64)
+    schema_hash: str | None = Field(default=None, max_length=64)
+    changed: bool | None = None
+    reason: str | None = None
+    snapshot_json: dict[str, Any] | None = None
+    metadata_json: dict[str, Any] | None = None
+
+
+class SourceCandidateRevisionRead(SourceCandidateRevisionCreate):
+    candidate_revision_id: int
+    observed_at: datetime
+    created_at: datetime
+
+
+class DiscoveryGraphEdgeCreate(ForteModel):
+    edge_key: str = Field(min_length=64, max_length=64)
+    campaign_id: int
+    discovery_run_id: int
+    parent_candidate_id: int | None = None
+    child_candidate_id: int
+    parent_url: str | None = None
+    child_url: str
+    edge_type: str = Field(default="discovered_from", max_length=40)
+    discovery_method: str = Field(default="unknown", max_length=50)
+    depth: int = Field(default=0, ge=0)
+    evidence_json: dict[str, Any] = Field(default_factory=dict)
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+
+
+class DiscoveryGraphEdgeUpdate(ForteModel):
+    edge_type: str | None = Field(default=None, max_length=40)
+    discovery_method: str | None = Field(default=None, max_length=50)
+    depth: int | None = Field(default=None, ge=0)
+    evidence_json: dict[str, Any] | None = None
+    metadata_json: dict[str, Any] | None = None
+
+
+class DiscoveryGraphEdgeRead(DiscoveryGraphEdgeCreate):
+    graph_edge_id: int
+    created_at: datetime
+
+
+class CandidateHealthCheckCreate(ForteModel):
+    candidate_id: int
+    discovery_run_id: int | None = None
+    checked_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    status: str = Field(default="unknown", max_length=30)
+    reachable: bool = False
+    http_status: int | None = None
+    latency_ms: float | None = Field(default=None, ge=0.0)
+    content_type: str | None = Field(default=None, max_length=160)
+    content_length: int | None = Field(default=None, ge=0)
+    content_hash: str | None = Field(default=None, max_length=64)
+    schema_hash: str | None = Field(default=None, max_length=64)
+    changed: bool = False
+    redirect_url: str | None = None
+    robots_allowed: bool | None = None
+    error_type: str | None = Field(default=None, max_length=80)
+    error_text: str | None = None
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+
+
+class CandidateHealthCheckUpdate(ForteModel):
+    checked_at: datetime | None = None
+    status: str | None = Field(default=None, max_length=30)
+    reachable: bool | None = None
+    http_status: int | None = None
+    latency_ms: float | None = Field(default=None, ge=0.0)
+    content_type: str | None = Field(default=None, max_length=160)
+    content_length: int | None = Field(default=None, ge=0)
+    content_hash: str | None = Field(default=None, max_length=64)
+    schema_hash: str | None = Field(default=None, max_length=64)
+    changed: bool | None = None
+    redirect_url: str | None = None
+    robots_allowed: bool | None = None
+    error_type: str | None = Field(default=None, max_length=80)
+    error_text: str | None = None
+    metadata_json: dict[str, Any] | None = None
+
+
+class CandidateHealthCheckRead(CandidateHealthCheckCreate):
+    health_check_id: int
+    checked_at: datetime
+    created_at: datetime
+
+
+class CandidateHealthScanRequest(ForteModel):
+    candidate_id: int | None = None
+    normalized_domain: str | None = None
+    campaign_id: int | None = None
+    limit: int = Field(default=100, ge=1, le=5000)
+    actor: str = Field(default="operator", max_length=80)
+
+
+class CandidateHealthScanResultRead(ForteModel):
+    checked_at: datetime
+    checked_count: int
+    reachable_count: int
+    failing_count: int
+    changed_count: int
+    checks: list[CandidateHealthCheckRead] = Field(default_factory=list)
+
+
+class CandidateSuppressionCreate(ForteModel):
+    candidate_id: int | None = None
+    normalized_domain: str | None = Field(default=None, max_length=255)
+    scope: str = Field(default="candidate", max_length=30)
+    status: str = Field(default="active", max_length=30)
+    reason_code: str = Field(default="operator_suppressed", max_length=60)
+    reason: str = ""
+    actor: str = Field(default="system", max_length=80)
+    expires_at: datetime | None = None
+    revoked_at: datetime | None = None
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+
+
+class CandidateSuppressionUpdate(ForteModel):
+    status: str | None = Field(default=None, max_length=30)
+    reason_code: str | None = Field(default=None, max_length=60)
+    reason: str | None = None
+    actor: str | None = Field(default=None, max_length=80)
+    expires_at: datetime | None = None
+    revoked_at: datetime | None = None
+    metadata_json: dict[str, Any] | None = None
+
+
+class CandidateSuppressionRead(CandidateSuppressionCreate):
+    suppression_id: int
+    created_at: datetime
+
+
+class CandidateSuppressionRequest(ForteModel):
+    candidate_id: int | None = None
+    normalized_domain: str | None = Field(default=None, max_length=255)
+    scope: str = Field(default="candidate", max_length=30)
+    reason_code: str = Field(default="operator_suppressed", max_length=60)
+    reason: str = ""
+    actor: str = Field(default="operator", max_length=80)
+    expires_at: datetime | None = None
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+
+
+class CandidatePromotionDecisionCreate(ForteModel):
+    candidate_id: int
+    source_id: int | None = None
+    discovery_run_id: int | None = None
+    decision: str = Field(default="deferred", max_length=40)
+    recommended_source_kind: str | None = Field(default=None, max_length=40)
+    recommended_schedule_json: dict[str, Any] = Field(default_factory=dict)
+    score: float = Field(default=0.0, ge=0.0, le=100.0)
+    score_bucket: str = Field(default="keep_candidate", max_length=40)
+    score_breakdown_json: dict[str, Any] = Field(default_factory=dict)
+    reason: str = ""
+    trust_reasoning_json: dict[str, Any] = Field(default_factory=dict)
+    integrity_reasoning_json: dict[str, Any] = Field(default_factory=dict)
+    health_risks_json: dict[str, Any] = Field(default_factory=dict)
+    geo_relevance_json: dict[str, Any] = Field(default_factory=dict)
+    evidence_json: dict[str, Any] = Field(default_factory=dict)
+    actor: str = Field(default="system", max_length=80)
+    decided_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+
+
+class CandidatePromotionDecisionUpdate(ForteModel):
+    source_id: int | None = None
+    decision: str | None = Field(default=None, max_length=40)
+    recommended_source_kind: str | None = Field(default=None, max_length=40)
+    recommended_schedule_json: dict[str, Any] | None = None
+    score: float | None = Field(default=None, ge=0.0, le=100.0)
+    score_bucket: str | None = Field(default=None, max_length=40)
+    score_breakdown_json: dict[str, Any] | None = None
+    reason: str | None = None
+    trust_reasoning_json: dict[str, Any] | None = None
+    integrity_reasoning_json: dict[str, Any] | None = None
+    health_risks_json: dict[str, Any] | None = None
+    geo_relevance_json: dict[str, Any] | None = None
+    evidence_json: dict[str, Any] | None = None
+    actor: str | None = Field(default=None, max_length=80)
+    decided_at: datetime | None = None
+    metadata_json: dict[str, Any] | None = None
+
+
+class CandidatePromotionDecisionRead(CandidatePromotionDecisionCreate):
+    promotion_decision_id: int
+    decided_at: datetime
+
+
+class CandidatePromotionRequest(ForteModel):
+    candidate_id: int | None = None
+    source_kind: str | None = Field(default=None, max_length=40)
+    recommended_source_kind: str | None = Field(default=None, max_length=40)
+    source_name: str | None = Field(default=None, max_length=160)
+    layer_key: str | None = Field(default=None, max_length=80)
+    enabled: bool = True
+    integrity_source: bool = False
+    create_schedule: bool = True
+    schedule_interval_seconds: int | None = Field(default=None, ge=60)
+    reason: str = ""
+    actor: str = Field(default="operator", max_length=80)
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+
+
+class CandidatePromotionResultRead(ForteModel):
+    candidate: SourceCandidateRead
+    decision: CandidatePromotionDecisionRead
+    source: SourceDefinitionRead | None = None
+    scheduled_task: ScheduledTaskRead | None = None
+
+
+class RobotsObservationCreate(ForteModel):
+    domain_policy_id: int | None = None
+    discovery_run_id: int | None = None
+    normalized_domain: str = Field(max_length=255)
+    robots_url: str
+    fetched_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    expires_at: datetime | None = None
+    status: str = Field(default="unknown", max_length=30)
+    http_status: int | None = None
+    allowed: bool | None = None
+    crawl_delay_seconds: float | None = Field(default=None, ge=0.0)
+    sitemap_urls_json: list[str] = Field(default_factory=list)
+    rules_json: dict[str, Any] = Field(default_factory=dict)
+    content_hash: str | None = Field(default=None, max_length=64)
+    error_text: str | None = None
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+
+
+class RobotsObservationUpdate(ForteModel):
+    domain_policy_id: int | None = None
+    discovery_run_id: int | None = None
+    fetched_at: datetime | None = None
+    expires_at: datetime | None = None
+    status: str | None = Field(default=None, max_length=30)
+    http_status: int | None = None
+    allowed: bool | None = None
+    crawl_delay_seconds: float | None = Field(default=None, ge=0.0)
+    sitemap_urls_json: list[str] | None = None
+    rules_json: dict[str, Any] | None = None
+    content_hash: str | None = Field(default=None, max_length=64)
+    error_text: str | None = None
+    metadata_json: dict[str, Any] | None = None
+
+
+class RobotsObservationRead(RobotsObservationCreate):
+    robots_observation_id: int
+    fetched_at: datetime
+    created_at: datetime
+
+
+class DiscoveryArtifactCreate(ForteModel):
+    candidate_id: int | None = None
+    discovery_run_id: int | None = None
+    frontier_entry_id: int | None = None
+    storage_object_id: int | None = None
+    artifact_kind: str = Field(default="fetched_document", max_length=50)
+    source_url: str
+    media_type: str | None = Field(default=None, max_length=160)
+    content_hash: str | None = Field(default=None, max_length=64)
+    byte_size: int | None = Field(default=None, ge=0)
+    fetched_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    object_uri: str | None = None
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+
+
+class DiscoveryArtifactUpdate(ForteModel):
+    storage_object_id: int | None = None
+    artifact_kind: str | None = Field(default=None, max_length=50)
+    media_type: str | None = Field(default=None, max_length=160)
+    content_hash: str | None = Field(default=None, max_length=64)
+    byte_size: int | None = Field(default=None, ge=0)
+    fetched_at: datetime | None = None
+    object_uri: str | None = None
+    metadata_json: dict[str, Any] | None = None
+
+
+class DiscoveryArtifactRead(DiscoveryArtifactCreate):
+    discovery_artifact_id: int
+    fetched_at: datetime
+    created_at: datetime
+
+
+class CandidateScoreExplanationRead(ForteModel):
+    candidate_id: int
+    canonical_url: str
+    score: float = Field(ge=0.0, le=100.0)
+    score_bucket: str
+    score_breakdown_json: dict[str, Any] = Field(default_factory=dict)
+    reasons: list[str] = Field(default_factory=list)
+    evaluated_at: datetime
+
+
+class SourceCandidateDetailRead(ForteModel):
+    candidate: SourceCandidateRead
+    revisions: list[SourceCandidateRevisionRead] = Field(default_factory=list)
+    incoming_edges: list[DiscoveryGraphEdgeRead] = Field(default_factory=list)
+    outgoing_edges: list[DiscoveryGraphEdgeRead] = Field(default_factory=list)
+    health_checks: list[CandidateHealthCheckRead] = Field(default_factory=list)
+    suppressions: list[CandidateSuppressionRead] = Field(default_factory=list)
+    promotion_decisions: list[CandidatePromotionDecisionRead] = Field(default_factory=list)
+    artifacts: list[DiscoveryArtifactRead] = Field(default_factory=list)
+
+
+class DiscoveryLineageSummaryRead(ForteModel):
+    candidate: SourceCandidateRead
+    campaigns: list[DiscoveryCampaignRead] = Field(default_factory=list)
+    runs: list[DiscoveryRunRead] = Field(default_factory=list)
+    incoming_edges: list[DiscoveryGraphEdgeRead] = Field(default_factory=list)
+    outgoing_edges: list[DiscoveryGraphEdgeRead] = Field(default_factory=list)
+    ancestor_candidate_ids: list[int] = Field(default_factory=list)
+    descendant_candidate_ids: list[int] = Field(default_factory=list)
+
+
+class DiscoveryLineageRead(DiscoveryLineageSummaryRead):
+    pass
+
+
+class SourceCandidateInventorySummaryRead(ForteModel):
+    generated_at: datetime
+    total_count: int = 0
+    active_count: int = 0
+    promoted_count: int = 0
+    suppressed_count: int = 0
+    failing_count: int = 0
+    stale_count: int = 0
+    due_revisit_count: int = 0
+    status_counts: dict[str, int] = Field(default_factory=dict)
+    score_bucket_counts: dict[str, int] = Field(default_factory=dict)
+    type_counts: dict[str, int] = Field(default_factory=dict)
+    format_counts: dict[str, int] = Field(default_factory=dict)
+    domain_counts: dict[str, int] = Field(default_factory=dict)
+
+
+class DiscoveryHealthSummaryRead(ForteModel):
+    generated_at: datetime
+    status: str = "ok"
+    campaign_count: int = 0
+    active_campaign_count: int = 0
+    running_run_count: int = 0
+    candidate_count: int = 0
+    reachable_candidate_count: int = 0
+    failing_candidate_count: int = 0
+    stale_candidate_count: int = 0
+    due_revisit_count: int = 0
+    queued_frontier_count: int = 0
+    dead_letter_frontier_count: int = 0
+    robots_block_count: int = 0
+    warning_count: int = 0
+    warnings: list[str] = Field(default_factory=list)
+
+
+class DiscoveryOpsSummaryRead(ForteModel):
+    generated_at: datetime
+    health_summary: DiscoveryHealthSummaryRead
+    inventory_summary: SourceCandidateInventorySummaryRead
+    campaign_status_counts: dict[str, int] = Field(default_factory=dict)
+    run_status_counts: dict[str, int] = Field(default_factory=dict)
+    frontier_state_counts: dict[str, int] = Field(default_factory=dict)
+    candidate_status_counts: dict[str, int] = Field(default_factory=dict)
+    score_bucket_counts: dict[str, int] = Field(default_factory=dict)
+    domain_candidate_counts: dict[str, int] = Field(default_factory=dict)
+    failing_candidates: list[SourceCandidateRead] = Field(default_factory=list)
+    stale_candidates: list[SourceCandidateRead] = Field(default_factory=list)
+    due_revisit_candidates: list[SourceCandidateRead] = Field(default_factory=list)
+    recent_runs: list[DiscoveryRunRead] = Field(default_factory=list)
+
+
+class DiscoveryExportSummaryRead(ForteModel):
+    generated_at: datetime
+    filters_json: dict[str, Any] = Field(default_factory=dict)
+    ops_summary: DiscoveryOpsSummaryRead
+    campaigns: list[DiscoveryCampaignRead] = Field(default_factory=list)
+    runs: list[DiscoveryRunRead] = Field(default_factory=list)
+    candidates: list[SourceCandidateRead] = Field(default_factory=list)
+    promotion_decisions: list[CandidatePromotionDecisionRead] = Field(default_factory=list)
+
+
+class DiscoveryInventoryDiffRead(ForteModel):
+    generated_at: datetime
+    from_at: datetime | None = None
+    to_at: datetime | None = None
+    added_count: int = 0
+    changed_count: int = 0
+    promoted_count: int = 0
+    suppressed_count: int = 0
+    disappeared_count: int = 0
+    added_candidate_ids: list[int] = Field(default_factory=list)
+    changed_candidate_ids: list[int] = Field(default_factory=list)
+    promoted_candidate_ids: list[int] = Field(default_factory=list)
+    suppressed_candidate_ids: list[int] = Field(default_factory=list)
+    disappeared_candidate_ids: list[int] = Field(default_factory=list)
+
+
+class DiscoveryRevisitRequest(ForteModel):
+    candidate_id: int | None = None
+    normalized_domain: str | None = Field(default=None, max_length=255)
+    campaign_id: int | None = None
+    force: bool = False
+    include_suppressed: bool = False
+    priority: float = 0.0
+    actor: str = Field(default="operator", max_length=80)
+
+
+class DiscoveryRevisitResultRead(ForteModel):
+    requested_at: datetime
+    queued_count: int
+    candidate_ids: list[int] = Field(default_factory=list)
+    frontier_entry_ids: list[int] = Field(default_factory=list)
+    skipped_candidate_ids: list[int] = Field(default_factory=list)

@@ -23,11 +23,16 @@ from src.models import (
     SourceTrustProfileORM,
 )
 from src.schemas import (
-<<<<<<< HEAD
-=======
+    CandidateHealthCheckRead,
+    CandidateHealthScanRequest,
+    CandidateHealthScanResultRead,
+    CandidatePromotionRequest,
+    CandidatePromotionResultRead,
+    CandidateScoreExplanationRead,
+    CandidateSuppressionRead,
+    CandidateSuppressionRequest,
     CameraSourceOpsExportSummaryRead,
     CameraSourceMaterializationResponse,
-    CameraSourceInventoryRead,
     CameraSourceOpsReportIndexRead,
     CameraSourceSummaryRead,
     ClickHouseArchiveResultRead,
@@ -36,43 +41,46 @@ from src.schemas import (
     ClickHouseR2ConfigRead,
     ClickHouseRehydrateResultRead,
     ClickHouseSyncResultRead,
->>>>>>> 05aeee6 (chore: initialize repository)
     CameraOpsExportSummaryRead,
     CameraOpsReportIndexRead,
     CameraMaterializationResponse,
     DataLayerCreate,
     DatabaseDiagnosticsRead,
+    DiscoveryCampaignCreate,
+    DiscoveryCampaignRead,
+    DiscoveryExportSummaryRead,
+    DiscoveryInventoryDiffRead,
+    DiscoveryLineageSummaryRead,
+    DiscoveryOpsSummaryRead,
+    DiscoveryRevisitRequest,
+    DiscoveryRevisitResultRead,
+    DiscoveryRunRead,
+    DiscoveryRunRequest,
+    DiscoveryRunResultRead,
     EventExportBundleRead,
     EventFusionRequest,
     EntityResolutionRequest,
     OperationsReportRead,
     RuntimeRestoreResultRead,
     RuntimeSnapshotRead,
-<<<<<<< HEAD
-    ScheduledTaskCreate,
-    ScheduledTaskUpdate,
-=======
     SchedulerInventorySummaryRead,
     SchedulerOpsExportSummaryRead,
     SchedulerOpsReportIndexRead,
     ScheduledTaskCreate,
     ScheduledTaskUpdate,
     StorageLifecycleSweepResultRead,
->>>>>>> 05aeee6 (chore: initialize repository)
     StorageObjectCreate,
     StorageObjectPromoteRequest,
     StorageObjectRead,
     StorageObjectTransitionRequest,
-<<<<<<< HEAD
-    SourceDefinitionCreate,
-    SourceDefinitionUpdate,
-=======
     StorageReportRead,
     SourceDefinitionCreate,
     SourceDefinitionUpdate,
     SourceInventorySummaryRead,
     SourceOpsExportSummaryRead,
     SourceOpsReportIndexRead,
+    SourceCandidateDetailRead,
+    SourceCandidateRead,
 )
 from src.services.camera_source_service import (
     build_camera_source_inventory_ops_detail,
@@ -90,7 +98,6 @@ from src.services.clickhouse_service import (
     provision_clickhouse_backend,
     rehydrate_clickhouse_observations_from_r2,
     sync_runtime_to_clickhouse,
->>>>>>> 05aeee6 (chore: initialize repository)
 )
 from src.services.camera_service import list_cameras
 from src.services.camera_service import materialize_camera_inventory
@@ -99,11 +106,27 @@ from src.services.camera_service import build_camera_ops_report_index
 from src.services.camera_service import build_camera_inventory_ops_detail
 from src.services.camera_service import build_camera_inventory_summary
 from src.services.database_diagnostics_service import build_database_diagnostics
+from src.services.discovery_service import (
+    build_candidate_lineage,
+    build_discovery_campaign_detail,
+    build_discovery_export_summary,
+    build_discovery_ops_summary,
+    build_source_candidate_detail,
+    check_candidate_health,
+    create_discovery_campaign,
+    diff_discovery_inventories,
+    explain_candidate_score,
+    list_discovery_campaigns,
+    list_discovery_runs,
+    list_source_candidates,
+    promote_source_candidate,
+    revisit_discovery,
+    run_discovery_campaign,
+    scan_candidate_health,
+    suppress_source_candidate,
+)
 from src.services.entity_resolution_service import materialize_entities
-<<<<<<< HEAD
-=======
 from src.services.export_artifact_service import write_json_export_artifact, write_text_export_artifact
->>>>>>> 05aeee6 (chore: initialize repository)
 from src.services.event_export_service import build_event_export_bundle
 from src.services.event_fusion_service import materialize_fused_events
 from src.services.import_service import import_local_path
@@ -114,11 +137,6 @@ from src.services.redaction_service import enforce_export_redaction
 from src.services.runtime_snapshot_service import build_runtime_snapshot
 from src.services.runtime_snapshot_service import restore_runtime_snapshot
 from src.services.scheduler_runtime_service import run_scheduler_worker
-<<<<<<< HEAD
-from src.services.scheduler_service import create_scheduled_task, run_due_tasks, run_task, update_scheduled_task
-from src.services.storage_service import create_storage_object, list_storage_objects, promote_storage_object, transition_storage_object
-from src.services.source_service import (
-=======
 from src.services.scheduler_service import (
     build_scheduler_inventory_summary,
     build_scheduler_ops_export_summary,
@@ -141,7 +159,6 @@ from src.services.source_service import (
     build_source_ops_detail,
     build_source_ops_export_summary,
     build_source_ops_report_index,
->>>>>>> 05aeee6 (chore: initialize repository)
     create_source_definition,
     list_source_definitions,
     list_source_runs,
@@ -177,8 +194,6 @@ def parse_bbox(value: str | None) -> tuple[float | None, float | None, float | N
     return (min_lon, min_lat, max_lon, max_lat)
 
 
-<<<<<<< HEAD
-=======
 def parse_observation_backend(value: str) -> str:
     normalized = value.strip().lower()
     if normalized not in {"runtime", "clickhouse", "r2_archive"}:
@@ -186,7 +201,6 @@ def parse_observation_backend(value: str) -> str:
     return normalized
 
 
->>>>>>> 05aeee6 (chore: initialize repository)
 def resolve_report_since(hours: float | None) -> datetime | None:
     if hours is None:
         return None
@@ -236,6 +250,20 @@ def parse_json_object_option(value: str | None, option_name: str) -> dict[str, o
     if not isinstance(parsed, dict):
         raise typer.BadParameter(f"{option_name} must decode to a JSON object.")
     return parsed
+
+
+def parse_json_value_option(value: str | None, option_name: str) -> object | None:
+    if value is None:
+        return None
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise typer.BadParameter(f"{option_name} must be valid JSON.") from exc
+
+
+def echo_model_json(schema_cls: type, value: object) -> None:
+    payload = schema_cls.model_validate(value).model_dump(mode="json")
+    typer.echo(json.dumps(payload, indent=2, sort_keys=True))
 
 
 def resolve_scheduler_poll_seconds(value: float | None) -> float:
@@ -294,8 +322,6 @@ def doctor(output_path: Path | None = None) -> None:
         session.close()
 
 
-<<<<<<< HEAD
-=======
 @app.command("show-clickhouse-status")
 def show_clickhouse_status() -> None:
     serializable = TypeAdapter(ClickHouseDiagnosticsRead).validate_python(
@@ -465,7 +491,6 @@ def rehydrate_clickhouse_observations_command(archive_glob_url: str) -> None:
         session.close()
 
 
->>>>>>> 05aeee6 (chore: initialize repository)
 @app.command("init-db")
 def init_database() -> None:
     init_db()
@@ -737,226 +762,6 @@ def add_source_http_xml(
         session.close()
 
 
-@app.command("add-source-http-jsonl")
-def add_source_http_jsonl(
-    name: str,
-    target_uri: str,
-    layer: str,
-    notes: str = "",
-    integrity_source: bool = False,
-    timeout_seconds: float = 30.0,
-    retry_attempts: int = 3,
-    retry_backoff_seconds: float = 0.0,
-    skip_unchanged: bool = True,
-    header: list[str] = typer.Option(default_factory=list),
-    basic_auth_username: str | None = None,
-    basic_auth_password_env: str | None = None,
-) -> None:
-    init_db()
-    session = get_session_factory()()
-    try:
-        source = create_source_definition(
-            session,
-            SourceDefinitionCreate(
-                name=name,
-                source_kind="http_jsonl",
-                layer_key=layer,
-                target_uri=target_uri,
-                notes=notes,
-                integrity_source=integrity_source,
-                metadata_json=build_http_source_metadata(
-                    timeout_seconds=timeout_seconds,
-                    retry_attempts=retry_attempts,
-                    retry_backoff_seconds=retry_backoff_seconds,
-                    skip_unchanged=skip_unchanged,
-                    header=header,
-                    basic_auth_username=basic_auth_username,
-                    basic_auth_password_env=basic_auth_password_env,
-                ),
-            ),
-        )
-        print_banner()
-        typer.echo(f"source {source.source_id} created for {source.target_uri}")
-    finally:
-        session.close()
-
-
-@app.command("add-source-http-csv")
-def add_source_http_csv(
-    name: str,
-    target_uri: str,
-    layer: str,
-    notes: str = "",
-    integrity_source: bool = False,
-    timeout_seconds: float = 30.0,
-    retry_attempts: int = 3,
-    retry_backoff_seconds: float = 0.0,
-    skip_unchanged: bool = True,
-    header: list[str] = typer.Option(default_factory=list),
-    basic_auth_username: str | None = None,
-    basic_auth_password_env: str | None = None,
-) -> None:
-    init_db()
-    session = get_session_factory()()
-    try:
-        source = create_source_definition(
-            session,
-            SourceDefinitionCreate(
-                name=name,
-                source_kind="http_csv",
-                layer_key=layer,
-                target_uri=target_uri,
-                notes=notes,
-                integrity_source=integrity_source,
-                metadata_json=build_http_source_metadata(
-                    timeout_seconds=timeout_seconds,
-                    retry_attempts=retry_attempts,
-                    retry_backoff_seconds=retry_backoff_seconds,
-                    skip_unchanged=skip_unchanged,
-                    header=header,
-                    basic_auth_username=basic_auth_username,
-                    basic_auth_password_env=basic_auth_password_env,
-                ),
-            ),
-        )
-        print_banner()
-        typer.echo(f"source {source.source_id} created for {source.target_uri}")
-    finally:
-        session.close()
-
-
-@app.command("add-source-rss")
-def add_source_rss(
-    name: str,
-    target_uri: str,
-    layer: str,
-    notes: str = "",
-    integrity_source: bool = False,
-    timeout_seconds: float = 30.0,
-    retry_attempts: int = 3,
-    retry_backoff_seconds: float = 0.0,
-    skip_unchanged: bool = True,
-    header: list[str] = typer.Option(default_factory=list),
-    basic_auth_username: str | None = None,
-    basic_auth_password_env: str | None = None,
-) -> None:
-    init_db()
-    session = get_session_factory()()
-    try:
-        source = create_source_definition(
-            session,
-            SourceDefinitionCreate(
-                name=name,
-                source_kind="rss",
-                layer_key=layer,
-                target_uri=target_uri,
-                notes=notes,
-                integrity_source=integrity_source,
-                metadata_json=build_http_source_metadata(
-                    timeout_seconds=timeout_seconds,
-                    retry_attempts=retry_attempts,
-                    retry_backoff_seconds=retry_backoff_seconds,
-                    skip_unchanged=skip_unchanged,
-                    header=header,
-                    basic_auth_username=basic_auth_username,
-                    basic_auth_password_env=basic_auth_password_env,
-                ),
-            ),
-        )
-        print_banner()
-        typer.echo(f"source {source.source_id} created for {source.target_uri}")
-    finally:
-        session.close()
-
-
-@app.command("add-source-arcgis-feature-json")
-def add_source_arcgis_feature_json(
-    name: str,
-    target_uri: str,
-    layer: str,
-    notes: str = "",
-    integrity_source: bool = False,
-    timeout_seconds: float = 30.0,
-    retry_attempts: int = 3,
-    retry_backoff_seconds: float = 0.0,
-    skip_unchanged: bool = True,
-    header: list[str] = typer.Option(default_factory=list),
-    basic_auth_username: str | None = None,
-    basic_auth_password_env: str | None = None,
-) -> None:
-    init_db()
-    session = get_session_factory()()
-    try:
-        source = create_source_definition(
-            session,
-            SourceDefinitionCreate(
-                name=name,
-                source_kind="arcgis_feature_json",
-                layer_key=layer,
-                target_uri=target_uri,
-                notes=notes,
-                integrity_source=integrity_source,
-                metadata_json=build_http_source_metadata(
-                    timeout_seconds=timeout_seconds,
-                    retry_attempts=retry_attempts,
-                    retry_backoff_seconds=retry_backoff_seconds,
-                    skip_unchanged=skip_unchanged,
-                    header=header,
-                    basic_auth_username=basic_auth_username,
-                    basic_auth_password_env=basic_auth_password_env,
-                ),
-            ),
-        )
-        print_banner()
-        typer.echo(f"source {source.source_id} created for {source.target_uri}")
-    finally:
-        session.close()
-
-
-@app.command("add-source-ckan-package-search")
-def add_source_ckan_package_search(
-    name: str,
-    target_uri: str,
-    layer: str,
-    notes: str = "",
-    integrity_source: bool = False,
-    timeout_seconds: float = 30.0,
-    retry_attempts: int = 3,
-    retry_backoff_seconds: float = 0.0,
-    skip_unchanged: bool = True,
-    header: list[str] = typer.Option(default_factory=list),
-    basic_auth_username: str | None = None,
-    basic_auth_password_env: str | None = None,
-) -> None:
-    init_db()
-    session = get_session_factory()()
-    try:
-        source = create_source_definition(
-            session,
-            SourceDefinitionCreate(
-                name=name,
-                source_kind="ckan_package_search",
-                layer_key=layer,
-                target_uri=target_uri,
-                notes=notes,
-                integrity_source=integrity_source,
-                metadata_json=build_http_source_metadata(
-                    timeout_seconds=timeout_seconds,
-                    retry_attempts=retry_attempts,
-                    retry_backoff_seconds=retry_backoff_seconds,
-                    skip_unchanged=skip_unchanged,
-                    header=header,
-                    basic_auth_username=basic_auth_username,
-                    basic_auth_password_env=basic_auth_password_env,
-                ),
-            ),
-        )
-        print_banner()
-        typer.echo(f"source {source.source_id} created for {source.target_uri}")
-    finally:
-        session.close()
-
-
 @app.command("list-sources")
 def list_sources() -> None:
     init_db()
@@ -1045,8 +850,6 @@ def list_source_runs_command() -> None:
         session.close()
 
 
-<<<<<<< HEAD
-=======
 @app.command("show-source-ops")
 def show_source_ops_command(source_id: int) -> None:
     init_db()
@@ -1191,7 +994,6 @@ def export_source_summary_command(
         session.close()
 
 
->>>>>>> 05aeee6 (chore: initialize repository)
 @app.command("materialize-cameras")
 def materialize_cameras_command(
     layer: str | None = None,
@@ -1208,8 +1010,6 @@ def materialize_cameras_command(
             limit=limit,
             actor="cli_camera_registry",
         )
-<<<<<<< HEAD
-=======
         source_result = materialize_camera_source_inventory(
             session,
             layer_key=layer,
@@ -1220,18 +1020,14 @@ def materialize_cameras_command(
         result["source_created_count"] = int(source_result["created_count"])
         result["source_updated_count"] = int(source_result["updated_count"])
         result["source_scanned_endpoint_count"] = int(source_result["scanned_endpoint_count"])
->>>>>>> 05aeee6 (chore: initialize repository)
         serializable = TypeAdapter(CameraMaterializationResponse).validate_python(result).model_dump(mode="json")
         print_banner()
         typer.echo(
             f"scanned={serializable['scanned_count']} created={serializable['created_count']} updated={serializable['updated_count']}"
         )
-<<<<<<< HEAD
-=======
         typer.echo(
             f"source_candidates created={serializable['source_created_count']} updated={serializable['source_updated_count']} scanned_endpoints={serializable['source_scanned_endpoint_count']}"
         )
->>>>>>> 05aeee6 (chore: initialize repository)
         for camera in serializable["cameras"]:
             typer.echo(
                 f"{camera['camera_inventory_id']} | {camera['name']} | {camera['status']} | active={camera['active']} | layer={camera['layer_key']}"
@@ -1240,8 +1036,6 @@ def materialize_cameras_command(
         session.close()
 
 
-<<<<<<< HEAD
-=======
 @app.command("materialize-camera-sources")
 def materialize_camera_sources_command(
     layer: str | None = None,
@@ -1273,7 +1067,6 @@ def materialize_camera_sources_command(
         session.close()
 
 
->>>>>>> 05aeee6 (chore: initialize repository)
 @app.command("list-cameras")
 def list_cameras_command(
     layer: str | None = None,
@@ -1308,8 +1101,6 @@ def list_cameras_command(
         session.close()
 
 
-<<<<<<< HEAD
-=======
 @app.command("list-camera-sources")
 def list_camera_sources_command(
     layer: str | None = None,
@@ -1342,7 +1133,6 @@ def list_camera_sources_command(
         session.close()
 
 
->>>>>>> 05aeee6 (chore: initialize repository)
 @app.command("show-camera-summary")
 def show_camera_summary_command(
     layer: str | None = None,
@@ -1384,8 +1174,6 @@ def show_camera_summary_command(
         session.close()
 
 
-<<<<<<< HEAD
-=======
 @app.command("show-camera-source-summary")
 def show_camera_source_summary_command(
     layer: str | None = None,
@@ -1424,7 +1212,6 @@ def show_camera_source_summary_command(
         session.close()
 
 
->>>>>>> 05aeee6 (chore: initialize repository)
 @app.command("show-camera-ops")
 def show_camera_ops_command(camera_inventory_id: int) -> None:
     init_db()
@@ -1463,8 +1250,6 @@ def show_camera_ops_command(camera_inventory_id: int) -> None:
         session.close()
 
 
-<<<<<<< HEAD
-=======
 @app.command("show-camera-source-ops")
 def show_camera_source_ops_command(camera_source_inventory_id: int) -> None:
     init_db()
@@ -1553,7 +1338,6 @@ def show_camera_source_report_index_command(
         session.close()
 
 
->>>>>>> 05aeee6 (chore: initialize repository)
 @app.command("show-camera-report-index")
 def show_camera_report_index_command(
     layer: str | None = None,
@@ -1609,8 +1393,6 @@ def show_camera_report_index_command(
         session.close()
 
 
-<<<<<<< HEAD
-=======
 @app.command("export-camera-source-summary")
 def export_camera_source_summary_command(
     output_path: Path,
@@ -1660,7 +1442,6 @@ def export_camera_source_summary_command(
         session.close()
 
 
->>>>>>> 05aeee6 (chore: initialize repository)
 @app.command("export-camera-summary")
 def export_camera_summary_command(
     output_path: Path,
@@ -1694,10 +1475,6 @@ def export_camera_summary_command(
             stale_camera_limit=stale_camera_limit,
         )
         serializable = TypeAdapter(CameraOpsExportSummaryRead).validate_python(report).model_dump(mode="json")
-<<<<<<< HEAD
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(json.dumps(serializable, indent=2), encoding="utf-8")
-=======
         write_json_export_artifact(
             session,
             payload=serializable,
@@ -1710,7 +1487,6 @@ def export_camera_summary_command(
             metadata_json=serializable["filters_json"],
             actor="cli_export",
         )
->>>>>>> 05aeee6 (chore: initialize repository)
         print_banner()
         typer.echo(f"exported camera summary to {output_path}")
     finally:
@@ -1888,10 +1664,6 @@ def export_event_product(
             enforce_export_redaction(product, max_redaction_level)
         except ValueError as exc:
             raise typer.BadParameter(str(exc)) from exc
-<<<<<<< HEAD
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(product.body_text, encoding="utf-8")
-=======
         write_text_export_artifact(
             session,
             body_text=product.body_text,
@@ -1909,7 +1681,6 @@ def export_event_product(
             },
             actor="cli_export",
         )
->>>>>>> 05aeee6 (chore: initialize repository)
         print_banner()
         typer.echo(f"exported {product.product_type} to {output_path}")
     finally:
@@ -1930,10 +1701,6 @@ def export_event_bundle(
         except ValueError as exc:
             raise typer.BadParameter(str(exc)) from exc
         serializable = TypeAdapter(EventExportBundleRead).validate_python(bundle).model_dump(mode="json")
-<<<<<<< HEAD
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(json.dumps(serializable, indent=2), encoding="utf-8")
-=======
         write_json_export_artifact(
             session,
             payload=serializable,
@@ -1951,7 +1718,6 @@ def export_event_bundle(
             },
             actor="cli_export",
         )
->>>>>>> 05aeee6 (chore: initialize repository)
         print_banner()
         typer.echo(f"exported event bundle to {output_path}")
     finally:
@@ -1965,19 +1731,13 @@ def query_observations_command(
     source_domain: str | None = None,
     trust_level: str | None = None,
     limit: int = 50,
-<<<<<<< HEAD
-=======
     backend: str = "runtime",
     archive_glob_url: str | None = None,
->>>>>>> 05aeee6 (chore: initialize repository)
 ) -> None:
     init_db()
     session = get_session_factory()()
     try:
-<<<<<<< HEAD
-=======
         query_backend = parse_observation_backend(backend)
->>>>>>> 05aeee6 (chore: initialize repository)
         min_lon, min_lat, max_lon, max_lat = parse_bbox(bbox)
         rows = query_observations(
             session,
@@ -1989,11 +1749,8 @@ def query_observations_command(
             max_lon=max_lon,
             max_lat=max_lat,
             limit=limit,
-<<<<<<< HEAD
-=======
             backend=query_backend,
             archive_glob_url=archive_glob_url,
->>>>>>> 05aeee6 (chore: initialize repository)
         )
         print_banner()
         for row in rows:
@@ -2008,11 +1765,6 @@ def query_observations_command(
 def cross_verify_command(
     bbox: str | None = None,
     layer: str | None = None,
-<<<<<<< HEAD
-    limit: int = 200,
-    time_window_minutes: int = 60,
-    distance_km: float = 25.0,
-=======
     source_domain: str | None = None,
     trust_level: str | None = None,
     limit: int = 200,
@@ -2020,34 +1772,24 @@ def cross_verify_command(
     distance_km: float = 25.0,
     backend: str = "runtime",
     archive_glob_url: str | None = None,
->>>>>>> 05aeee6 (chore: initialize repository)
 ) -> None:
     init_db()
     session = get_session_factory()()
     try:
-<<<<<<< HEAD
-=======
         query_backend = parse_observation_backend(backend)
->>>>>>> 05aeee6 (chore: initialize repository)
         min_lon, min_lat, max_lon, max_lat = parse_bbox(bbox)
         rows = query_observations(
             session,
             layer_key=layer,
-<<<<<<< HEAD
-=======
             source_domain=source_domain,
             trust_level=trust_level,
->>>>>>> 05aeee6 (chore: initialize repository)
             min_lon=min_lon,
             min_lat=min_lat,
             max_lon=max_lon,
             max_lat=max_lat,
             limit=limit,
-<<<<<<< HEAD
-=======
             backend=query_backend,
             archive_glob_url=archive_glob_url,
->>>>>>> 05aeee6 (chore: initialize repository)
         )
         summaries = build_cross_verification_summaries(
             session,
@@ -2165,8 +1907,6 @@ def list_storage_objects_command(
         session.close()
 
 
-<<<<<<< HEAD
-=======
 @app.command("show-storage-report")
 def show_storage_report_command(limit: int = 25) -> None:
     init_db()
@@ -2194,7 +1934,6 @@ def show_storage_report_command(limit: int = 25) -> None:
         session.close()
 
 
->>>>>>> 05aeee6 (chore: initialize repository)
 @app.command("add-storage-object")
 def add_storage_object_command(
     object_key: str,
@@ -2243,8 +1982,6 @@ def add_storage_object_command(
         session.close()
 
 
-<<<<<<< HEAD
-=======
 @app.command("run-storage-lifecycle")
 def run_storage_lifecycle_command(
     retention_class: str | None = None,
@@ -2274,7 +2011,6 @@ def run_storage_lifecycle_command(
         session.close()
 
 
->>>>>>> 05aeee6 (chore: initialize repository)
 @app.command("promote-storage-object")
 def promote_storage_object_command(
     storage_object_id: int,
@@ -2367,8 +2103,6 @@ def show_operations_report(hours: float | None = 24.0, limit: int = 10) -> None:
         typer.echo(
             f"events={summary['event_count']} entities={summary['entity_count']} observations={summary['observation_count']}"
         )
-<<<<<<< HEAD
-=======
         storage_report = report["storage_report"]
         typer.echo(
             "storage="
@@ -2400,7 +2134,19 @@ def show_operations_report(hours: float | None = 24.0, limit: int = 10) -> None:
         typer.echo(
             f"source_sync_tasks={source_report['sync_task_count']} source_sync_runs={source_report['sync_run_count']} source_sync_failures={source_report['sync_failure_count']}"
         )
->>>>>>> 05aeee6 (chore: initialize repository)
+        discovery_summary = report.get("discovery_ops_summary")
+        if discovery_summary is not None:
+            discovery_health = discovery_summary["health_summary"]
+            discovery_inventory = discovery_summary["inventory_summary"]
+            typer.echo(
+                "discovery="
+                f"{discovery_health['status']} campaigns={discovery_health['campaign_count']} "
+                f"running={discovery_health['running_run_count']} "
+                f"candidates={discovery_inventory['total_count']} "
+                f"promoted={discovery_inventory['promoted_count']} "
+                f"failing={discovery_inventory['failing_count']} "
+                f"stale={discovery_inventory['stale_count']}"
+            )
         camera_summary = report["camera_inventory_summary"]
         typer.echo(
             f"cameras={camera_summary['total_count']} active={camera_summary['active_count']} inactive={camera_summary['inactive_count']} stale={camera_summary['stale_count']}"
@@ -2409,8 +2155,6 @@ def show_operations_report(hours: float | None = 24.0, limit: int = 10) -> None:
         typer.echo(
             f"camera_refresh_tasks={camera_report['refresh_task_count']} refresh_runs={camera_report['refresh_run_count']} refresh_failures={camera_report['refresh_failure_count']}"
         )
-<<<<<<< HEAD
-=======
         camera_source_summary = report["camera_source_inventory_summary"]
         typer.echo(
             f"camera_sources={camera_source_summary['total_count']} active={camera_source_summary['active_count']} ready={camera_source_summary['ready_count']} review={camera_source_summary['review_count']} candidate={camera_source_summary['candidate_count']} graduated={camera_source_summary['graduated_count']}"
@@ -2419,7 +2163,6 @@ def show_operations_report(hours: float | None = 24.0, limit: int = 10) -> None:
         typer.echo(
             f"camera_source_refresh_tasks={camera_source_report['refresh_task_count']} refresh_runs={camera_source_report['refresh_run_count']} refresh_failures={camera_source_report['refresh_failure_count']}"
         )
->>>>>>> 05aeee6 (chore: initialize repository)
     finally:
         session.close()
 
@@ -2432,10 +2175,6 @@ def export_operations_report(output_path: Path, hours: float | None = 24.0, limi
         since = resolve_report_since(hours)
         report = build_operations_report(session, since=since, limit=limit)
         serializable = TypeAdapter(OperationsReportRead).validate_python(report).model_dump(mode="json")
-<<<<<<< HEAD
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(json.dumps(serializable, indent=2), encoding="utf-8")
-=======
         write_json_export_artifact(
             session,
             payload=serializable,
@@ -2453,7 +2192,6 @@ def export_operations_report(output_path: Path, hours: float | None = 24.0, limi
             },
             actor="cli_export",
         )
->>>>>>> 05aeee6 (chore: initialize repository)
         print_banner()
         typer.echo(f"exported operations report to {output_path}")
     finally:
@@ -2467,10 +2205,6 @@ def export_runtime_snapshot_command(output_path: Path) -> None:
     try:
         snapshot = build_runtime_snapshot(session)
         serializable = TypeAdapter(RuntimeSnapshotRead).validate_python(snapshot).model_dump(mode="json")
-<<<<<<< HEAD
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(json.dumps(serializable, indent=2), encoding="utf-8")
-=======
         write_json_export_artifact(
             session,
             payload=serializable,
@@ -2486,7 +2220,6 @@ def export_runtime_snapshot_command(output_path: Path) -> None:
             },
             actor="cli_export",
         )
->>>>>>> 05aeee6 (chore: initialize repository)
         print_banner()
         typer.echo(f"exported runtime snapshot to {output_path}")
     finally:
@@ -2615,8 +2348,6 @@ def add_source_sync_schedule(
         session.close()
 
 
-<<<<<<< HEAD
-=======
 @app.command("add-storage-lifecycle-schedule")
 def add_storage_lifecycle_schedule(
     name: str,
@@ -2725,7 +2456,6 @@ def add_clickhouse_archive_schedule(
         session.close()
 
 
->>>>>>> 05aeee6 (chore: initialize repository)
 @app.command("add-camera-refresh-schedule")
 def add_camera_refresh_schedule(
     name: str,
@@ -2876,8 +2606,6 @@ def add_event_fusion_schedule(
         session.close()
 
 
-<<<<<<< HEAD
-=======
 @app.command("show-scheduler-summary")
 def show_scheduler_summary_command() -> None:
     init_db()
@@ -2983,7 +2711,6 @@ def export_scheduler_summary_command(
         session.close()
 
 
->>>>>>> 05aeee6 (chore: initialize repository)
 @app.command("list-schedules")
 def list_schedules() -> None:
     init_db()
@@ -3143,6 +2870,592 @@ def update_schedule(
         typer.echo(
             f"task {task.task_id} | enabled={task.enabled} | every={task.interval_seconds}s | next={task.next_run_at}"
         )
+    finally:
+        session.close()
+
+
+@app.command("create-discovery-campaign")
+def create_discovery_campaign_command(
+    name: str,
+    description: str = "",
+    mode: str = "query_seeded",
+    status: str = "draft",
+    layer: str | None = None,
+    enabled: bool = True,
+    discovery_mode: list[str] = typer.Option(default_factory=list),
+    query: list[str] = typer.Option(default_factory=list),
+    seed: list[str] = typer.Option(default_factory=list),
+    search_template: list[str] = typer.Option(default_factory=list),
+    format_target: list[str] = typer.Option(default_factory=list),
+    locale: list[str] = typer.Option(default_factory=list),
+    language: list[str] = typer.Option(default_factory=list),
+    allow_domain: list[str] = typer.Option(default_factory=list),
+    deny_domain: list[str] = typer.Option(default_factory=list),
+    policy_json: str | None = None,
+    geo_json: str | None = None,
+    entities_json: str | None = None,
+    historical_backfill: bool = False,
+    recency_days: int | None = None,
+    max_depth: int = 2,
+    max_pages: int = 100,
+    max_candidates: int = 1000,
+) -> None:
+    parsed_policy = parse_json_object_option(policy_json, "--policy-json") or {}
+    parsed_geo = parse_json_object_option(geo_json, "--geo-json") or {}
+    parsed_entities = parse_json_value_option(entities_json, "--entities-json")
+    if parsed_entities is None:
+        entity_seeds: list[dict[str, object]] = []
+    elif isinstance(parsed_entities, dict):
+        entity_seeds = [parsed_entities]
+    elif isinstance(parsed_entities, list) and all(
+        isinstance(item, dict) for item in parsed_entities
+    ):
+        entity_seeds = parsed_entities
+    else:
+        raise typer.BadParameter("--entities-json must be an object or an array of objects.")
+
+    request_json: dict[str, object] = {}
+    if query:
+        request_json["queries"] = query
+    if search_template:
+        request_json["search_templates"] = search_template
+
+    payload = DiscoveryCampaignCreate(
+        name=name,
+        description=description,
+        mode=mode,
+        status=status,
+        enabled=enabled,
+        layer_key=layer,
+        query_text="\n".join(query),
+        modes_json=discovery_mode or [mode],
+        query_strings_json=query,
+        search_templates_json=search_template,
+        format_targets_json=format_target,
+        seed_urls_json=seed,
+        locale_variants_json=locale,
+        language_variants_json=language,
+        domain_allowlist_json=allow_domain,
+        domain_denylist_json=deny_domain,
+        target_geography_json=parsed_geo,
+        entity_seeds_json=entity_seeds,
+        historical_backfill=historical_backfill,
+        recency_days=recency_days,
+        max_depth=max_depth,
+        max_pages=max_pages,
+        max_candidates=max_candidates,
+        request_json=request_json,
+        crawl_policy_json=parsed_policy,
+    )
+
+    init_db()
+    session = get_session_factory()()
+    try:
+        campaign = create_discovery_campaign(session, payload, actor="cli_discovery")
+        serializable = DiscoveryCampaignRead.model_validate(campaign).model_dump(mode="json")
+        print_banner()
+        typer.echo(
+            f"campaign={serializable['campaign_id']} status={serializable['status']} "
+            f"mode={serializable['mode']} enabled={serializable['enabled']} name={serializable['name']}"
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.command("run-discovery")
+def run_discovery_command(
+    campaign_id: int,
+    resume: bool = True,
+    resume_run_id: int | None = None,
+    max_pages: int | None = None,
+    max_candidates: int | None = None,
+    max_seconds: float | None = None,
+    dry_run: bool = False,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        result = run_discovery_campaign(
+            session,
+            campaign_id,
+            DiscoveryRunRequest(
+                campaign_id=campaign_id,
+                actor="cli_discovery",
+                resume=resume,
+                resume_run_id=resume_run_id,
+                max_pages=max_pages,
+                max_candidates=max_candidates,
+                max_seconds=max_seconds,
+                dry_run=dry_run,
+            ),
+            actor="cli_discovery",
+        )
+        print_banner()
+        echo_model_json(DiscoveryRunResultRead, result)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.command("list-discovery-campaigns")
+def list_discovery_campaigns_command(
+    status: str | None = None,
+    enabled: bool | None = typer.Option(default=None),
+    limit: int = 200,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        rows = list_discovery_campaigns(
+            session,
+            status=status,
+            enabled=enabled,
+            limit=limit,
+        )
+        adapter = TypeAdapter(list[DiscoveryCampaignRead])
+        serializable = adapter.dump_python(adapter.validate_python(rows), mode="json")
+        print_banner()
+        for row in serializable:
+            typer.echo(
+                f"{row['campaign_id']} | {row['status']} | {row['mode']} | "
+                f"enabled={row['enabled']} | {row['name']}"
+            )
+    finally:
+        session.close()
+
+
+@app.command("show-discovery-campaign")
+def show_discovery_campaign_command(campaign_id: int) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        detail = build_discovery_campaign_detail(session, campaign_id)
+        campaign_value = detail.get("campaign", detail) if isinstance(detail, dict) else detail
+        print_banner()
+        echo_model_json(DiscoveryCampaignRead, campaign_value)
+        if isinstance(detail, dict):
+            for key in ("run_count", "candidate_count", "frontier_count", "promotion_count"):
+                if key in detail:
+                    typer.echo(f"{key}={detail[key]}")
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.command("list-discovery-runs")
+def list_discovery_runs_command(
+    campaign_id: int | None = None,
+    status: str | None = None,
+    limit: int = 200,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        rows = list_discovery_runs(
+            session,
+            campaign_id=campaign_id,
+            status=status,
+            limit=limit,
+        )
+        adapter = TypeAdapter(list[DiscoveryRunRead])
+        serializable = adapter.dump_python(adapter.validate_python(rows), mode="json")
+        print_banner()
+        for row in serializable:
+            run_id = row.get("discovery_run_id", row.get("run_id"))
+            typer.echo(
+                f"{run_id} | campaign={row['campaign_id']} | {row['status']} | "
+                f"started={row.get('started_at')} | finished={row.get('finished_at')}"
+            )
+    finally:
+        session.close()
+
+
+@app.command("list-discovery-candidates")
+def list_discovery_candidates_command(
+    campaign_id: int | None = None,
+    run_id: int | None = None,
+    status: str | None = None,
+    outcome: str | None = None,
+    candidate_type: str | None = None,
+    domain: str | None = None,
+    min_score: float | None = None,
+    limit: int = 200,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        rows = list_source_candidates(
+            session,
+            campaign_id=campaign_id,
+            run_id=run_id,
+            status=status,
+            score_bucket=outcome,
+            candidate_type=candidate_type,
+            domain=domain,
+            min_score=min_score,
+            limit=limit,
+        )
+        adapter = TypeAdapter(list[SourceCandidateRead])
+        serializable = adapter.dump_python(adapter.validate_python(rows), mode="json")
+        print_banner()
+        for row in serializable:
+            typer.echo(
+                f"{row['candidate_id']} | score={row['score']} | {row['score_bucket']} | "
+                f"{row['status']} | {row['candidate_type']} | {row['canonical_url']}"
+            )
+    finally:
+        session.close()
+
+
+@app.command("show-discovery-candidate")
+def show_discovery_candidate_command(candidate_id: int) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        detail = build_source_candidate_detail(session, candidate_id)
+        print_banner()
+        echo_model_json(SourceCandidateDetailRead, detail)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.command("explain-discovery-candidate")
+def explain_discovery_candidate_command(candidate_id: int) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        explanation = explain_candidate_score(session, candidate_id)
+        print_banner()
+        echo_model_json(CandidateScoreExplanationRead, explanation)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.command("show-discovery-lineage")
+def show_discovery_lineage_command(candidate_id: int) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        lineage = build_candidate_lineage(session, candidate_id)
+        print_banner()
+        echo_model_json(DiscoveryLineageSummaryRead, lineage)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.command("promote-discovery-candidate")
+def promote_discovery_candidate_command(
+    candidate_id: int,
+    reason: str,
+    source_kind: str | None = None,
+    source_name: str | None = None,
+    layer: str | None = None,
+    enabled: bool = True,
+    integrity_source: bool = False,
+    create_schedule: bool = True,
+    schedule_interval_seconds: int | None = None,
+    metadata_json: str | None = None,
+) -> None:
+    parsed_metadata = parse_json_object_option(metadata_json, "--metadata-json") or {}
+    init_db()
+    session = get_session_factory()()
+    try:
+        payload = CandidatePromotionRequest(
+            candidate_id=candidate_id,
+            source_kind=source_kind,
+            recommended_source_kind=source_kind,
+            source_name=source_name,
+            layer_key=layer,
+            enabled=enabled,
+            integrity_source=integrity_source,
+            create_schedule=create_schedule,
+            schedule_interval_seconds=schedule_interval_seconds,
+            reason=reason,
+            actor="cli_discovery",
+            metadata_json=parsed_metadata,
+        )
+        decision = promote_source_candidate(
+            session,
+            candidate_id,
+            payload,
+            actor="cli_discovery",
+        )
+        print_banner()
+        echo_model_json(CandidatePromotionResultRead, decision)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.command("suppress-discovery-candidate")
+def suppress_discovery_candidate_command(
+    candidate_id: int,
+    reason: str,
+    reason_code: str = "operator_suppressed",
+    expires_at: datetime | None = None,
+    metadata_json: str | None = None,
+) -> None:
+    parsed_metadata = parse_json_object_option(metadata_json, "--metadata-json") or {}
+    init_db()
+    session = get_session_factory()()
+    try:
+        suppression = suppress_source_candidate(
+            session,
+            candidate_id,
+            CandidateSuppressionRequest(
+                candidate_id=candidate_id,
+                scope="candidate",
+                reason_code=reason_code,
+                reason=reason,
+                actor="cli_discovery",
+                expires_at=expires_at,
+                metadata_json=parsed_metadata,
+            ),
+            actor="cli_discovery",
+        )
+        print_banner()
+        echo_model_json(CandidateSuppressionRead, suppression)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.command("revisit-discovery")
+def revisit_discovery_command(
+    candidate_id: int | None = None,
+    domain: str | None = None,
+    campaign_id: int | None = None,
+    force: bool = False,
+    include_suppressed: bool = False,
+    priority: float = 0.0,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        result = revisit_discovery(
+            session,
+            DiscoveryRevisitRequest(
+                candidate_id=candidate_id,
+                normalized_domain=domain,
+                campaign_id=campaign_id,
+                force=force,
+                include_suppressed=include_suppressed,
+                priority=priority,
+                actor="cli_discovery",
+            ),
+            actor="cli_discovery",
+        )
+        print_banner()
+        echo_model_json(DiscoveryRevisitResultRead, result)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.command("check-discovery-candidate-health")
+def check_discovery_candidate_health_command(candidate_id: int) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        result = check_candidate_health(session, candidate_id, actor="cli_discovery")
+        print_banner()
+        echo_model_json(CandidateHealthCheckRead, result)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.command("scan-discovery-health")
+def scan_discovery_health_command(
+    candidate_id: int | None = None,
+    domain: str | None = None,
+    campaign_id: int | None = None,
+    limit: int = 100,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        result = scan_candidate_health(
+            session,
+            CandidateHealthScanRequest(
+                candidate_id=candidate_id,
+                normalized_domain=domain,
+                campaign_id=campaign_id,
+                limit=limit,
+                actor="cli_discovery",
+            ),
+            actor="cli_discovery",
+        )
+        print_banner()
+        echo_model_json(CandidateHealthScanResultRead, result)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.command("list-failing-discovery-candidates")
+def list_failing_discovery_candidates_command(
+    stale_after_hours: float = 24.0,
+    limit: int = 100,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        summary = build_discovery_ops_summary(
+            session,
+            stale_after_hours=stale_after_hours,
+            limit=limit,
+        )
+        serializable = DiscoveryOpsSummaryRead.model_validate(summary).model_dump(mode="json")
+        print_banner()
+        emitted = False
+        for key in ("failing_candidates", "stale_candidates", "quarantined_candidates"):
+            rows = serializable.get(key, [])
+            if not rows:
+                continue
+            emitted = True
+            typer.echo(f"{key}:")
+            for row in rows:
+                typer.echo(
+                    f"  {row.get('candidate_id')} | {row.get('status')} | "
+                    f"score={row.get('score')} | {row.get('canonical_url')}"
+                )
+        if not emitted:
+            typer.echo("no failing, stale, or quarantined candidates")
+    finally:
+        session.close()
+
+
+@app.command("show-discovery-ops")
+def show_discovery_ops_command(
+    stale_after_hours: float = 24.0,
+    limit: int = 25,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        summary = build_discovery_ops_summary(
+            session,
+            stale_after_hours=stale_after_hours,
+            limit=limit,
+        )
+        print_banner()
+        echo_model_json(DiscoveryOpsSummaryRead, summary)
+    finally:
+        session.close()
+
+
+@app.command("export-discovery-summary")
+def export_discovery_summary_command(
+    output_path: Path,
+    stale_after_hours: float = 24.0,
+    candidate_limit: int = 500,
+    report_limit: int = 25,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        report = build_discovery_export_summary(
+            session,
+            stale_after_hours=stale_after_hours,
+            candidate_limit=candidate_limit,
+            report_limit=report_limit,
+        )
+        serializable = DiscoveryExportSummaryRead.model_validate(report).model_dump(mode="json")
+        write_json_export_artifact(
+            session,
+            payload=serializable,
+            object_kind="discovery_summary_export",
+            owner_type="discovery_export",
+            owner_id="scoped",
+            output_path=output_path,
+            source_uri="/api/discovery/export/summary",
+            observed_at=report["generated_at"],
+            metadata_json=serializable.get("filters_json", {}),
+            actor="cli_export",
+        )
+        print_banner()
+        typer.echo(f"exported discovery summary to {output_path}")
+    finally:
+        session.close()
+
+
+@app.command("diff-discovery-inventories")
+def diff_discovery_inventories_command(
+    from_run_id: int,
+    to_run_id: int,
+    campaign_id: int | None = None,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        result = diff_discovery_inventories(
+            session,
+            from_run_id=from_run_id,
+            to_run_id=to_run_id,
+            campaign_id=campaign_id,
+        )
+        print_banner()
+        echo_model_json(DiscoveryInventoryDiffRead, result)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.command("add-discovery-schedule")
+def add_discovery_schedule_command(
+    name: str,
+    campaign_id: int,
+    interval_seconds: int,
+    resume: bool = True,
+    max_pages: int | None = None,
+    notes: str = "",
+    retry_attempts: int = 1,
+    retry_backoff_seconds: float = 0.0,
+) -> None:
+    payload_json: dict[str, object] = {
+        "campaign_id": campaign_id,
+        "resume": resume,
+    }
+    if max_pages is not None:
+        payload_json["max_pages"] = max_pages
+    init_db()
+    session = get_session_factory()()
+    try:
+        task = create_scheduled_task(
+            session,
+            ScheduledTaskCreate(
+                name=name,
+                task_type="discovery_campaign",
+                interval_seconds=interval_seconds,
+                retry_attempts=retry_attempts,
+                retry_backoff_seconds=retry_backoff_seconds,
+                notes=notes,
+                payload_json=payload_json,
+            ),
+        )
+        print_banner()
+        typer.echo(
+            f"scheduled task {task.task_id} created for discovery campaign {campaign_id}"
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
     finally:
         session.close()
 
