@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import urlencode, urlparse, urlunparse
 from urllib.request import urlopen
 
 import typer
@@ -41,7 +42,6 @@ from src.schemas import (
     AlertOpsReportIndexRead,
     CameraSourceOpsExportSummaryRead,
     CameraSourceMaterializationResponse,
-    CameraSourceInventoryRead,
     CameraSourceOpsReportIndexRead,
     CameraSourceSummaryRead,
     CameraSourceVerificationResponse,
@@ -92,6 +92,9 @@ from src.schemas import (
     SourceOpsExportSummaryRead,
     SourceOpsReportIndexRead,
     WebSearchProviderRead,
+    WatchCreate,
+    WatchScheduleCreate,
+    WatchUpdate,
 )
 from src.services.camera_source_service import (
     build_camera_source_inventory_ops_detail,
@@ -155,6 +158,7 @@ from src.services.platform_runtime_service import run_platform_runtime_cycle
 from src.services.platform_runtime_worker_service import run_platform_runtime_worker
 from src.services.runtime_readiness_service import build_runtime_readiness
 from src.services.redaction_service import enforce_export_redaction
+from src.services.runtime_bundle_service import export_runtime_bundle, restore_runtime_bundle
 from src.services.runtime_snapshot_service import (
     build_runtime_snapshot_section_counts,
     export_runtime_snapshot_artifacts,
@@ -210,6 +214,20 @@ from src.services.source_service import (
     update_source_definition,
 )
 from src.services.trust_service import seed_default_integrity_sources
+from src.services.watch_service import (
+    attach_watch_schedule,
+    create_watch,
+    evaluate_watch,
+    get_watch,
+    list_watch_alerts,
+    list_watch_evidence,
+    list_watch_runs,
+    list_watches,
+    pause_watch,
+    render_watch_alert_rss,
+    resume_watch,
+    update_watch,
+)
 from src.services.worker_status_service import build_worker_status_summary, evaluate_worker_health
 
 app = typer.Typer(help="11Writer Forte backend operator CLI")
@@ -329,6 +347,16 @@ def parse_mapping_option(values: list[str], option_name: str) -> dict[str, str]:
     return mapping
 
 
+def derive_watch_slug(name: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", name.strip().lower()).strip("-")
+    if not slug:
+        raise typer.BadParameter(
+            "Watch name must contain at least one letter or number, or provide --slug.",
+            param_hint="--slug",
+        )
+    return slug
+
+
 def resolve_scheduler_poll_seconds(value: float | None) -> float:
     if value is not None:
         return max(0.0, value)
@@ -424,7 +452,14 @@ def verify_runtime_snapshot_artifact(
         errors.append("manifest database_revision does not match the snapshot payload.")
     if manifest.database_head_revision != snapshot.database_head_revision:
         errors.append("manifest database_head_revision does not match the snapshot payload.")
-    if manifest.section_counts != expected_section_counts:
+    normalized_manifest_section_counts = dict(manifest.section_counts)
+    for section_name, expected_count in expected_section_counts.items():
+        if section_name not in normalized_manifest_section_counts and expected_count == 0:
+            # Snapshots exported before the Watch Engine have no watch sections. The snapshot
+            # schema supplies empty lists for them, so a missing manifest count is equivalent
+            # to zero rather than a backup-format break.
+            normalized_manifest_section_counts[section_name] = 0
+    if normalized_manifest_section_counts != expected_section_counts:
         errors.append("manifest section_counts do not match the snapshot payload.")
     if manifest_row_counts != snapshot_row_counts:
         errors.append("manifest row_counts do not match the snapshot payload.")
@@ -4595,6 +4630,377 @@ def cross_verify_command(
         session.close()
 
 
+@app.command("add-watch")
+def add_watch_command(
+    name: str,
+    watch_type: str,
+    objective: str,
+    slug: str | None = None,
+    description: str = "",
+    state: str = "enabled",
+    source_id: int | None = None,
+    camera_inventory_id: int | None = None,
+    camera_source_inventory_id: int | None = None,
+    layer: str | None = None,
+    event_id: int | None = None,
+    geofence_id: int | None = None,
+    scheduled_task_id: int | None = None,
+    interval_seconds: int | None = None,
+    severity: str = "info",
+    rule_json: str | None = None,
+    notification_policy_json: str | None = None,
+    metadata_json: str | None = None,
+    provenance_json: str | None = None,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        rule_payload = parse_json_object_option(rule_json, "--rule-json") or {
+            "mode": watch_type,
+        }
+        notification_payload = parse_json_object_option(
+            notification_policy_json,
+            "--notification-policy-json",
+        ) or {
+            "api_enabled": True,
+            "rss_enabled": True,
+            "analysis_on_change": False,
+        }
+        watch = create_watch(
+            session,
+            WatchCreate(
+                name=name,
+                slug=slug or derive_watch_slug(name),
+                objective=objective,
+                description=description,
+                watch_type=watch_type,
+                state=state,
+                rule_json=rule_payload,
+                source_id=source_id,
+                camera_inventory_id=camera_inventory_id,
+                camera_source_inventory_id=camera_source_inventory_id,
+                layer_key=layer,
+                event_id=event_id,
+                geofence_id=geofence_id,
+                scheduled_task_id=scheduled_task_id,
+                interval_seconds=interval_seconds,
+                severity=severity,
+                notification_policy_json=notification_payload,
+                metadata_json=parse_json_object_option(metadata_json, "--metadata-json") or {},
+                provenance_json=(
+                    parse_json_object_option(provenance_json, "--provenance-json") or {}
+                ),
+            ),
+            actor="cli",
+        )
+        print_banner()
+        typer.echo(
+            f"watch={watch.watch_id} | slug={watch.slug} | type={watch.watch_type} "
+            f"| state={watch.state} | severity={watch.severity}"
+        )
+    finally:
+        session.close()
+
+
+@app.command("list-watches")
+def list_watches_command(
+    state: str | None = None,
+    watch_type: str | None = None,
+    limit: int = 200,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        rows = list_watches(session, state=state, watch_type=watch_type, limit=limit)
+        print_banner()
+        for watch in rows:
+            typer.echo(
+                f"{watch.watch_id} | {watch.slug} | {watch.watch_type} | state={watch.state} "
+                f"| severity={watch.severity} | next={watch.next_run_at} | {watch.name}"
+            )
+    finally:
+        session.close()
+
+
+@app.command("show-watch")
+def show_watch_command(watch_id: int) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        watch = get_watch(session, watch_id)
+        print_banner()
+        typer.echo(
+            f"watch={watch.watch_id} | name={watch.name} | slug={watch.slug} "
+            f"| type={watch.watch_type} | state={watch.state} | severity={watch.severity}"
+        )
+        typer.echo(f"objective={watch.objective}")
+        typer.echo(f"description={watch.description}")
+        typer.echo(
+            "references="
+            f"source:{watch.source_id},camera:{watch.camera_inventory_id},"
+            f"camera_source:{watch.camera_source_inventory_id},layer:{watch.layer_key},"
+            f"event:{watch.event_id},geofence:{watch.geofence_id},schedule:{watch.scheduled_task_id}"
+        )
+        typer.echo(f"rule_json={json.dumps(watch.rule_json, sort_keys=True)}")
+        typer.echo(
+            "notification_policy_json="
+            f"{json.dumps(watch.notification_policy_json, sort_keys=True)}"
+        )
+        typer.echo(
+            f"last_evaluated={watch.last_evaluated_at} | last_changed={watch.last_changed_at} "
+            f"| next={watch.next_run_at}"
+        )
+    finally:
+        session.close()
+
+
+@app.command("update-watch")
+def update_watch_command(
+    watch_id: int,
+    name: str | None = None,
+    slug: str | None = None,
+    objective: str | None = None,
+    description: str | None = None,
+    watch_type: str | None = None,
+    state: str | None = None,
+    source_id: int | None = None,
+    camera_inventory_id: int | None = None,
+    camera_source_inventory_id: int | None = None,
+    layer: str | None = None,
+    event_id: int | None = None,
+    geofence_id: int | None = None,
+    scheduled_task_id: int | None = None,
+    interval_seconds: int | None = None,
+    severity: str | None = None,
+    rule_json: str | None = None,
+    notification_policy_json: str | None = None,
+    metadata_json: str | None = None,
+    provenance_json: str | None = None,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        payload: dict[str, object] = {}
+        optional_values: dict[str, object | None] = {
+            "name": name,
+            "slug": slug,
+            "objective": objective,
+            "description": description,
+            "watch_type": watch_type,
+            "state": state,
+            "source_id": source_id,
+            "camera_inventory_id": camera_inventory_id,
+            "camera_source_inventory_id": camera_source_inventory_id,
+            "layer_key": layer,
+            "event_id": event_id,
+            "geofence_id": geofence_id,
+            "scheduled_task_id": scheduled_task_id,
+            "interval_seconds": interval_seconds,
+            "severity": severity,
+        }
+        payload.update({key: value for key, value in optional_values.items() if value is not None})
+        json_options = (
+            ("rule_json", rule_json, "--rule-json"),
+            (
+                "notification_policy_json",
+                notification_policy_json,
+                "--notification-policy-json",
+            ),
+            ("metadata_json", metadata_json, "--metadata-json"),
+            ("provenance_json", provenance_json, "--provenance-json"),
+        )
+        for key, raw_value, option_name in json_options:
+            parsed_value = parse_json_object_option(raw_value, option_name)
+            if parsed_value is not None:
+                payload[key] = parsed_value
+        watch = update_watch(
+            session,
+            watch_id,
+            WatchUpdate(**payload),
+            actor="cli",
+        )
+        print_banner()
+        typer.echo(
+            f"watch={watch.watch_id} | slug={watch.slug} | type={watch.watch_type} "
+            f"| state={watch.state} | severity={watch.severity}"
+        )
+    finally:
+        session.close()
+
+
+@app.command("pause-watch")
+def pause_watch_command(watch_id: int) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        watch = pause_watch(session, watch_id, actor="cli")
+        print_banner()
+        typer.echo(f"watch={watch.watch_id} | state={watch.state}")
+    finally:
+        session.close()
+
+
+@app.command("resume-watch")
+def resume_watch_command(watch_id: int) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        watch = resume_watch(session, watch_id, actor="cli")
+        print_banner()
+        typer.echo(f"watch={watch.watch_id} | state={watch.state} | next={watch.next_run_at}")
+    finally:
+        session.close()
+
+
+@app.command("run-watch")
+def run_watch_command(watch_id: int, force: bool = False) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        watch_run = evaluate_watch(session, watch_id, actor="cli", force=force)
+        print_banner()
+        typer.echo(
+            f"watch_run={watch_run.watch_run_id} | watch={watch_run.watch_id} "
+            f"| status={watch_run.status} | outcome={watch_run.outcome} "
+            f"| changed={watch_run.change_detected} | alert={watch_run.alert_id} "
+            f"| storage={watch_run.storage_object_id}"
+        )
+    finally:
+        session.close()
+
+
+@app.command("add-watch-schedule")
+def add_watch_schedule_command(
+    watch_id: int,
+    name: str,
+    interval_seconds: int,
+    enabled: bool = True,
+    retry_attempts: int = 1,
+    retry_backoff_seconds: float = 0.0,
+    notes: str = "",
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        task = attach_watch_schedule(
+            session,
+            watch_id,
+            WatchScheduleCreate(
+                name=name,
+                interval_seconds=interval_seconds,
+                enabled=enabled,
+                retry_attempts=retry_attempts,
+                retry_backoff_seconds=retry_backoff_seconds,
+                notes=notes,
+            ),
+            actor="cli",
+        )
+        print_banner()
+        typer.echo(
+            f"watch={watch_id} | scheduled_task={task.task_id} | every={task.interval_seconds}s "
+            f"| enabled={task.enabled} | next={task.next_run_at}"
+        )
+    finally:
+        session.close()
+
+
+@app.command("list-watch-runs")
+def list_watch_runs_command(
+    watch_id: int | None = None,
+    status: str | None = None,
+    outcome: str | None = None,
+    limit: int = 200,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        rows = list_watch_runs(
+            session,
+            watch_id=watch_id,
+            status=status,
+            outcome=outcome,
+            limit=limit,
+        )
+        print_banner()
+        for row in rows:
+            typer.echo(
+                f"{row.watch_run_id} | watch={row.watch_id} | {row.status} | {row.outcome} "
+                f"| changed={row.change_detected} | alert={row.alert_id} "
+                f"| storage={row.storage_object_id} | started={row.started_at}"
+            )
+    finally:
+        session.close()
+
+
+@app.command("list-watch-alerts")
+def list_watch_alerts_command(
+    watch_id: int | None = None,
+    status: str | None = None,
+    limit: int = 200,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        rows = list_watch_alerts(session, watch_id=watch_id, status=status, limit=limit)
+        print_banner()
+        for row in rows:
+            typer.echo(f"{row.alert_id} | {row.severity} | {row.status} | {row.message}")
+    finally:
+        session.close()
+
+
+@app.command("show-watch-evidence")
+def show_watch_evidence_command(watch_id: int, limit: int = 200) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        rows = list_watch_evidence(session, watch_id, limit=limit)
+        print_banner()
+        for row in rows:
+            typer.echo(
+                f"{row.storage_object_id} | {row.object_kind} | hash={row.content_hash} "
+                f"| media={row.media_type} | bytes={row.byte_size} | uri={row.object_uri}"
+            )
+    finally:
+        session.close()
+
+
+@app.command("show-watch-feed")
+def show_watch_feed_command(
+    base_url: str = "http://127.0.0.1:8000",
+    preview: bool = False,
+    watch_id: int | None = None,
+    status: str = "open",
+    limit: int = 50,
+) -> None:
+    normalized_base_url = base_url.rstrip("/")
+    query: dict[str, object] = {"status": status}
+    if watch_id is not None:
+        query["watch_id"] = watch_id
+    if limit != 50:
+        query["limit"] = limit
+    feed_url = f"{normalized_base_url}/api/watches/feed.rss?{urlencode(query)}"
+    if not preview:
+        print_banner()
+        typer.echo(feed_url)
+        return
+
+    init_db()
+    session = get_session_factory()()
+    try:
+        content = render_watch_alert_rss(
+            session,
+            base_url=normalized_base_url,
+            watch_id=watch_id,
+            status=status,
+            limit=limit,
+        )
+        print_banner()
+        typer.echo(content.decode("utf-8") if isinstance(content, bytes) else content)
+    finally:
+        session.close()
+
+
 @app.command("list-alerts")
 def list_alerts(
     status: str | None = None,
@@ -5437,6 +5843,60 @@ def restore_runtime_snapshot_command(
             f"| verified_sha256={manifest.snapshot_sha256}"
         )
         for item in serializable["row_counts"]:
+            typer.echo(f"{item['table_name']}: {item['row_count']}")
+    finally:
+        session.close()
+
+
+@app.command("export-runtime-bundle")
+def export_runtime_bundle_command(output_path: Path) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        result = export_runtime_bundle(
+            session,
+            output_path=output_path,
+            actor="cli_export",
+        )
+        manifest = result["manifest"]
+        evidence = manifest.get("evidence", []) if isinstance(manifest, dict) else []
+        print_banner()
+        typer.echo(
+            "exported runtime bundle "
+            f"| path={result['output_path']} | sha256={result['bundle_sha256']} "
+            f"| evidence_count={len(evidence)}"
+        )
+    finally:
+        session.close()
+
+
+@app.command("restore-runtime-bundle")
+def restore_runtime_bundle_command(
+    input_path: Path,
+    replace_existing: bool = False,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        try:
+            result = restore_runtime_bundle(
+                session,
+                bundle_path=input_path,
+                replace_existing=replace_existing,
+                actor="cli_restore",
+            )
+        except ValueError as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        restore_result = result["restore_result"]
+        print_banner()
+        typer.echo(
+            "restored runtime bundle "
+            f"| path={result['bundle_path']} | sha256={result['bundle_sha256']} "
+            f"| evidence_count={result['restored_evidence_count']} "
+            f"| replaced_existing={restore_result['replaced_existing']} "
+            f"| total_records={restore_result['total_records']}"
+        )
+        for item in restore_result["row_counts"]:
             typer.echo(f"{item['table_name']}: {item['row_count']}")
     finally:
         session.close()

@@ -31,6 +31,8 @@ from src.models import (
     SourceDefinitionORM,
     SourceRunORM,
     SourceTrustProfileORM,
+    WatchORM,
+    WatchRunORM,
     WorkerStatusORM,
 )
 from src.schemas import (
@@ -59,6 +61,8 @@ from src.schemas import (
     SourceDefinitionRead,
     SourceRunRead,
     SourceTrustProfileRead,
+    WatchRead,
+    WatchRunRead,
     WorkerStatusRead,
 )
 from src.services.database_diagnostics_service import collect_table_counts
@@ -109,6 +113,8 @@ SNAPSHOT_SECTIONS: tuple[tuple[str, object, type[BaseModel], object], ...] = (
     ("scheduled_tasks", ScheduledTaskORM, ScheduledTaskRead, ScheduledTaskORM.task_id),
     ("scheduled_task_runs", ScheduledTaskRunORM, ScheduledTaskRunRead, ScheduledTaskRunORM.task_run_id),
     ("source_runs", SourceRunORM, SourceRunRead, SourceRunORM.source_run_id),
+    ("watches", WatchORM, WatchRead, WatchORM.watch_id),
+    ("watch_runs", WatchRunORM, WatchRunRead, WatchRunORM.watch_run_id),
     ("source_dead_letters", SourceDeadLetterORM, SourceDeadLetterRead, SourceDeadLetterORM.source_dead_letter_id),
     ("worker_statuses", WorkerStatusORM, WorkerStatusRead, WorkerStatusORM.worker_status_id),
     ("situation_products", SituationProductORM, SituationProductRead, SituationProductORM.product_id),
@@ -134,6 +140,8 @@ RESTORE_ORDER: tuple[tuple[str, object], ...] = (
     ("scheduled_tasks", ScheduledTaskORM),
     ("source_runs", SourceRunORM),
     ("scheduled_task_runs", ScheduledTaskRunORM),
+    ("watches", WatchORM),
+    ("watch_runs", WatchRunORM),
     ("source_dead_letters", SourceDeadLetterORM),
     ("worker_statuses", WorkerStatusORM),
     ("situation_products", SituationProductORM),

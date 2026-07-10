@@ -62,7 +62,10 @@ def create_storage_object_route(
     payload: StorageObjectCreate,
     session: Session = Depends(get_db),
 ) -> object:
-    return create_storage_object(session, payload)
+    try:
+        return create_storage_object(session, payload)
+    except ValueError as exc:
+        raise translate_storage_error(exc, 0, "create") from exc
 
 
 @router.get("/report", response_model=StorageReportRead)

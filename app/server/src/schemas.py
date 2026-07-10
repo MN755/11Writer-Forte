@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 TrustLevel = Literal["trusted", "neutral", "blocked"]
@@ -41,10 +41,256 @@ SourceKind = Literal[
     "sse_stream",
     "websocket_stream",
 ]
+WatchType = Literal["source_delta", "image_change", "observation_rule", "source_health"]
+WatchState = Literal["enabled", "paused"]
+WatchSeverity = Literal["info", "warning", "critical"]
+WatchRunStatus = Literal["running", "completed", "failed"]
+WatchRunOutcome = Literal["pending", "baseline", "no_change", "change", "failure"]
 
 
 class ForteModel(BaseModel):
     model_config = ConfigDict(from_attributes=True)
+
+
+class StrictForteModel(ForteModel):
+    model_config = ConfigDict(from_attributes=True, extra="forbid")
+
+
+class NotificationPolicy(StrictForteModel):
+    api_enabled: bool = True
+    rss_enabled: bool = True
+    analysis_on_change: bool = False
+
+    @model_validator(mode="after")
+    def require_api_for_rss(self) -> "NotificationPolicy":
+        if self.rss_enabled and not self.api_enabled:
+            raise ValueError("rss_enabled requires api_enabled because RSS is backed by local alerts")
+        return self
+
+
+class SourceDeltaRule(StrictForteModel):
+    mode: Literal["source_delta"] = "source_delta"
+    run_source: bool = True
+    change_basis: Literal["payload_sha256"] = "payload_sha256"
+    alert_on_initial: bool = False
+
+
+class ImageChangeRule(StrictForteModel):
+    mode: Literal["image_change"] = "image_change"
+    comparison: Literal["sha256"] = "sha256"
+    alert_on_initial: bool = False
+    accepted_media_types: list[str] = Field(
+        default_factory=lambda: ["image/jpeg", "image/png", "image/webp", "image/gif"],
+        min_length=1,
+        max_length=16,
+    )
+    retention_class: Literal["investigative", "permanent"] = "permanent"
+
+    @field_validator("accepted_media_types")
+    @classmethod
+    def validate_accepted_media_types(cls, value: list[str]) -> list[str]:
+        normalized: list[str] = []
+        for media_type in value:
+            candidate = media_type.strip().lower()
+            if not candidate.startswith("image/") or len(candidate) > 120:
+                raise ValueError("accepted_media_types entries must be image media types")
+            if candidate not in normalized:
+                normalized.append(candidate)
+        if not normalized:
+            raise ValueError("accepted_media_types must contain at least one image media type")
+        return normalized
+
+
+ObservationPredicateOperator = Literal[
+    "eq",
+    "ne",
+    "in",
+    "contains",
+    "exists",
+    "gt",
+    "gte",
+    "lt",
+    "lte",
+]
+ObservationPredicateValue = str | int | float | bool | None | list[str | int | float | bool | None]
+
+
+class ObservationPredicate(StrictForteModel):
+    field: str = Field(min_length=1, max_length=160)
+    operator: ObservationPredicateOperator
+    value: ObservationPredicateValue = None
+
+    @field_validator("field")
+    @classmethod
+    def normalize_field(cls, value: str) -> str:
+        return value.strip()
+
+
+class ObservationRule(StrictForteModel):
+    mode: Literal["observation_rule"] = "observation_rule"
+    source_domain: str | None = Field(default=None, max_length=255)
+    min_confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    trust_levels: list[TrustLevel] = Field(default_factory=list, max_length=3)
+    time_window_seconds: int | None = Field(default=None, gt=0)
+    include_existing_on_first_run: bool = False
+    predicates: list[ObservationPredicate] = Field(default_factory=list, max_length=50)
+    max_results: int = Field(default=200, ge=1, le=2000)
+
+    @field_validator("source_domain")
+    @classmethod
+    def normalize_source_domain(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip().lower()
+        return normalized or None
+
+    @field_validator("trust_levels")
+    @classmethod
+    def dedupe_trust_levels(cls, value: list[TrustLevel]) -> list[TrustLevel]:
+        return list(dict.fromkeys(value))
+
+
+WatchHealthState = Literal["failed", "stale", "disabled", "never_run"]
+
+
+class SourceHealthRule(StrictForteModel):
+    mode: Literal["source_health"] = "source_health"
+    stale_after_seconds: int = Field(default=3600, gt=0)
+    alert_states: list[WatchHealthState] = Field(
+        default_factory=lambda: ["failed", "stale", "disabled", "never_run"],
+        min_length=1,
+        max_length=4,
+    )
+    alert_on_recovery: bool = False
+    alert_on_initial_unhealthy: bool = True
+
+    @field_validator("alert_states")
+    @classmethod
+    def dedupe_alert_states(cls, value: list[WatchHealthState]) -> list[WatchHealthState]:
+        return list(dict.fromkeys(value))
+
+
+WatchRule = Annotated[
+    SourceDeltaRule | ImageChangeRule | ObservationRule | SourceHealthRule,
+    Field(discriminator="mode"),
+]
+
+
+def ensure_watch_rule_matches_type(watch_type: WatchType, rule: WatchRule) -> None:
+    if rule.mode != watch_type:
+        raise ValueError(f"rule_json mode {rule.mode!r} must match watch_type {watch_type!r}")
+
+
+class WatchCreate(StrictForteModel):
+    name: str = Field(min_length=1, max_length=160)
+    slug: str = Field(min_length=1, max_length=160, pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+    objective: str = Field(min_length=1)
+    description: str = ""
+    watch_type: WatchType
+    state: WatchState = "enabled"
+    rule_json: WatchRule
+    source_id: int | None = Field(default=None, gt=0)
+    camera_inventory_id: int | None = Field(default=None, gt=0)
+    camera_source_inventory_id: int | None = Field(default=None, gt=0)
+    layer_key: str | None = Field(default=None, min_length=1, max_length=80)
+    event_id: int | None = Field(default=None, gt=0)
+    geofence_id: int | None = Field(default=None, gt=0)
+    scheduled_task_id: int | None = Field(default=None, gt=0)
+    interval_seconds: int | None = Field(default=None, ge=60)
+    severity: WatchSeverity = "info"
+    notification_policy_json: NotificationPolicy = Field(default_factory=NotificationPolicy)
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+    provenance_json: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_rule_mode(self) -> "WatchCreate":
+        ensure_watch_rule_matches_type(self.watch_type, self.rule_json)
+        return self
+
+
+class WatchUpdate(StrictForteModel):
+    name: str | None = Field(default=None, min_length=1, max_length=160)
+    slug: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=160,
+        pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$",
+    )
+    objective: str | None = Field(default=None, min_length=1)
+    description: str | None = None
+    watch_type: WatchType | None = None
+    state: WatchState | None = None
+    rule_json: WatchRule | None = None
+    source_id: int | None = Field(default=None, gt=0)
+    camera_inventory_id: int | None = Field(default=None, gt=0)
+    camera_source_inventory_id: int | None = Field(default=None, gt=0)
+    layer_key: str | None = Field(default=None, min_length=1, max_length=80)
+    event_id: int | None = Field(default=None, gt=0)
+    geofence_id: int | None = Field(default=None, gt=0)
+    scheduled_task_id: int | None = Field(default=None, gt=0)
+    interval_seconds: int | None = Field(default=None, ge=60)
+    severity: WatchSeverity | None = None
+    notification_policy_json: NotificationPolicy | None = None
+    metadata_json: dict[str, Any] | None = None
+    provenance_json: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def validate_rule_mode(self) -> "WatchUpdate":
+        if self.watch_type is not None and self.rule_json is not None:
+            ensure_watch_rule_matches_type(self.watch_type, self.rule_json)
+        return self
+
+
+class WatchRead(WatchCreate):
+    watch_id: int
+    baseline_json: dict[str, Any]
+    dedupe_json: dict[str, Any]
+    last_evaluated_at: datetime | None
+    last_changed_at: datetime | None
+    next_run_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class WatchRunRead(StrictForteModel):
+    watch_run_id: int
+    watch_id: int
+    scheduled_task_run_id: int | None
+    source_run_id: int | None
+    alert_id: int | None
+    storage_object_id: int | None
+    status: WatchRunStatus
+    outcome: WatchRunOutcome
+    started_at: datetime
+    finished_at: datetime | None
+    change_detected: bool
+    baseline_initialized: bool
+    dedupe_key: str | None
+    evidence_json: dict[str, Any]
+    checkpoint_before_json: dict[str, Any]
+    checkpoint_after_json: dict[str, Any]
+    output_summary: str
+    error_text: str | None
+    metadata_json: dict[str, Any]
+
+
+class WatchScheduleCreate(StrictForteModel):
+    name: str | None = Field(default=None, min_length=1, max_length=160)
+    interval_seconds: int = Field(ge=60)
+    enabled: bool = True
+    retry_attempts: int = Field(default=1, ge=1, le=10)
+    retry_backoff_seconds: float = Field(default=0.0, ge=0.0, le=300.0)
+    notes: str = ""
+
+
+class WatchEvaluateRequest(StrictForteModel):
+    force: bool = False
+    actor: str | None = Field(default=None, min_length=1, max_length=120)
+
+
+class WatchEvaluateTaskPayload(StrictForteModel):
+    watch_id: int = Field(gt=0)
+    force: bool = False
 
 
 class HealthResponse(ForteModel):
@@ -236,6 +482,8 @@ class RuntimeSnapshotRead(ForteModel):
     scheduled_tasks: list["ScheduledTaskRead"]
     scheduled_task_runs: list["ScheduledTaskRunRead"]
     source_runs: list["SourceRunRead"]
+    watches: list["WatchRead"] = Field(default_factory=list)
+    watch_runs: list["WatchRunRead"] = Field(default_factory=list)
     source_dead_letters: list["SourceDeadLetterRead"]
     worker_statuses: list["WorkerStatusRead"] = Field(default_factory=list)
     situation_products: list["SituationProductRead"]
@@ -291,6 +539,52 @@ class RuntimeSnapshotArtifactExportResultRead(ForteModel):
     snapshot_manifest: RuntimeSnapshotArtifactManifestRead
     snapshot_storage_object: "StorageObjectRead"
     manifest_storage_object: "StorageObjectRead"
+
+
+class RuntimeBundleEvidenceRead(StrictForteModel):
+    storage_object_id: int = Field(gt=0)
+    archive_path: str = Field(min_length=1)
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    byte_size: int = Field(ge=0)
+    media_type: str | None = Field(default=None, max_length=120)
+    source_uri: str | None = None
+    original_object_uri: str = Field(min_length=1)
+
+
+class RuntimeBundleExportRequest(StrictForteModel):
+    output_path: str = Field(min_length=1)
+
+
+class RuntimeBundleRestoreRequest(StrictForteModel):
+    input_path: str = Field(min_length=1)
+    replace_existing: bool = False
+
+
+class RuntimeBundleManifestRead(StrictForteModel):
+    format_version: Literal["1"] = "1"
+    generated_at: datetime
+    snapshot_archive_path: Literal["snapshot.json"] = "snapshot.json"
+    snapshot_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    snapshot_byte_size: int = Field(ge=0)
+    snapshot_section_counts: dict[str, int]
+    evidence: list[RuntimeBundleEvidenceRead] = Field(default_factory=list)
+
+
+class RuntimeBundleExportResultRead(StrictForteModel):
+    output_path: str
+    bundle_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    manifest: RuntimeBundleManifestRead
+    storage_object: "StorageObjectRead"
+
+
+class RuntimeBundleRestoreResultRead(StrictForteModel):
+    bundle_path: str
+    bundle_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    manifest: RuntimeBundleManifestRead
+    restore_result: RuntimeRestoreResultRead
+    restored_evidence_count: int = Field(ge=0)
+    restored_evidence_storage_object_ids: list[int] = Field(default_factory=list)
+    bundle_storage_object: "StorageObjectRead"
 
 
 class AlertSummaryArtifactExportRequest(ForteModel):
@@ -1367,6 +1661,7 @@ class ScheduledTaskCreate(ForteModel):
         "camera_inventory_refresh",
         "camera_source_verification",
         "observation_watch_scan",
+        "watch_evaluate",
         "entity_resolution_refresh",
         "event_fusion_refresh",
     ]
@@ -1590,6 +1885,12 @@ class OperationsSummaryRead(ForteModel):
     event_count: int
     entity_count: int
     observation_count: int
+    watch_count: int = 0
+    enabled_watch_count: int = 0
+    paused_watch_count: int = 0
+    watch_run_count: int = 0
+    watch_change_count: int = 0
+    watch_failure_count: int = 0
 
 
 class OperationsReportRead(ForteModel):
@@ -1618,6 +1919,7 @@ class OperationsReportRead(ForteModel):
     import_runs: list[LocalImportRunSummaryRead]
     source_runs: list[SourceRunRead]
     scheduled_task_runs: list[ScheduledTaskRunRead]
+    recent_watch_runs: list[WatchRunRead] = Field(default_factory=list)
     alerts: list[AlertRead]
     custody_logs: list[CustodyLogRead]
 

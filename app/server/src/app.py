@@ -24,6 +24,7 @@ from src.routes.scheduler import router as scheduler_router
 from src.routes.storage import router as storage_router
 from src.routes.sources import router as sources_router
 from src.routes.source_trust import router as source_trust_router
+from src.routes.watches import router as watches_router
 
 
 @asynccontextmanager
@@ -57,4 +58,5 @@ def create_application() -> FastAPI:
     application.include_router(storage_router, prefix=settings.api_prefix)
     application.include_router(sources_router, prefix=settings.api_prefix)
     application.include_router(source_trust_router, prefix=settings.api_prefix)
+    application.include_router(watches_router, prefix=settings.api_prefix)
     return application

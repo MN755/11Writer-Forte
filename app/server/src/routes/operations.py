@@ -12,6 +12,10 @@ from src.schemas import OperationsReportArtifactExportRequest
 from src.schemas import OperationsReportRead
 from src.schemas import PlatformRuntimeCycleRead
 from src.schemas import RuntimeReadinessRead
+from src.schemas import RuntimeBundleExportRequest
+from src.schemas import RuntimeBundleExportResultRead
+from src.schemas import RuntimeBundleRestoreRequest
+from src.schemas import RuntimeBundleRestoreResultRead
 from src.schemas import RuntimeSnapshotArtifactExportRequest
 from src.schemas import RuntimeSnapshotArtifactExportResultRead
 from src.schemas import RuntimeRestoreResultRead
@@ -25,6 +29,7 @@ from src.services.operations_report_service import (
 )
 from src.services.platform_runtime_service import run_platform_runtime_cycle
 from src.services.runtime_readiness_service import build_runtime_readiness
+from src.services.runtime_bundle_service import export_runtime_bundle, restore_runtime_bundle
 from src.services.runtime_snapshot_service import build_runtime_snapshot
 from src.services.runtime_snapshot_service import export_runtime_snapshot_artifacts
 from src.services.runtime_snapshot_service import restore_runtime_snapshot
@@ -165,6 +170,48 @@ def export_runtime_snapshot_artifact_route(
         "snapshot_storage_object": result["snapshot_record"],
         "manifest_storage_object": result["manifest_record"],
     }
+
+
+@router.post("/runtime/bundle/export", response_model=RuntimeBundleExportResultRead)
+def export_runtime_bundle_route(
+    payload: RuntimeBundleExportRequest,
+    session: Session = Depends(get_db),
+) -> dict[str, object]:
+    try:
+        return export_runtime_bundle(
+            session,
+            output_path=Path(payload.output_path),
+            actor="api_export",
+        )
+    except (ValueError, OSError) as exc:
+        raise translate_service_error(
+            exc,
+            action="export_runtime_bundle",
+            context={"output_path": payload.output_path},
+        ) from exc
+
+
+@router.post("/runtime/bundle/restore", response_model=RuntimeBundleRestoreResultRead)
+def restore_runtime_bundle_route(
+    payload: RuntimeBundleRestoreRequest,
+    session: Session = Depends(get_db),
+) -> dict[str, object]:
+    try:
+        return restore_runtime_bundle(
+            session,
+            bundle_path=Path(payload.input_path),
+            replace_existing=payload.replace_existing,
+            actor="api_restore",
+        )
+    except (ValueError, OSError) as exc:
+        raise translate_service_error(
+            exc,
+            action="restore_runtime_bundle",
+            context={
+                "input_path": payload.input_path,
+                "replace_existing": payload.replace_existing,
+            },
+        ) from exc
 
 
 @router.post("/runtime/restore", response_model=RuntimeRestoreResultRead)
