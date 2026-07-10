@@ -9,12 +9,9 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-<<<<<<< HEAD
-=======
 from src.db import get_session_factory
 from src.services.source_service import run_source_definition
 
->>>>>>> 05aeee6 (chore: initialize repository)
 
 @contextmanager
 def flaky_json_server(payload: list[dict[str, object]]):
@@ -83,6 +80,38 @@ def basic_auth_xml_server(payload: str, *, username: str, password: str):
         thread.join(timeout=5)
 
 
+@contextmanager
+def static_http_server(
+    payload: bytes,
+    *,
+    content_type: str,
+    path: str = "/feed",
+):
+    state = {"requests": 0, "last_accept": None}
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            state["requests"] += 1
+            state["last_accept"] = self.headers.get("Accept")
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, format: str, *args: object) -> None:  # noqa: A003
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}{path}", state
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
 def test_source_definition_run_creates_import_and_history(client: TestClient, tmp_path: Path) -> None:
     fixture = tmp_path / "source-file.json"
     fixture.write_text(
@@ -127,8 +156,6 @@ def test_source_definition_run_creates_import_and_history(client: TestClient, tm
     assert imports_response.status_code == 200
     assert imports_response.json()[0]["records_imported"] == 1
 
-<<<<<<< HEAD
-=======
     ops_response = client.get(f"/api/sources/{source_id}/ops")
     assert ops_response.status_code == 200
     ops_payload = ops_response.json()
@@ -139,7 +166,6 @@ def test_source_definition_run_creates_import_and_history(client: TestClient, tm
     assert ops_payload["storage_objects"][0]["source_uri"] == str(fixture)
     assert ops_payload["storage_objects"][0]["metadata_json"]["import_run_id"] == payload["import_run_id"]
 
->>>>>>> 05aeee6 (chore: initialize repository)
     layers_response = client.get("/api/layers")
     assert layers_response.status_code == 200
     assert any(layer["key"] == "marine-track" for layer in layers_response.json())
@@ -163,14 +189,11 @@ def test_source_definition_run_creates_import_and_history(client: TestClient, tm
         and row["action"] == "source_run_completed"
         for row in custody_rows
     )
-<<<<<<< HEAD
-=======
     assert any(
         row["object_type"] == "storage_object"
         and row["action"] in {"storage_registered", "storage_refreshed"}
         for row in custody_rows
     )
->>>>>>> 05aeee6 (chore: initialize repository)
 
 
 def test_source_sync_schedule_runs_source_definition(client: TestClient, tmp_path: Path) -> None:
@@ -275,8 +298,6 @@ def test_http_source_retries_and_records_fetch_metadata(client: TestClient) -> N
         assert state["last_header"] == "forte"
         assert state["last_user_agent"] == "11Writer-Forte/0.1 (+headless-source-fetch)"
 
-<<<<<<< HEAD
-=======
         ops_response = client.get(f"/api/sources/{source_id}/ops")
         assert ops_response.status_code == 200
         ops_payload = ops_response.json()
@@ -284,7 +305,6 @@ def test_http_source_retries_and_records_fetch_metadata(client: TestClient) -> N
         assert ops_payload["storage_objects"][0]["object_uri"].endswith(".json")
         assert ops_payload["storage_objects"][0]["metadata_json"]["attempt_count"] == 2
 
->>>>>>> 05aeee6 (chore: initialize repository)
         custody_response = client.get("/api/custody/logs")
         assert custody_response.status_code == 200
         custody_rows = custody_response.json()
@@ -349,8 +369,6 @@ def test_source_run_skips_unchanged_payloads(client: TestClient, tmp_path: Path)
     assert source_runs[0]["status"] == "skipped"
     assert source_runs[1]["status"] == "completed"
 
-<<<<<<< HEAD
-=======
     ops_response = client.get(f"/api/sources/{source_id}/ops")
     assert ops_response.status_code == 200
     ops_payload = ops_response.json()
@@ -360,7 +378,6 @@ def test_source_run_skips_unchanged_payloads(client: TestClient, tmp_path: Path)
         "completed",
     }
 
->>>>>>> 05aeee6 (chore: initialize repository)
     custody_response = client.get("/api/custody/logs")
     assert custody_response.status_code == 200
     assert any(
@@ -520,8 +537,6 @@ def test_http_xml_source_uses_env_basic_auth_and_parses_records(
 
         assert state["requests"] == 1
         assert state["last_authorization"] is not None
-<<<<<<< HEAD
-=======
 
 
 def test_source_summary_and_report_index_capture_stale_failing_and_unscheduled_sources(
@@ -679,4 +694,242 @@ def test_source_summary_and_report_index_capture_stale_failing_and_unscheduled_s
     healthy_ops = client.get(f"/api/sources/{healthy_source_id}/ops")
     assert healthy_ops.status_code == 200
     assert healthy_ops.json()["storage_objects"]
->>>>>>> 05aeee6 (chore: initialize repository)
+
+
+def test_http_jsonl_source_imports_multiple_records(client: TestClient) -> None:
+    payload = b'{"title":"ndjson one","url":"https://ndjson.example.com/1","lat":44.98,"lon":-93.26}\n{"title":"ndjson two","url":"https://ndjson.example.com/2","lat":44.99,"lon":-93.25}\n'
+    with static_http_server(payload, content_type="application/x-ndjson", path="/feed.jsonl") as (target_uri, state):
+        source_response = client.post(
+            "/api/sources",
+            json={
+                "name": "remote-jsonl-source",
+                "source_kind": "http_jsonl",
+                "layer_key": "jsonl-feed",
+                "target_uri": target_uri,
+                "metadata_json": {
+                    "retry_attempts": 1,
+                    "request_timeout_seconds": 5,
+                },
+            },
+        )
+        assert source_response.status_code == 200
+        source_id = source_response.json()["source_id"]
+
+        run_response = client.post(f"/api/sources/{source_id}/run")
+        assert run_response.status_code == 200
+        run_payload = run_response.json()
+        assert run_payload["status"] == "completed"
+        assert run_payload["records_imported"] == 2
+        assert run_payload["output_json"]["cached_path"].endswith(".jsonl")
+        assert state["requests"] == 1
+        assert "application/x-ndjson" in (state["last_accept"] or "")
+
+        observations_response = client.get("/api/observations", params={"layer_key": "jsonl-feed"})
+        assert observations_response.status_code == 200
+        observations = observations_response.json()
+        assert len(observations) == 2
+        assert {row["content_json"]["title"] for row in observations} == {"ndjson one", "ndjson two"}
+
+
+def test_http_csv_source_materializes_rows_as_json_records(client: TestClient) -> None:
+    csv_payload = (
+        "camera_id,name,image_url,latitude,longitude\n"
+        "mn-1,Port Camera,https://cams.example.com/port.jpg,44.95,-93.09\n"
+    ).encode("utf-8")
+    with static_http_server(csv_payload, content_type="text/csv", path="/cameras.csv") as (target_uri, state):
+        source_response = client.post(
+            "/api/sources",
+            json={
+                "name": "remote-csv-source",
+                "source_kind": "http_csv",
+                "layer_key": "camera-feed",
+                "target_uri": target_uri,
+            },
+        )
+        assert source_response.status_code == 200
+        source_id = source_response.json()["source_id"]
+
+        run_response = client.post(f"/api/sources/{source_id}/run")
+        assert run_response.status_code == 200
+        run_payload = run_response.json()
+        assert run_payload["status"] == "completed"
+        assert run_payload["records_imported"] == 1
+        assert run_payload["output_json"]["cached_path"].endswith(".json")
+        assert run_payload["output_json"]["cached_record_count"] == 1
+        assert state["requests"] == 1
+        assert "text/csv" in (state["last_accept"] or "")
+
+        observations_response = client.get("/api/observations", params={"layer_key": "camera-feed"})
+        assert observations_response.status_code == 200
+        observations = observations_response.json()
+        assert len(observations) == 1
+        observation = observations[0]
+        assert observation["content_json"]["camera_id"] == "mn-1"
+        assert observation["source_domain"] == "cams.example.com"
+        assert observation["location_geojson"]["coordinates"] == [-93.09, 44.95]
+
+
+def test_rss_source_parses_feed_items(client: TestClient) -> None:
+    rss_payload = """<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Port Alerts</title>
+    <link>https://alerts.example.com</link>
+    <item>
+      <title>Harbor closure</title>
+      <link>https://alerts.example.com/harbor-closure</link>
+      <description>Heavy fog advisory</description>
+      <pubDate>Thu, 09 Jul 2026 10:00:00 GMT</pubDate>
+      <guid>alert-1</guid>
+    </item>
+  </channel>
+</rss>
+""".encode("utf-8")
+    with static_http_server(rss_payload, content_type="application/rss+xml", path="/feed.xml") as (target_uri, state):
+        source_response = client.post(
+            "/api/sources",
+            json={
+                "name": "rss-source",
+                "source_kind": "rss",
+                "layer_key": "alert-feed",
+                "target_uri": target_uri,
+            },
+        )
+        assert source_response.status_code == 200
+        source_id = source_response.json()["source_id"]
+
+        run_response = client.post(f"/api/sources/{source_id}/run")
+        assert run_response.status_code == 200
+        run_payload = run_response.json()
+        assert run_payload["status"] == "completed"
+        assert run_payload["records_imported"] == 1
+        assert state["requests"] == 1
+        assert "application/rss+xml" in (state["last_accept"] or "")
+
+        observations_response = client.get("/api/observations", params={"layer_key": "alert-feed"})
+        assert observations_response.status_code == 200
+        observations = observations_response.json()
+        assert len(observations) == 1
+        observation = observations[0]
+        assert observation["content_json"]["feed_type"] == "rss"
+        assert observation["content_json"]["feed_title"] == "Port Alerts"
+        assert observation["content_json"]["link"] == "https://alerts.example.com/harbor-closure"
+        assert observation["content_json"]["guid"] == "alert-1"
+
+
+def test_arcgis_feature_json_source_normalizes_features(client: TestClient) -> None:
+    payload = {
+        "geometryType": "esriGeometryPoint",
+        "spatialReference": {"wkid": 3857},
+        "features": [
+            {
+                "attributes": {
+                    "OBJECTID": 7,
+                    "name": "Harbor Sensor",
+                    "status": "active",
+                    "url": "https://gis.example.com/sensors/7",
+                },
+                "geometry": {
+                    "x": -10414636.541,
+                    "y": 5618450.963,
+                },
+            }
+        ],
+    }
+    with static_http_server(
+        json.dumps(payload).encode("utf-8"),
+        content_type="application/json",
+        path="/FeatureServer/0/query?where=1%3D1&outFields=*&f=json",
+    ) as (target_uri, _state):
+        source_response = client.post(
+            "/api/sources",
+            json={
+                "name": "arcgis-source",
+                "source_kind": "arcgis_feature_json",
+                "layer_key": "sensor-feed",
+                "target_uri": target_uri,
+            },
+        )
+        assert source_response.status_code == 200
+        source_id = source_response.json()["source_id"]
+
+        run_response = client.post(f"/api/sources/{source_id}/run")
+        assert run_response.status_code == 200
+        run_payload = run_response.json()
+        assert run_payload["status"] == "completed"
+        assert run_payload["records_imported"] == 1
+        assert run_payload["output_json"]["cached_record_count"] == 1
+
+        observations_response = client.get("/api/observations", params={"layer_key": "sensor-feed"})
+        assert observations_response.status_code == 200
+        observations = observations_response.json()
+        assert len(observations) == 1
+        observation = observations[0]
+        assert observation["content_json"]["arcgis_geometry_type"] == "esriGeometryPoint"
+        assert observation["content_json"]["name"] == "Harbor Sensor"
+        assert observation["source_domain"] == "gis.example.com"
+        coordinates = observation["location_geojson"]["coordinates"]
+        assert round(coordinates[0], 2) == -93.56
+        assert round(coordinates[1], 2) == 44.98
+
+
+def test_ckan_package_search_source_expands_resource_records(client: TestClient) -> None:
+    payload = {
+        "help": "https://data.example.com/api/3/action/help_show?name=package_search",
+        "success": True,
+        "result": {
+            "count": 1,
+            "results": [
+                {
+                    "id": "dataset-1",
+                    "name": "traffic-cameras",
+                    "title": "Traffic Cameras",
+                    "url": "https://data.example.com/dataset/traffic-cameras",
+                    "license_title": "Public Domain",
+                    "organization": {"name": "dot", "title": "State DOT"},
+                    "tags": [{"name": "traffic"}, {"name": "camera"}],
+                    "resources": [
+                        {
+                            "id": "resource-1",
+                            "name": "Camera Feed JSON",
+                            "format": "JSON",
+                            "mimetype": "application/json",
+                            "url": "https://data.example.com/dataset/traffic-cameras/resource-1/download/feed.json",
+                        }
+                    ],
+                }
+            ],
+        },
+    }
+    with static_http_server(
+        json.dumps(payload).encode("utf-8"),
+        content_type="application/json",
+        path="/api/3/action/package_search?q=traffic",
+    ) as (target_uri, _state):
+        source_response = client.post(
+            "/api/sources",
+            json={
+                "name": "ckan-source",
+                "source_kind": "ckan_package_search",
+                "layer_key": "catalog-feed",
+                "target_uri": target_uri,
+            },
+        )
+        assert source_response.status_code == 200
+        source_id = source_response.json()["source_id"]
+
+        run_response = client.post(f"/api/sources/{source_id}/run")
+        assert run_response.status_code == 200
+        run_payload = run_response.json()
+        assert run_payload["status"] == "completed"
+        assert run_payload["records_imported"] == 1
+
+        observations_response = client.get("/api/observations", params={"layer_key": "catalog-feed"})
+        assert observations_response.status_code == 200
+        observations = observations_response.json()
+        assert len(observations) == 1
+        observation = observations[0]
+        assert observation["content_json"]["package_title"] == "Traffic Cameras"
+        assert observation["content_json"]["resource_format"] == "JSON"
+        assert observation["content_json"]["organization_title"] == "State DOT"
+        assert observation["source_domain"] == "data.example.com"

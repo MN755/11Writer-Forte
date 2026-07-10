@@ -567,7 +567,17 @@ class SourceTrustProfileRead(SourceTrustProfileCreate):
 
 class SourceDefinitionCreate(ForteModel):
     name: str
-    source_kind: Literal["local_file", "http_json", "http_text", "http_xml"]
+    source_kind: Literal[
+        "local_file",
+        "http_json",
+        "http_jsonl",
+        "http_text",
+        "http_xml",
+        "http_csv",
+        "rss",
+        "arcgis_feature_json",
+        "ckan_package_search",
+    ]
     layer_key: str
     target_uri: str
     enabled: bool = True

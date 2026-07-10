@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import base64
+import csv
 import hashlib
+import io
 import json
+import math
 import os
 import time
 from collections import defaultdict
@@ -60,6 +63,17 @@ class SourceFetchConfig:
 class MaterializedSourcePayload:
     path: str
     metadata: dict[str, Any]
+
+
+RAW_HTTP_SOURCE_KINDS = {"http_json", "http_jsonl", "http_text"}
+STRUCTURED_HTTP_SOURCE_KINDS = {
+    "http_xml",
+    "http_csv",
+    "rss",
+    "arcgis_feature_json",
+    "ckan_package_search",
+}
+HTTP_SOURCE_KINDS = RAW_HTTP_SOURCE_KINDS | STRUCTURED_HTTP_SOURCE_KINDS
 
 
 def source_now() -> datetime:
@@ -725,30 +739,10 @@ def materialize_source_payload(source: SourceDefinitionORM) -> MaterializedSourc
             },
         )
 
-    if source.source_kind in {"http_json", "http_text", "http_xml"}:
-        suffix = ".json" if source.source_kind in {"http_json", "http_xml"} else ".txt"
-        destination = build_cached_path(source.source_id, suffix)
+    if source.source_kind in HTTP_SOURCE_KINDS:
         fetch_config = parse_fetch_config(source)
         payload, fetch_metadata = fetch_http_source(source, fetch_config)
-        if source.source_kind == "http_xml":
-            records = parse_http_xml_payload(payload, source.target_uri)
-            destination.write_text(json.dumps(records), encoding="utf-8")
-            fetch_metadata = {
-                **fetch_metadata,
-                "cached_record_count": len(records),
-                "materialized_content_type": "application/json",
-                "original_content_type": fetch_metadata.get("content_type"),
-            }
-        else:
-            destination.write_bytes(payload)
-        return MaterializedSourcePayload(
-            path=str(destination),
-            metadata={
-                "materialization_kind": "http_fetch",
-                "cached_path": str(destination),
-                **fetch_metadata,
-            },
-        )
+        return materialize_http_source_payload(source, payload, fetch_metadata)
 
     raise ValueError(f"Unsupported source kind: {source.source_kind}")
 
@@ -768,13 +762,7 @@ def parse_fetch_config(source: SourceDefinitionORM) -> SourceFetchConfig:
     user_headers = metadata.get("headers", {})
     headers = {
         "User-Agent": str(metadata.get("user_agent", "11Writer-Forte/0.1 (+headless-source-fetch)")),
-        "Accept": (
-            "application/json"
-            if source.source_kind == "http_json"
-            else "application/xml, text/xml, */*"
-            if source.source_kind == "http_xml"
-            else "text/plain, */*"
-        ),
+        "Accept": resolve_source_accept_header(source.source_kind),
     }
     if isinstance(user_headers, dict):
         headers.update({str(key): str(value) for key, value in user_headers.items()})
@@ -883,6 +871,73 @@ def apply_basic_auth_headers(metadata: dict[str, Any], headers: dict[str, str]) 
     headers.setdefault("Authorization", f"Basic {token}")
 
 
+def resolve_source_accept_header(source_kind: str) -> str:
+    if source_kind in {"http_json", "arcgis_feature_json", "ckan_package_search"}:
+        return "application/json"
+    if source_kind == "http_jsonl":
+        return "application/x-ndjson, application/jsonl, application/json, text/plain, */*"
+    if source_kind in {"http_xml", "rss"}:
+        return "application/rss+xml, application/atom+xml, application/xml, text/xml, */*"
+    if source_kind == "http_csv":
+        return "text/csv, application/csv, text/plain, */*"
+    return "text/plain, */*"
+
+
+def materialize_http_source_payload(
+    source: SourceDefinitionORM,
+    payload: bytes,
+    fetch_metadata: dict[str, Any],
+) -> MaterializedSourcePayload:
+    if source.source_kind in RAW_HTTP_SOURCE_KINDS:
+        suffix = {
+            "http_json": ".json",
+            "http_jsonl": ".jsonl",
+            "http_text": ".txt",
+        }[source.source_kind]
+        destination = build_cached_path(source.source_id, suffix)
+        destination.write_bytes(payload)
+        return MaterializedSourcePayload(
+            path=str(destination),
+            metadata={
+                "materialization_kind": "http_fetch",
+                "cached_path": str(destination),
+                **fetch_metadata,
+            },
+        )
+
+    records = parse_structured_http_source_payload(source, payload)
+    destination = build_cached_path(source.source_id, ".json")
+    destination.write_text(json.dumps(records), encoding="utf-8")
+    return MaterializedSourcePayload(
+        path=str(destination),
+        metadata={
+            "materialization_kind": "http_fetch",
+            "cached_path": str(destination),
+            "cached_record_count": len(records),
+            "materialized_content_type": "application/json",
+            "original_content_type": fetch_metadata.get("content_type"),
+            **fetch_metadata,
+        },
+    )
+
+
+def parse_structured_http_source_payload(
+    source: SourceDefinitionORM,
+    payload: bytes,
+) -> list[dict[str, Any]]:
+    if source.source_kind == "http_xml":
+        return parse_http_xml_payload(payload, source.target_uri)
+    if source.source_kind == "http_csv":
+        return parse_http_csv_payload(payload, source.target_uri)
+    if source.source_kind == "rss":
+        return parse_rss_payload(payload, source.target_uri)
+    if source.source_kind == "arcgis_feature_json":
+        return parse_arcgis_feature_payload(payload, source.target_uri)
+    if source.source_kind == "ckan_package_search":
+        return parse_ckan_package_search_payload(payload, source.target_uri)
+    raise ValueError(f"Unsupported structured HTTP source kind: {source.source_kind}")
+
+
 def parse_http_xml_payload(payload: bytes, source_uri: str) -> list[dict[str, Any]]:
     root = ElementTree.fromstring(payload)
     root_tag = strip_xml_namespace(root.tag)
@@ -927,6 +982,218 @@ def parse_http_xml_payload(payload: bytes, source_uri: str) -> list[dict[str, An
             record["latitude"] = latitude
             record["longitude"] = longitude
         records.append(record)
+    return records
+
+
+def parse_http_csv_payload(payload: bytes, source_uri: str) -> list[dict[str, Any]]:
+    text = payload.decode("utf-8-sig")
+    reader = csv.DictReader(io.StringIO(text))
+    records: list[dict[str, Any]] = []
+    for index, row in enumerate(reader, start=1):
+        normalized = {
+            str(key).strip(): value.strip() if isinstance(value, str) else value
+            for key, value in row.items()
+            if key is not None
+        }
+        if not normalized:
+            continue
+        normalize_numeric_coordinates(normalized)
+        title = first_present_string(
+            normalized.get("title"),
+            normalized.get("name"),
+            normalized.get("id"),
+            normalized.get("external_id"),
+        ) or f"csv-record-{index}"
+        record = {
+            **normalized,
+            "source_url": source_uri,
+            "title": title,
+            "text": build_record_text(normalized, fallback=title),
+        }
+        records.append(record)
+    return records
+
+
+def parse_rss_payload(payload: bytes, source_uri: str) -> list[dict[str, Any]]:
+    root = ElementTree.fromstring(payload)
+    root_tag = strip_xml_namespace(root.tag).lower()
+    feed_title = extract_feed_title(root)
+    feed_link = extract_feed_link(root)
+    records: list[dict[str, Any]] = []
+
+    if root_tag == "feed":
+        entries = [child for child in root if isinstance(child.tag, str) and strip_xml_namespace(child.tag) == "entry"]
+        for index, entry in enumerate(entries, start=1):
+            payload_json = xml_element_to_data(entry)
+            if not isinstance(payload_json, dict):
+                payload_json = {"value": payload_json}
+            title = first_nested_value(payload_json, "title") or f"atom-entry-{index}"
+            summary = first_nested_value(payload_json, "summary") or first_nested_value(payload_json, "content")
+            record = {
+                "source_url": source_uri,
+                "feed_type": "atom",
+                "feed_title": feed_title,
+                "feed_link": feed_link,
+                "title": title,
+                "text": summary or title,
+                "link": extract_atom_entry_link(entry) or feed_link,
+                "published_at": first_nested_value(payload_json, "updated")
+                or first_nested_value(payload_json, "published"),
+                "entry_id": first_nested_value(payload_json, "id"),
+                "author": first_nested_value(payload_json, "name") or first_nested_value(payload_json, "author"),
+                "raw_feed_entry": payload_json,
+            }
+            records.append(record)
+        return records
+
+    channel = next(
+        (child for child in root if isinstance(child.tag, str) and strip_xml_namespace(child.tag) == "channel"),
+        root,
+    )
+    items = [child for child in channel if isinstance(child.tag, str) and strip_xml_namespace(child.tag) == "item"]
+    for index, item in enumerate(items, start=1):
+        payload_json = xml_element_to_data(item)
+        if not isinstance(payload_json, dict):
+            payload_json = {"value": payload_json}
+        title = first_nested_value(payload_json, "title") or f"rss-item-{index}"
+        description = first_nested_value(payload_json, "description")
+        record = {
+            "source_url": source_uri,
+            "feed_type": "rss",
+            "feed_title": feed_title,
+            "feed_link": feed_link,
+            "title": title,
+            "text": description or title,
+            "link": first_nested_value(payload_json, "link") or feed_link,
+            "published_at": first_nested_value(payload_json, "pubDate"),
+            "guid": first_nested_value(payload_json, "guid"),
+            "author": first_nested_value(payload_json, "author"),
+            "category": first_nested_value(payload_json, "category"),
+            "raw_feed_entry": payload_json,
+        }
+        records.append(record)
+    return records
+
+
+def parse_arcgis_feature_payload(payload: bytes, source_uri: str) -> list[dict[str, Any]]:
+    document = parse_json_payload(payload, "ArcGIS feature payload")
+    features = document.get("features")
+    if not isinstance(features, list):
+        raise RuntimeError("ArcGIS feature payload did not contain a features list.")
+    spatial_reference = document.get("spatialReference")
+    wkid = extract_arcgis_wkid(spatial_reference)
+    records: list[dict[str, Any]] = []
+    for index, feature in enumerate(features, start=1):
+        if not isinstance(feature, dict):
+            continue
+        attributes = feature.get("attributes")
+        record = dict(attributes) if isinstance(attributes, dict) else {}
+        geometry = feature.get("geometry")
+        geojson = arcgis_geometry_to_geojson(geometry, wkid)
+        if geojson is not None:
+            if geojson.get("type") == "Point":
+                coordinates = geojson.get("coordinates")
+                if (
+                    isinstance(coordinates, list)
+                    and len(coordinates) >= 2
+                    and isinstance(coordinates[0], (int, float))
+                    and isinstance(coordinates[1], (int, float))
+                ):
+                    record["longitude"] = float(coordinates[0])
+                    record["latitude"] = float(coordinates[1])
+            record["geometry"] = geojson
+        title = first_present_string(
+            record.get("title"),
+            record.get("name"),
+            record.get("site_name"),
+            record.get("camera_name"),
+            record.get("OBJECTID"),
+            record.get("objectid"),
+        ) or f"arcgis-feature-{index}"
+        record.update(
+            {
+                "source_url": source_uri,
+                "title": str(title),
+                "text": build_record_text(record, fallback=str(title)),
+                "arcgis_geometry_type": document.get("geometryType"),
+                "arcgis_spatial_reference": spatial_reference,
+            }
+        )
+        records.append(record)
+    return records
+
+
+def parse_ckan_package_search_payload(payload: bytes, source_uri: str) -> list[dict[str, Any]]:
+    document = parse_json_payload(payload, "CKAN package search payload")
+    result = document.get("result")
+    if not isinstance(result, dict):
+        raise RuntimeError("CKAN package search payload did not contain a result object.")
+    packages = result.get("results")
+    if not isinstance(packages, list):
+        raise RuntimeError("CKAN package search payload did not contain a results list.")
+
+    records: list[dict[str, Any]] = []
+    for package in packages:
+        if not isinstance(package, dict):
+            continue
+        package_title = first_present_string(package.get("title"), package.get("name"), package.get("id")) or "ckan-package"
+        package_url = first_present_string(package.get("url"), package.get("notes"))
+        resources = package.get("resources")
+        if isinstance(resources, list) and resources:
+            for index, resource in enumerate(resources, start=1):
+                if not isinstance(resource, dict):
+                    continue
+                resource_title = first_present_string(
+                    resource.get("name"),
+                    resource.get("description"),
+                    resource.get("id"),
+                ) or f"{package_title}-resource-{index}"
+                records.append(
+                    {
+                        "source_url": source_uri,
+                        "title": str(resource_title),
+                        "text": build_record_text(
+                            {
+                                "package_title": package_title,
+                                "resource_title": resource_title,
+                                "format": resource.get("format"),
+                                "url": resource.get("url"),
+                            },
+                            fallback=str(resource_title),
+                        ),
+                        "url": resource.get("url"),
+                        "page_url": package_url,
+                        "package_id": package.get("id"),
+                        "package_name": package.get("name"),
+                        "package_title": package_title,
+                        "resource_id": resource.get("id"),
+                        "resource_name": resource.get("name"),
+                        "resource_format": resource.get("format"),
+                        "resource_mimetype": resource.get("mimetype"),
+                        "resource_created": resource.get("created"),
+                        "resource_last_modified": resource.get("last_modified"),
+                        "organization_title": nested_dict_value(package.get("organization"), "title"),
+                        "organization_name": nested_dict_value(package.get("organization"), "name"),
+                        "license_title": package.get("license_title"),
+                        "tags": extract_named_values(package.get("tags")),
+                        "groups": extract_named_values(package.get("groups")),
+                    }
+                )
+            continue
+        records.append(
+            {
+                "source_url": source_uri,
+                "title": str(package_title),
+                "text": build_record_text(package, fallback=str(package_title)),
+                "page_url": package_url,
+                "package_id": package.get("id"),
+                "package_name": package.get("name"),
+                "package_title": package_title,
+                "license_title": package.get("license_title"),
+                "tags": extract_named_values(package.get("tags")),
+                "groups": extract_named_values(package.get("groups")),
+            }
+        )
     return records
 
 
@@ -1022,6 +1289,206 @@ def first_feu_timestamp(payload: dict[str, Any]) -> str | None:
         if timestamp:
             return timestamp
     return None
+
+
+def parse_json_payload(payload: bytes, label: str) -> dict[str, Any]:
+    try:
+        parsed = json.loads(payload.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"{label} could not be decoded as JSON.") from exc
+    if not isinstance(parsed, dict):
+        raise RuntimeError(f"{label} did not decode to a JSON object.")
+    return parsed
+
+
+def normalize_numeric_coordinates(payload: dict[str, Any]) -> None:
+    for key in ("latitude", "lat", "longitude", "lon"):
+        value = payload.get(key)
+        if isinstance(value, str):
+            number = parse_float(value)
+            if number is not None:
+                payload[key] = number
+
+
+def build_record_text(payload: dict[str, Any], *, fallback: str) -> str:
+    parts = [
+        first_present_string(
+            payload.get("title"),
+            payload.get("name"),
+            payload.get("description"),
+            payload.get("summary"),
+            payload.get("format"),
+            payload.get("url"),
+        )
+    ]
+    values = [part for part in parts if part]
+    return " | ".join(values) if values else fallback
+
+
+def first_present_string(*values: Any) -> str | None:
+    for value in values:
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        if isinstance(value, (int, float)):
+            return str(value)
+    return None
+
+
+def extract_feed_title(root: ElementTree.Element) -> str | None:
+    for child in root.iter():
+        if not isinstance(child.tag, str):
+            continue
+        local_name = strip_xml_namespace(child.tag)
+        if local_name == "title":
+            text = (child.text or "").strip()
+            if text:
+                return text
+    return None
+
+
+def extract_feed_link(root: ElementTree.Element) -> str | None:
+    for child in root.iter():
+        if not isinstance(child.tag, str):
+            continue
+        local_name = strip_xml_namespace(child.tag)
+        if local_name != "link":
+            continue
+        href = child.attrib.get("href")
+        if href and href.strip():
+            return href.strip()
+        text = (child.text or "").strip()
+        if text:
+            return text
+    return None
+
+
+def extract_atom_entry_link(entry: ElementTree.Element) -> str | None:
+    for child in entry:
+        if not isinstance(child.tag, str) or strip_xml_namespace(child.tag) != "link":
+            continue
+        rel = child.attrib.get("rel", "alternate")
+        href = child.attrib.get("href")
+        if href and rel in {"alternate", ""}:
+            return href.strip()
+        text = (child.text or "").strip()
+        if text:
+            return text
+    return None
+
+
+def extract_arcgis_wkid(spatial_reference: Any) -> int | None:
+    if isinstance(spatial_reference, dict):
+        value = spatial_reference.get("latestWkid", spatial_reference.get("wkid"))
+        if isinstance(value, int):
+            return value
+        if isinstance(value, str) and value.isdigit():
+            return int(value)
+    return None
+
+
+def arcgis_geometry_to_geojson(geometry: Any, wkid: int | None) -> dict[str, Any] | None:
+    if not isinstance(geometry, dict):
+        return None
+    if "x" in geometry and "y" in geometry:
+        point = transform_arcgis_position(geometry.get("x"), geometry.get("y"), wkid)
+        if point is None:
+            return None
+        return {"type": "Point", "coordinates": list(point)}
+    if isinstance(geometry.get("points"), list):
+        points = [
+            transformed
+            for point in geometry["points"]
+            for transformed in [transform_arcgis_point_list(point, wkid)]
+            if transformed is not None
+        ]
+        if points:
+            return {"type": "MultiPoint", "coordinates": points}
+    if isinstance(geometry.get("paths"), list):
+        paths = [
+            path
+            for raw_path in geometry["paths"]
+            for path in [transform_arcgis_path(raw_path, wkid)]
+            if path
+        ]
+        if paths:
+            return {
+                "type": "LineString" if len(paths) == 1 else "MultiLineString",
+                "coordinates": paths[0] if len(paths) == 1 else paths,
+            }
+    if isinstance(geometry.get("rings"), list):
+        rings = [
+            ring
+            for raw_ring in geometry["rings"]
+            for ring in [transform_arcgis_path(raw_ring, wkid)]
+            if ring
+        ]
+        if rings:
+            return {"type": "Polygon", "coordinates": rings}
+    return None
+
+
+def transform_arcgis_point_list(point: Any, wkid: int | None) -> list[float] | None:
+    if not isinstance(point, list) or len(point) < 2:
+        return None
+    transformed = transform_arcgis_position(point[0], point[1], wkid)
+    if transformed is None:
+        return None
+    return [transformed[0], transformed[1]]
+
+
+def transform_arcgis_path(points: Any, wkid: int | None) -> list[list[float]]:
+    if not isinstance(points, list):
+        return []
+    transformed = [value for point in points for value in [transform_arcgis_point_list(point, wkid)] if value is not None]
+    return transformed
+
+
+def transform_arcgis_position(x: Any, y: Any, wkid: int | None) -> tuple[float, float] | None:
+    x_value = parse_float(x)
+    y_value = parse_float(y)
+    if x_value is None or y_value is None:
+        return None
+    if wkid in {3857, 102100, 102113}:
+        return web_mercator_to_wgs84(x_value, y_value)
+    return float(x_value), float(y_value)
+
+
+def web_mercator_to_wgs84(x: float, y: float) -> tuple[float, float]:
+    lon = (x / 20037508.34) * 180.0
+    lat = (y / 20037508.34) * 180.0
+    lat = 180.0 / math.pi * (2.0 * math.atan(math.exp(lat * math.pi / 180.0)) - math.pi / 2.0)
+    return lon, lat
+
+
+def parse_float(value: Any) -> float | None:
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value.strip())
+        except ValueError:
+            return None
+    return None
+
+
+def nested_dict_value(value: Any, key: str) -> str | None:
+    if isinstance(value, dict):
+        nested = value.get(key)
+        if isinstance(nested, str) and nested.strip():
+            return nested.strip()
+    return None
+
+
+def extract_named_values(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    names: list[str] = []
+    for item in value:
+        if isinstance(item, dict):
+            name = first_present_string(item.get("display_name"), item.get("title"), item.get("name"))
+            if name:
+                names.append(name)
+    return names
 
 
 def find_timestamp_in_payload(payload: Any) -> str | None:

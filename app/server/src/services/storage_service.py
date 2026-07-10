@@ -895,8 +895,13 @@ def resolve_source_materialization_media_type(
     return {
         "local_file": "application/octet-stream",
         "http_json": "application/json",
+        "http_jsonl": "application/jsonl",
         "http_text": "text/plain",
         "http_xml": "application/json",
+        "http_csv": "application/json",
+        "rss": "application/json",
+        "arcgis_feature_json": "application/json",
+        "ckan_package_search": "application/json",
     }.get(source.source_kind, "application/octet-stream")
 
 
