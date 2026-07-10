@@ -1062,6 +1062,7 @@ class SchedulerOpsExportSummaryRead(ForteModel):
     generated_at: datetime
     filters_json: dict[str, Any]
     report_index: SchedulerOpsReportIndexRead
+    tasks: list[ScheduledTaskRead]
 
 WatchType = Literal["source_delta", "image_change", "observation_rule", "source_health"]
 WatchState = Literal["enabled", "paused"]
