@@ -10,7 +10,7 @@ This repo intentionally removes the frontend runtime. The only operator-facing i
 
 Keep the writable git checkout for this repo in a normal local path such as `C:\Repos\11Writer Forte`.
 
-Avoid OneDrive-synced or other cloud-synced folders for the primary checkout. Git worktree metadata and lock files can fail there on Windows, which breaks normal commits and makes Codex worktree automation act cursed for reasons that are boring but real.
+Avoid cloud-synced folders for the primary checkout. Git worktree metadata and lock files can fail there on Windows, which breaks normal commits and makes worktree automation unreliable.
 
 ## What exists here
 
