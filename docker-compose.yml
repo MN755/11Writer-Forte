@@ -1,0 +1,262 @@
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: elevenwriter
+      POSTGRES_USER: elevenwriter
+      POSTGRES_PASSWORD: elevenwriter
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U elevenwriter -d elevenwriter"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  api:
+    build:
+      context: ./app/server
+    restart: unless-stopped
+    environment:
+      ELEVENWRITER_DATABASE_URL: postgresql+psycopg://elevenwriter:elevenwriter@db:5432/elevenwriter
+      ELEVENWRITER_DATABASE_AUTO_MIGRATE: "true"
+      ELEVENWRITER_APP_ENV: docker
+      ELEVENWRITER_DATA_DIR: /srv/11writer/var
+      ELEVENWRITER_STORAGE_ARCHIVE_BACKEND: local
+      ELEVENWRITER_STORAGE_ARCHIVE_DIR: artifacts/archive
+      ELEVENWRITER_STORAGE_REHYDRATE_DIR: artifacts/rehydrated
+      ELEVENWRITER_SCHEDULER_POLL_SECONDS: 5
+      ELEVENWRITER_CLICKHOUSE_ENABLED: ${ELEVENWRITER_CLICKHOUSE_ENABLED:-false}
+      ELEVENWRITER_CLICKHOUSE_URL: ${ELEVENWRITER_CLICKHOUSE_URL:-http://clickhouse:8123}
+      ELEVENWRITER_CLICKHOUSE_DATABASE: ${ELEVENWRITER_CLICKHOUSE_DATABASE:-elevenwriter}
+      ELEVENWRITER_CLICKHOUSE_USER: ${ELEVENWRITER_CLICKHOUSE_USER:-default}
+      ELEVENWRITER_CLICKHOUSE_PASSWORD: ${ELEVENWRITER_CLICKHOUSE_PASSWORD:-}
+      ELEVENWRITER_CLICKHOUSE_R2_ENDPOINT: ${ELEVENWRITER_CLICKHOUSE_R2_ENDPOINT:-}
+      ELEVENWRITER_CLICKHOUSE_R2_BUCKET: ${ELEVENWRITER_CLICKHOUSE_R2_BUCKET:-}
+      ELEVENWRITER_CLICKHOUSE_R2_ACCESS_KEY_ID: ${ELEVENWRITER_CLICKHOUSE_R2_ACCESS_KEY_ID:-}
+      ELEVENWRITER_CLICKHOUSE_R2_SECRET_ACCESS_KEY: ${ELEVENWRITER_CLICKHOUSE_R2_SECRET_ACCESS_KEY:-}
+      ELEVENWRITER_CLICKHOUSE_R2_REGION: ${ELEVENWRITER_CLICKHOUSE_R2_REGION:-auto}
+      ELEVENWRITER_CLICKHOUSE_R2_ARCHIVE_PREFIX: ${ELEVENWRITER_CLICKHOUSE_R2_ARCHIVE_PREFIX:-11writer-archive}
+      ELEVENWRITER_CLICKHOUSE_R2_STORAGE_MODE: ${ELEVENWRITER_CLICKHOUSE_R2_STORAGE_MODE:-archive_only}
+      ELEVENWRITER_CLICKHOUSE_R2_STORAGE_BUCKET: ${ELEVENWRITER_CLICKHOUSE_R2_STORAGE_BUCKET:-}
+      ELEVENWRITER_CLICKHOUSE_R2_STORAGE_PREFIX: ${ELEVENWRITER_CLICKHOUSE_R2_STORAGE_PREFIX:-11writer-clickhouse}
+      ELEVENWRITER_CLICKHOUSE_R2_STORAGE_POLICY: ${ELEVENWRITER_CLICKHOUSE_R2_STORAGE_POLICY:-r2_main}
+      ELEVENWRITER_CLICKHOUSE_R2_CACHE_SIZE: ${ELEVENWRITER_CLICKHOUSE_R2_CACHE_SIZE:-10Gi}
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    volumes:
+      - forte-data:/srv/11writer/var
+    command: uvicorn src.main:app --host 0.0.0.0 --port 8000
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5).read()",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  worker:
+    build:
+      context: ./app/server
+    restart: unless-stopped
+    environment:
+      ELEVENWRITER_DATABASE_URL: postgresql+psycopg://elevenwriter:elevenwriter@db:5432/elevenwriter
+      ELEVENWRITER_DATABASE_AUTO_MIGRATE: "true"
+      ELEVENWRITER_APP_ENV: docker
+      ELEVENWRITER_DATA_DIR: /srv/11writer/var
+      ELEVENWRITER_STORAGE_ARCHIVE_BACKEND: local
+      ELEVENWRITER_STORAGE_ARCHIVE_DIR: artifacts/archive
+      ELEVENWRITER_STORAGE_REHYDRATE_DIR: artifacts/rehydrated
+      ELEVENWRITER_SCHEDULER_POLL_SECONDS: 5
+      ELEVENWRITER_CLICKHOUSE_ENABLED: ${ELEVENWRITER_CLICKHOUSE_ENABLED:-false}
+      ELEVENWRITER_CLICKHOUSE_URL: ${ELEVENWRITER_CLICKHOUSE_URL:-http://clickhouse:8123}
+      ELEVENWRITER_CLICKHOUSE_DATABASE: ${ELEVENWRITER_CLICKHOUSE_DATABASE:-elevenwriter}
+      ELEVENWRITER_CLICKHOUSE_USER: ${ELEVENWRITER_CLICKHOUSE_USER:-default}
+      ELEVENWRITER_CLICKHOUSE_PASSWORD: ${ELEVENWRITER_CLICKHOUSE_PASSWORD:-}
+      ELEVENWRITER_CLICKHOUSE_R2_ENDPOINT: ${ELEVENWRITER_CLICKHOUSE_R2_ENDPOINT:-}
+      ELEVENWRITER_CLICKHOUSE_R2_BUCKET: ${ELEVENWRITER_CLICKHOUSE_R2_BUCKET:-}
+      ELEVENWRITER_CLICKHOUSE_R2_ACCESS_KEY_ID: ${ELEVENWRITER_CLICKHOUSE_R2_ACCESS_KEY_ID:-}
+      ELEVENWRITER_CLICKHOUSE_R2_SECRET_ACCESS_KEY: ${ELEVENWRITER_CLICKHOUSE_R2_SECRET_ACCESS_KEY:-}
+      ELEVENWRITER_CLICKHOUSE_R2_REGION: ${ELEVENWRITER_CLICKHOUSE_R2_REGION:-auto}
+      ELEVENWRITER_CLICKHOUSE_R2_ARCHIVE_PREFIX: ${ELEVENWRITER_CLICKHOUSE_R2_ARCHIVE_PREFIX:-11writer-archive}
+      ELEVENWRITER_CLICKHOUSE_R2_STORAGE_MODE: ${ELEVENWRITER_CLICKHOUSE_R2_STORAGE_MODE:-archive_only}
+      ELEVENWRITER_CLICKHOUSE_R2_STORAGE_BUCKET: ${ELEVENWRITER_CLICKHOUSE_R2_STORAGE_BUCKET:-}
+      ELEVENWRITER_CLICKHOUSE_R2_STORAGE_PREFIX: ${ELEVENWRITER_CLICKHOUSE_R2_STORAGE_PREFIX:-11writer-clickhouse}
+      ELEVENWRITER_CLICKHOUSE_R2_STORAGE_POLICY: ${ELEVENWRITER_CLICKHOUSE_R2_STORAGE_POLICY:-r2_main}
+      ELEVENWRITER_CLICKHOUSE_R2_CACHE_SIZE: ${ELEVENWRITER_CLICKHOUSE_R2_CACHE_SIZE:-10Gi}
+    depends_on:
+      db:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+      local-upstreams:
+        condition: service_healthy
+      bootstrap:
+        condition: service_completed_successfully
+    volumes:
+      - forte-data:/srv/11writer/var
+    command: elevenwriter platform-runtime-worker
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "elevenwriter",
+          "check-worker-health",
+          "--worker-type",
+          "platform_runtime_worker",
+          "--actor",
+          "cli_platform_runtime_worker",
+          "--require-active",
+        ]
+      interval: 20s
+      timeout: 5s
+      retries: 6
+      start_period: 25s
+
+  bootstrap:
+    build:
+      context: ./app/server
+    restart: "no"
+    environment:
+      ELEVENWRITER_DATABASE_URL: postgresql+psycopg://elevenwriter:elevenwriter@db:5432/elevenwriter
+      ELEVENWRITER_DATABASE_AUTO_MIGRATE: "true"
+      ELEVENWRITER_APP_ENV: docker
+      ELEVENWRITER_DATA_DIR: /srv/11writer/var
+      ELEVENWRITER_STORAGE_ARCHIVE_BACKEND: local
+      ELEVENWRITER_STORAGE_ARCHIVE_DIR: artifacts/archive
+      ELEVENWRITER_STORAGE_REHYDRATE_DIR: artifacts/rehydrated
+      ELEVENWRITER_SCHEDULER_POLL_SECONDS: 5
+      ELEVENWRITER_CLICKHOUSE_ENABLED: ${ELEVENWRITER_CLICKHOUSE_ENABLED:-false}
+      ELEVENWRITER_CLICKHOUSE_URL: ${ELEVENWRITER_CLICKHOUSE_URL:-http://clickhouse:8123}
+      ELEVENWRITER_CLICKHOUSE_DATABASE: ${ELEVENWRITER_CLICKHOUSE_DATABASE:-elevenwriter}
+      ELEVENWRITER_CLICKHOUSE_USER: ${ELEVENWRITER_CLICKHOUSE_USER:-default}
+      ELEVENWRITER_CLICKHOUSE_PASSWORD: ${ELEVENWRITER_CLICKHOUSE_PASSWORD:-}
+      ELEVENWRITER_CLICKHOUSE_R2_ENDPOINT: ${ELEVENWRITER_CLICKHOUSE_R2_ENDPOINT:-}
+      ELEVENWRITER_CLICKHOUSE_R2_BUCKET: ${ELEVENWRITER_CLICKHOUSE_R2_BUCKET:-}
+      ELEVENWRITER_CLICKHOUSE_R2_ACCESS_KEY_ID: ${ELEVENWRITER_CLICKHOUSE_R2_ACCESS_KEY_ID:-}
+      ELEVENWRITER_CLICKHOUSE_R2_SECRET_ACCESS_KEY: ${ELEVENWRITER_CLICKHOUSE_R2_SECRET_ACCESS_KEY:-}
+      ELEVENWRITER_CLICKHOUSE_R2_REGION: ${ELEVENWRITER_CLICKHOUSE_R2_REGION:-auto}
+      ELEVENWRITER_CLICKHOUSE_R2_ARCHIVE_PREFIX: ${ELEVENWRITER_CLICKHOUSE_R2_ARCHIVE_PREFIX:-11writer-archive}
+      ELEVENWRITER_CLICKHOUSE_R2_STORAGE_MODE: ${ELEVENWRITER_CLICKHOUSE_R2_STORAGE_MODE:-archive_only}
+      ELEVENWRITER_CLICKHOUSE_R2_STORAGE_BUCKET: ${ELEVENWRITER_CLICKHOUSE_R2_STORAGE_BUCKET:-}
+      ELEVENWRITER_CLICKHOUSE_R2_STORAGE_PREFIX: ${ELEVENWRITER_CLICKHOUSE_R2_STORAGE_PREFIX:-11writer-clickhouse}
+      ELEVENWRITER_CLICKHOUSE_R2_STORAGE_POLICY: ${ELEVENWRITER_CLICKHOUSE_R2_STORAGE_POLICY:-r2_main}
+      ELEVENWRITER_CLICKHOUSE_R2_CACHE_SIZE: ${ELEVENWRITER_CLICKHOUSE_R2_CACHE_SIZE:-10Gi}
+    depends_on:
+      db:
+        condition: service_healthy
+      local-upstreams:
+        condition: service_healthy
+    volumes:
+      - forte-data:/srv/11writer/var
+    command:
+      [
+        "elevenwriter",
+        "bootstrap-local-runtime",
+        "--base-url",
+        "http://local-upstreams:8010",
+        "--layer-prefix",
+        "local-live",
+        "--schedule-prefix",
+        "local-runtime",
+        "--run-initial-cycle",
+      ]
+
+  local-upstreams:
+    build:
+      context: ./app/server
+    restart: unless-stopped
+    environment:
+      ELEVENWRITER_APP_ENV: docker
+    ports:
+      - "8010:8010"
+    command: uvicorn src.local_upstreams:app --host 0.0.0.0 --port 8010
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8010/health', timeout=5).read()",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:26.6
+    profiles: ["clickhouse"]
+    restart: unless-stopped
+    environment:
+      CLICKHOUSE_DB: ${ELEVENWRITER_CLICKHOUSE_DATABASE:-elevenwriter}
+      CLICKHOUSE_USER: ${ELEVENWRITER_CLICKHOUSE_USER:-default}
+      CLICKHOUSE_PASSWORD: ${ELEVENWRITER_CLICKHOUSE_PASSWORD:-}
+      ELEVENWRITER_CLICKHOUSE_R2_ENDPOINT: ${ELEVENWRITER_CLICKHOUSE_R2_ENDPOINT:-}
+      ELEVENWRITER_CLICKHOUSE_R2_BUCKET: ${ELEVENWRITER_CLICKHOUSE_R2_BUCKET:-}
+      ELEVENWRITER_CLICKHOUSE_R2_ACCESS_KEY_ID: ${ELEVENWRITER_CLICKHOUSE_R2_ACCESS_KEY_ID:-}
+      ELEVENWRITER_CLICKHOUSE_R2_SECRET_ACCESS_KEY: ${ELEVENWRITER_CLICKHOUSE_R2_SECRET_ACCESS_KEY:-}
+      ELEVENWRITER_CLICKHOUSE_R2_REGION: ${ELEVENWRITER_CLICKHOUSE_R2_REGION:-auto}
+      ELEVENWRITER_CLICKHOUSE_R2_STORAGE_BUCKET: ${ELEVENWRITER_CLICKHOUSE_R2_STORAGE_BUCKET:-}
+      ELEVENWRITER_CLICKHOUSE_R2_STORAGE_PREFIX: ${ELEVENWRITER_CLICKHOUSE_R2_STORAGE_PREFIX:-11writer-clickhouse}
+      ELEVENWRITER_CLICKHOUSE_R2_STORAGE_POLICY: ${ELEVENWRITER_CLICKHOUSE_R2_STORAGE_POLICY:-r2_main}
+      ELEVENWRITER_CLICKHOUSE_R2_CACHE_SIZE: ${ELEVENWRITER_CLICKHOUSE_R2_CACHE_SIZE:-10Gi}
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - ./app/server/11writer-r2-storage.xml:/etc/clickhouse-server/config.d/11writer-r2-storage.xml:ro
+
+  runtime-probe:
+    build:
+      context: ./app/server
+    profiles: ["probe"]
+    restart: "no"
+    depends_on:
+      api:
+        condition: service_healthy
+      worker:
+        condition: service_healthy
+      local-upstreams:
+        condition: service_healthy
+      bootstrap:
+        condition: service_completed_successfully
+    command:
+      [
+        "elevenwriter",
+        "verify-local-runtime-stack",
+        "--api-base-url",
+        "http://api:8000",
+        "--upstreams-base-url",
+        "http://local-upstreams:8010",
+        "--check-database-diagnostics",
+        "--expected-database-backend",
+        "postgresql",
+        "--expected-spatial-backend",
+        "postgis",
+        "--require-postgis-ready",
+        "--require-database-status-ok",
+        "--require-schema-current",
+        "--wait-seconds",
+        "60",
+        "--poll-seconds",
+        "3",
+      ]
+
+volumes:
+  postgres-data:
+  clickhouse-data:
+  forte-data:

@@ -1,0 +1,14 @@
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.venv/
+app/server/.venv/
+app/server/.mypy_cache/
+app/server/.pytest_cache/
+app/server/dist/
+app/server/*.egg-info/
+var/
+app/server/var/
+.env
+*.pyc
+bootstrap-test.txt
