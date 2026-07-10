@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, quote_plus, urlencode, urljoin, urlparse
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 from xml.etree import ElementTree
 
 from sqlalchemy import or_, select
@@ -40,7 +40,6 @@ from src.schemas import SourceDefinitionCreate, SourceDefinitionUpdate
 from src.services.ingestion_service import (
     IngestionEnvelope,
     normalize_payload as normalize_ingestion_payload,
-    parse_json_envelopes,
     persist_envelopes_as_import_run,
     read_path_as_envelopes,
 )
@@ -3026,6 +3025,7 @@ def fetch_http_url(
     *,
     extra_headers: dict[str, str] | None = None,
     fetch_runtime_context: FetchRuntimeContext | None = None,
+    validate_redirects: bool = False,
 ) -> tuple[bytes, dict[str, Any]]:
     last_error: Exception | None = None
     request_headers = dict(fetch_config.headers)
@@ -3035,7 +3035,22 @@ def fetch_http_url(
     for attempt in range(1, fetch_config.retry_attempts + 1):
         request = Request(url, headers=request_headers)
         try:
-            with urlopen(request, timeout=fetch_config.timeout_seconds) as response:
+            opener = (
+                build_opener(
+                    NetworkPolicyRedirectHandler(
+                        fetch_config=fetch_config,
+                        fetch_runtime_context=fetch_runtime_context,
+                    )
+                )
+                if validate_redirects
+                else None
+            )
+            response_context = (
+                opener.open(request, timeout=fetch_config.timeout_seconds)
+                if opener is not None
+                else urlopen(request, timeout=fetch_config.timeout_seconds)
+            )
+            with response_context as response:
                 payload = response.read(fetch_config.max_payload_bytes + 1)
                 if len(payload) > fetch_config.max_payload_bytes:
                     raise RuntimeError(
@@ -3054,8 +3069,9 @@ def fetch_http_url(
                     "max_payload_bytes": fetch_config.max_payload_bytes,
                     "allow_private_networks": fetch_config.allow_private_networks,
                     "headers": request_headers,
-                    "host": urlparse(url).netloc,
+                    "host": urlparse(response.geturl()).netloc,
                     "requested_url": url,
+                    "resolved_url": response.geturl(),
                 }
         except HTTPError as exc:
             last_error = exc
@@ -3069,6 +3085,27 @@ def fetch_http_url(
             apply_retry_backoff(fetch_config, attempt)
     assert last_error is not None
     raise RuntimeError(f"HTTP source fetch failed after {fetch_config.retry_attempts} attempts: {last_error}") from last_error
+
+
+class NetworkPolicyRedirectHandler(HTTPRedirectHandler):
+    def __init__(
+        self,
+        *,
+        fetch_config: SourceFetchConfig,
+        fetch_runtime_context: FetchRuntimeContext | None,
+    ) -> None:
+        super().__init__()
+        self.fetch_config = fetch_config
+        self.fetch_runtime_context = fetch_runtime_context
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
+        target_url = urljoin(req.full_url, newurl)
+        enforce_fetch_target_network_policy(
+            target_url,
+            self.fetch_config,
+            fetch_runtime_context=self.fetch_runtime_context,
+        )
+        return super().redirect_request(req, fp, code, msg, headers, target_url)
 
 
 def fetch_http_url_with_runtime_policy(

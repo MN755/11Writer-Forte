@@ -16,6 +16,8 @@ from src.models import (
     ObservationORM,
     ScheduledTaskRunORM,
     SourceRunORM,
+    WatchORM,
+    WatchRunORM,
 )
 from src.schemas import OperationsReportRead
 from src.services.alert_service import build_alert_inventory_summary, build_alert_ops_report_index
@@ -81,6 +83,16 @@ def build_operations_report(
             apply_time_filters(
                 select(ScheduledTaskRunORM).order_by(ScheduledTaskRunORM.task_run_id.desc()).limit(limit),
                 ScheduledTaskRunORM.started_at,
+                since=since,
+                until=until,
+            )
+        )
+    )
+    watch_runs = list(
+        session.scalars(
+            apply_time_filters(
+                select(WatchRunORM).order_by(WatchRunORM.watch_run_id.desc()).limit(limit),
+                WatchRunORM.started_at,
                 since=since,
                 until=until,
             )
@@ -204,6 +216,50 @@ def build_operations_report(
             "event_count": count_records(session, EventORM, EventORM.created_at, since, until),
             "entity_count": count_records(session, EntityORM, EntityORM.created_at, since, until),
             "observation_count": count_records(session, ObservationORM, ObservationORM.created_at, since, until),
+            "watch_count": count_records(session, WatchORM, WatchORM.created_at, since, until),
+            "enabled_watch_count": count_status_records(
+                session,
+                WatchORM,
+                WatchORM.state,
+                "enabled",
+                WatchORM.created_at,
+                since,
+                until,
+            ),
+            "paused_watch_count": count_status_records(
+                session,
+                WatchORM,
+                WatchORM.state,
+                "paused",
+                WatchORM.created_at,
+                since,
+                until,
+            ),
+            "watch_run_count": count_records(
+                session,
+                WatchRunORM,
+                WatchRunORM.started_at,
+                since,
+                until,
+            ),
+            "watch_change_count": count_status_records(
+                session,
+                WatchRunORM,
+                WatchRunORM.outcome,
+                "change",
+                WatchRunORM.started_at,
+                since,
+                until,
+            ),
+            "watch_failure_count": count_status_records(
+                session,
+                WatchRunORM,
+                WatchRunORM.status,
+                "failed",
+                WatchRunORM.started_at,
+                since,
+                until,
+            ),
         },
         "runtime_readiness": runtime_readiness,
         "alert_inventory_summary": alert_inventory_summary,
@@ -226,6 +282,7 @@ def build_operations_report(
         "import_runs": import_runs,
         "source_runs": source_runs,
         "scheduled_task_runs": scheduled_task_runs,
+        "recent_watch_runs": watch_runs,
         "alerts": alerts,
         "custody_logs": custody_logs,
     }

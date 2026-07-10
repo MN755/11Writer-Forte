@@ -31,6 +31,8 @@ from src.models import (
     SourceDefinitionORM,
     SourceRunORM,
     SourceTrustProfileORM,
+    WatchORM,
+    WatchRunORM,
 )
 
 TABLE_COUNT_MODELS: tuple[tuple[str, object], ...] = (
@@ -50,6 +52,8 @@ TABLE_COUNT_MODELS: tuple[tuple[str, object], ...] = (
     ("alerts", AlertORM),
     ("scheduled_tasks", ScheduledTaskORM),
     ("scheduled_task_runs", ScheduledTaskRunORM),
+    ("watches", WatchORM),
+    ("watch_runs", WatchRunORM),
     ("worker_statuses", WorkerStatusORM),
     ("source_runs", SourceRunORM),
     ("source_checkpoints", SourceCheckpointORM),

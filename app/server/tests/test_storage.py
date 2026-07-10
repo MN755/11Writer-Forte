@@ -244,13 +244,9 @@ def test_storage_routes_return_structured_errors(client: TestClient) -> None:
             "metadata_json": {"file_name": "11writer-missing-archive.json"},
         },
     )
-    assert create_response.status_code == 200
-    storage_object_id = create_response.json()["storage_object_id"]
-
-    archive_response = client.post(f"/api/storage/objects/{storage_object_id}/archive")
-    assert archive_response.status_code == 404
-    archive_detail = archive_response.json()["detail"]
-    assert archive_detail["storage_object_id"] == storage_object_id
-    assert archive_detail["action"] == "archive"
-    assert archive_detail["error_type"] == "ValueError"
-    assert "does not exist" in archive_detail["message"]
+    assert create_response.status_code == 409
+    create_detail = create_response.json()["detail"]
+    assert create_detail["storage_object_id"] == 0
+    assert create_detail["action"] == "create"
+    assert create_detail["error_type"] == "ValueError"
+    assert "data_dir" in create_detail["message"]

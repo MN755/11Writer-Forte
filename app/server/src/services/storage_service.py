@@ -31,7 +31,6 @@ from src.services.storage_backends import (
     StorageTransferResult,
     build_archive_backend,
     build_local_backend,
-    hash_file as backend_hash_file,
     local_path_from_uri,
     local_path_to_uri,
 )
@@ -62,6 +61,9 @@ MANAGED_STORAGE_OBJECT_KINDS = {
     "operations_report_export",
     "runtime_snapshot_export",
     "runtime_snapshot_manifest_export",
+    "runtime_bundle_export",
+    "runtime_bundle_import",
+    "watch_image_evidence",
     "scheduler_summary_export",
     "source_summary_export",
 }
@@ -114,6 +116,7 @@ def create_storage_object(
     *,
     actor: str = "api_storage",
 ) -> StorageObjectORM:
+    validate_public_storage_object_path(payload)
     record = register_storage_object(
         session,
         object_key=payload.object_key,
@@ -1514,6 +1517,10 @@ def prune_storage_object_record(
         raise ValueError("Storage object does not have a local replica to prune.")
     path = local_path_from_uri(primary["uri"])
     if path.exists():
+        if not is_safe_managed_local_path(path):
+            raise ValueError(
+                f"Refusing to prune local storage artifact outside managed data_dir: '{path}'."
+            )
         path.unlink()
     primary["status"] = "pruned"
     primary["pruned_at"] = isoformat_nullable(normalize_timestamp(reference) or utcnow())
@@ -1647,4 +1654,26 @@ def isoformat_nullable(value: datetime | None) -> str | None:
 def is_safe_managed_local_path(path: Path) -> bool:
     resolved = path.expanduser().resolve()
     data_root = get_settings().data_dir_effective
-    return str(resolved).startswith(str(data_root))
+    try:
+        resolved.relative_to(data_root)
+        return True
+    except ValueError:
+        return False
+
+
+def validate_public_storage_object_path(payload: StorageObjectCreate) -> None:
+    if not is_local_artifact_uri(payload.object_uri):
+        return
+    metadata = payload.metadata_json or {}
+    requested_management = (
+        payload.object_kind in MANAGED_STORAGE_OBJECT_KINDS
+        or bool(metadata.get("storage_managed"))
+        or bool(metadata.get("archive_eligible"))
+        or bool(metadata.get("prune_eligible"))
+    )
+    if requested_management and not is_safe_managed_local_path(
+        local_path_from_uri(payload.object_uri)
+    ):
+        raise ValueError(
+            "Managed local storage objects must live beneath the configured data_dir."
+        )

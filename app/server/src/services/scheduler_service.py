@@ -15,8 +15,15 @@ from src.models import (
     ObservationORM,
     ScheduledTaskORM,
     ScheduledTaskRunORM,
+    WatchORM,
 )
-from src.schemas import EntityResolutionRequest, EventFusionRequest, ScheduledTaskCreate, ScheduledTaskUpdate
+from src.schemas import (
+    EntityResolutionRequest,
+    EventFusionRequest,
+    ScheduledTaskCreate,
+    ScheduledTaskUpdate,
+    WatchEvaluateTaskPayload,
+)
 from src.services.camera_source_service import materialize_camera_source_inventory, verify_camera_source_inventory
 from src.services.camera_service import materialize_camera_inventory
 from src.services.clickhouse_service import archive_clickhouse_observations_to_r2, sync_runtime_to_clickhouse
@@ -34,6 +41,7 @@ from src.services.storage_service import sweep_expired_storage_objects
 from src.services.source_service import perform_source_maintenance, run_source_definition
 from src.services.source_service import scan_source_health_alerts
 from src.services.trust_service import seed_default_integrity_sources
+from src.services.watch_service import evaluate_watch
 
 
 def scheduler_now() -> datetime:
@@ -53,6 +61,7 @@ MAINTENANCE_TASK_TYPES = {
     "clickhouse_archive",
     "camera_source_verification",
     "observation_watch_scan",
+    "watch_evaluate",
 }
 
 TASK_EXECUTION_PRIORITIES = {
@@ -65,6 +74,7 @@ TASK_EXECUTION_PRIORITIES = {
     "event_fusion_refresh": 50,
     "geofence_scan": 60,
     "observation_watch_scan": 65,
+    "watch_evaluate": 66,
     "runtime_snapshot_export": 67,
     "clickhouse_sync": 70,
     "clickhouse_archive": 80,
@@ -108,6 +118,19 @@ def create_scheduled_task(session: Session, payload: ScheduledTaskCreate) -> Sch
     )
     session.add(record)
     session.flush()
+    if record.task_type == "watch_evaluate":
+        payload_watch_id = record.payload_json.get("watch_id") if isinstance(record.payload_json, dict) else None
+        if isinstance(payload_watch_id, int):
+            watch = session.get(WatchORM, payload_watch_id)
+            if watch is None:
+                raise ValueError(f"Watch {payload_watch_id} does not exist.")
+            if watch.scheduled_task_id not in {None, record.task_id}:
+                raise ValueError(
+                    f"Watch {payload_watch_id} is already attached to task {watch.scheduled_task_id}."
+                )
+            watch.scheduled_task_id = record.task_id
+            watch.interval_seconds = record.interval_seconds
+            watch.next_run_at = record.next_run_at if watch.state == "enabled" and record.enabled else None
     session.add(
         CustodyLogORM(
             object_type="scheduled_task",
@@ -246,6 +269,17 @@ def update_scheduled_task(
     if "name" in changes and changes["name"] != record.name:
         ensure_unique_task_name(session, str(changes["name"]), task_id=task_id)
 
+    linked_watch = session.scalar(
+        select(WatchORM).where(WatchORM.scheduled_task_id == task_id).limit(1)
+    )
+    if linked_watch is not None:
+        proposed_payload = changes.get("payload_json", record.payload_json)
+        watch_id = proposed_payload.get("watch_id") if isinstance(proposed_payload, dict) else None
+        if record.task_type != "watch_evaluate" or watch_id != linked_watch.watch_id:
+            raise ValueError(
+                f"Scheduled task {task_id} is owned by watch {linked_watch.watch_id} and cannot be reassigned."
+            )
+
     task_type = record.task_type
     source_id = int(changes["source_id"]) if "source_id" in changes and changes["source_id"] is not None else (
         None if "source_id" in changes else record.source_id
@@ -272,6 +306,11 @@ def update_scheduled_task(
 
     change_details = apply_task_changes(record, changes)
     recompute_task_next_run(record, changes)
+    if linked_watch is not None:
+        linked_watch.interval_seconds = record.interval_seconds
+        linked_watch.next_run_at = (
+            record.next_run_at if linked_watch.state == "enabled" and record.enabled else None
+        )
     session.add(
         CustodyLogORM(
             object_type="scheduled_task",
@@ -387,13 +426,24 @@ def run_task(session: Session, task_id: int, actor: str = "scheduler") -> Schedu
             },
         )
     )
+    # Watch evaluators may commit or roll back while retaining their own failure history.
+    # Persist the parent run before dispatch so those records always have a valid FK and
+    # scheduler retry bookkeeping survives an evaluator rollback.
+    session.commit()
+    session.refresh(task)
+    session.refresh(task_run)
 
     max_attempts = max(1, task.retry_attempts)
     attempt_errors: list[dict[str, object]] = []
 
     for attempt in range(1, max_attempts + 1):
         try:
-            records_affected, output_json = execute_task(session, task, actor=actor)
+            records_affected, output_json = execute_task(
+                session,
+                task,
+                actor=actor,
+                scheduled_task_run_id=task_run.task_run_id,
+            )
             finished_at = scheduler_now()
             task_run.status = "completed"
             task_run.records_affected = records_affected
@@ -535,6 +585,7 @@ def execute_task(
     session: Session,
     task: ScheduledTaskORM,
     actor: str,
+    scheduled_task_run_id: int | None = None,
 ) -> tuple[int, dict[str, object]]:
     if task.task_type == "local_import":
         if not task.target_path:
@@ -617,6 +668,27 @@ def execute_task(
         return (
             int(result["created_alert_count"]) + int(result["closed_alert_count"]),
             result,
+        )
+    if task.task_type == "watch_evaluate":
+        payload = resolve_watch_evaluate_payload(task.payload_json)
+        watch_run = evaluate_watch(
+            session,
+            payload.watch_id,
+            actor=actor,
+            force=payload.force,
+            scheduled_task_run_id=scheduled_task_run_id,
+        )
+        return (
+            1 if watch_run.change_detected else 0,
+            {
+                "watch_id": watch_run.watch_id,
+                "watch_run_id": watch_run.watch_run_id,
+                "watch_status": watch_run.status,
+                "watch_outcome": watch_run.outcome,
+                "change_detected": watch_run.change_detected,
+                "alert_id": watch_run.alert_id,
+                "storage_object_id": watch_run.storage_object_id,
+            },
         )
     if task.task_type == "storage_lifecycle":
         retention_class, limit = resolve_storage_lifecycle_payload(task.payload_json)
@@ -1155,6 +1227,12 @@ def validate_task_configuration(
                 "Observation watch scan task does not accept source_id, target_path, or geofence_id."
             )
         resolve_observation_watch_payload(payload_json)
+    if task_type == "watch_evaluate":
+        if any(value is not None for value in (source_id, target_path, geofence_id, layer_key)):
+            raise ValueError(
+                "Watch evaluate task does not accept source_id, target_path, geofence_id, or layer_key."
+            )
+        resolve_watch_evaluate_payload(payload_json)
     if task_type == "entity_resolution_refresh":
         if any(value is not None for value in (source_id, target_path, geofence_id)):
             raise ValueError(
@@ -1598,6 +1676,16 @@ def resolve_scheduler_payload_json(
     if not isinstance(payload, dict):
         raise ValueError(f"{task_label} payload_json must be a JSON object.")
     return dict(payload)
+
+
+def resolve_watch_evaluate_payload(
+    payload_json: dict[str, object] | None,
+) -> WatchEvaluateTaskPayload:
+    payload = resolve_scheduler_payload_json("Watch evaluate", payload_json)
+    try:
+        return WatchEvaluateTaskPayload(**payload)
+    except ValidationError as exc:
+        raise ValueError(format_validation_error("Watch evaluate", exc)) from exc
 
 
 def format_validation_error(task_label: str, exc: ValidationError) -> str:

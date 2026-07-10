@@ -14,6 +14,7 @@ This repo intentionally removes the frontend runtime. The only operator-facing i
 - Rule-based entity resolution that links observations into reusable entity records while preserving conflicting identifier/name signals as explicit cautions
 - Event fusion materialization plus exportable cited summaries and rule-based reports with explicit confidence drivers, weakening factors, linked-entity rationale, and related alert context
 - Managed source definitions with persisted source-run history and scheduler-driven sync hooks
+- First-class deterministic watches for source deltas, image hashes, observation rules, and source health, with independent run history, alerts, evidence, scheduling, and RSS
 - Camera inventory materialization that turns imported/public traffic camera observations into persisted geospatial camera records with provenance
 - Camera source inventory lifecycle that graduates observed camera endpoints into a backend-native candidate registry with rule-based readiness scoring
 - Storage-object ledger that tracks retained artifacts, retention class, lifecycle state, and provenance for imports and camera-derived references
@@ -57,6 +58,8 @@ If you want web-facing ingestion with local-only persistence, start from [`app/s
 MnDOT live-feed notes and source-ingestion examples live in [MNDOT_FEEDS.md](MNDOT_FEEDS.md).
 
 Upstream camera/webcam inventory and local parity notes live in [UPSTREAM_CAMERA_INVENTORY.md](UPSTREAM_CAMERA_INVENTORY.md).
+
+The complete local Watch Engine acceptance flow lives in [WATCH_ENGINE_DEMO.md](WATCH_ENGINE_DEMO.md). It uses a controlled replaceable image fixture and no cloud service.
 
 ## CLI
 
@@ -168,6 +171,21 @@ elevenwriter export-event-bundle 1 ./exports/event-1-bundle.json --max-redaction
 elevenwriter export-runtime-snapshot ./exports/runtime-snapshot.json
 elevenwriter verify-runtime-snapshot ./exports/runtime-snapshot.json
 elevenwriter restore-runtime-snapshot ./exports/runtime-snapshot.json --replace-existing
+elevenwriter export-runtime-bundle ./exports/runtime-bundle.zip
+elevenwriter restore-runtime-bundle ./exports/runtime-bundle.zip --replace-existing
+elevenwriter add-watch "Piston Peak construction image" image_change "Notify when the retained image hash changes." --slug piston-peak-construction-image --camera-inventory-id 1 --severity warning --rule-json '{"mode":"image_change","comparison":"sha256","alert_on_initial":false,"retention_class":"permanent"}'
+elevenwriter list-watches --watch-type image_change
+elevenwriter show-watch 1
+elevenwriter update-watch 1 --severity critical --description "Escalated operator watch"
+elevenwriter pause-watch 1
+elevenwriter resume-watch 1
+elevenwriter run-watch 1
+elevenwriter add-watch-schedule 1 piston-peak-watch-poll 300 --retry-attempts 3 --retry-backoff-seconds 5
+elevenwriter list-watch-runs --watch-id 1
+elevenwriter list-watch-alerts --watch-id 1 --status open
+elevenwriter show-watch-evidence 1
+elevenwriter show-watch-feed --watch-id 1
+elevenwriter show-watch-feed --watch-id 1 --preview
 elevenwriter add-source-sync-schedule nightly-sync 1 300 --retry-attempts 3 --retry-backoff-seconds 5
 elevenwriter add-geofence-scan-schedule nightly-watch 300
 elevenwriter update-schedule 1 --enabled false --notes "Paused for maintenance"
@@ -186,6 +204,23 @@ elevenwriter show-scheduler-summary
 elevenwriter show-scheduler-report-index --limit 25
 elevenwriter show-worker-summary
 elevenwriter export-scheduler-summary ./exports/scheduler-summary.json --task-limit 500 --report-limit 25
+```
+
+Watch API catalog:
+
+```text
+GET/POST  /api/watches
+GET       /api/watches/runs
+GET       /api/watches/alerts
+GET       /api/watches/feed.rss
+GET/PATCH /api/watches/{watch_id}
+POST      /api/watches/{watch_id}/pause
+POST      /api/watches/{watch_id}/resume
+POST      /api/watches/{watch_id}/run
+POST      /api/watches/{watch_id}/schedule
+GET       /api/watches/{watch_id}/runs
+GET       /api/watches/{watch_id}/alerts
+GET       /api/watches/{watch_id}/evidence
 ```
 
 ## Docker
@@ -229,6 +264,7 @@ If you want local ClickHouse only, keep the `clickhouse` profile self-hosted and
 - That direct whole-web execution path is normalized now too: when `/api/sources/web/run` manages to persist a failing source run before collection dies, it returns the structured source failure payload with `source_run_id`, `source_kind`, and error class instead of dumping a raw server exception on the caller.
 - Once data is collected, operators can search the local observation corpus directly through `elevenwriter search-observations "<query>"` or `/api/observations/search?q=...`, which ranks title, summary, body, and URL matches without punting the query flow out to a cloud search tier.
 - Operators can also promote those local search queries into unattended watch tasks through `elevenwriter add-observation-watch-schedule ...` or the generic scheduler API, which emits durable unscoped alert records when newly collected observations match a saved rule-based query.
+- First-class watches live under `/api/watches` and support deterministic `source_delta`, `image_change`, `observation_rule`, and `source_health` evaluation. Watch changes create local alerts and retained evidence before any optional downstream analysis; `/api/watches/feed.rss` exposes open/recent watch alerts without an outbound notification service.
 - `sse_stream` and `websocket_stream` sources can consume live remote feeds, batch them locally, and persist observations into the local relational runtime without any cloud storage requirement.
 - `webhook_ingest` sources let outside systems push data into the platform, but the payload cache, source-run artifacts, and downstream storage manifests still live under your local runtime directories.
 - `webhook_ingest` sources now have full CLI parity too: operators can register a webhook source, submit payloads directly through `push-source-webhook`, inspect checkpoints and dead letters locally, and replay failed records with `replay-source-dead-letter` without leaving the headless runtime.
@@ -284,6 +320,7 @@ ELEVENWRITER_CLICKHOUSE_R2_CACHE_SIZE=10Gi
 - The search-provider catalog is no longer tribal knowledge now either: `/api/sources/web-search/providers` and `list-web-search-providers` expose the built-in symbolic search profiles so operators can see the default target URI, query param, redirect param, and paging behavior before wiring a whole campaign around them.
 - Runtime backup and recovery now have a first-class path too: `/api/operations/runtime/export`, `/api/operations/runtime/restore`, and matching CLI commands serialize the core backend state in dependency-safe order and log custody records for both export and restore.
 - Runtime snapshot exports are hardened now too: `export-runtime-snapshot` writes a sidecar manifest with the snapshot checksum, byte size, section counts, and row-count ledger; `verify-runtime-snapshot` checks that artifact locally; and `restore-runtime-snapshot` refuses to touch the database unless the snapshot still matches its manifest. Because blind restore from an unverified blob is clown behavior.
+- Runtime bundles complement snapshots by packaging the actual locally retained watch-image bytes alongside database state and a checksum manifest. Use `export-runtime-bundle` and `restore-runtime-bundle` when evidence must remain recoverable; a snapshot preserves ledger state, not the pointed-to files.
 - Runtime backup coverage is scheduler-native now too: `runtime_snapshot_export` can run as an enabled task, bootstrap provisions it by default, and readiness now checks for a recent paired snapshot+manifest artifact instead of declaring the runtime “ready” with zero recovery posture.
 - Runtime snapshot coverage now extends across newer operational subsystems too, including scheduler task/run state, source-run history, persisted worker heartbeat/status state, camera/source registries, storage objects, and maintenance-task lineage, so recovery testing is following the real backend instead of freezing at an older shape.
 - The storage-core slice is real now, not a manifesto: `/api/storage/*` plus the `list-storage-objects`, `show-storage-manifest`, `add-storage-object`, `promote-storage-object`, `transition-storage-object`, `archive-storage-object`, `verify-storage-object`, `request-storage-rehydrate`, `rehydrate-storage-object`, `prune-storage-object`, `quarantine-storage-object`, `unquarantine-storage-object`, and `run-storage-lifecycle` CLI commands expose a first-class artifact ledger with retention classes, tiering, and lifecycle controls.

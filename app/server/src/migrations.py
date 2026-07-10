@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from sqlalchemy import inspect, text
 from sqlalchemy.engine import Engine
 
-HEAD_REVISION = "20260708_0001"
+HEAD_REVISION = "20260710_0001"
 VERSION_TABLE = "runtime_schema_version"
 
 APPLICATION_TABLES: tuple[str, ...] = (
@@ -25,6 +25,8 @@ APPLICATION_TABLES: tuple[str, ...] = (
     "alerts",
     "scheduled_tasks",
     "scheduled_task_runs",
+    "watches",
+    "watch_runs",
     "worker_statuses",
     "source_runs",
     "source_checkpoints",

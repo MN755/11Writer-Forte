@@ -16,6 +16,7 @@ from src.models import (
     StorageObjectORM,
     SourceDefinitionORM,
     SourceTrustProfileORM,
+    WatchORM,
     WorkerStatusORM,
 )
 from src.services.database_diagnostics_service import build_database_diagnostics
@@ -80,6 +81,20 @@ def build_runtime_readiness(session: Session) -> dict[str, object]:
         if task.task_type == "source_sync" and task.source_id is not None
     )
     enabled_task_types = {task.task_type for task in enabled_tasks}
+    enabled_watches = list(
+        session.scalars(
+            select(WatchORM)
+            .where(WatchORM.state == "enabled")
+            .order_by(WatchORM.watch_id.asc())
+        )
+    )
+    scheduled_watch_ids = {
+        int(task.payload_json["watch_id"])
+        for task in enabled_tasks
+        if task.task_type == "watch_evaluate"
+        and isinstance(task.payload_json, dict)
+        and isinstance(task.payload_json.get("watch_id"), int)
+    }
     camera_enabled_sources = [source for source in enabled_sources if source_looks_camera_related(source)]
     camera_runtime_expected = bool(
         camera_enabled_sources or camera_inventory_count > 0 or camera_source_inventory_count > 0
@@ -349,6 +364,27 @@ def build_runtime_readiness(session: Session) -> dict[str, object]:
         details_json={"storage_lifecycle_scheduled": "storage_lifecycle" in enabled_task_types},
         operator_action="Add a storage lifecycle schedule so local artifacts do not accumulate unmanaged."
         if "storage_lifecycle" not in enabled_task_types
+        else None,
+    )
+
+    unscheduled_watch_ids = [
+        watch.watch_id for watch in enabled_watches if watch.watch_id not in scheduled_watch_ids
+    ]
+    add_readiness_check(
+        checks,
+        operator_actions,
+        key="watch_schedule_coverage",
+        status="pass" if not unscheduled_watch_ids else "warning",
+        summary="Every enabled watch has an enabled deterministic evaluation schedule."
+        if not unscheduled_watch_ids
+        else "Enabled watches exist without enabled evaluation schedules.",
+        details_json={
+            "enabled_watch_count": len(enabled_watches),
+            "scheduled_watch_count": len(enabled_watches) - len(unscheduled_watch_ids),
+            "unscheduled_watch_ids": unscheduled_watch_ids,
+        },
+        operator_action="Attach an enabled watch schedule so every active watch runs unattended."
+        if unscheduled_watch_ids
         else None,
     )
 

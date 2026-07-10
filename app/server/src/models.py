@@ -410,3 +410,101 @@ class SourceDeadLetterORM(TimestampMixin, Base):
     replay_count: Mapped[int] = mapped_column(Integer, default=0)
     last_replayed_at: Mapped[datetime | None] = mapped_column(default=None)
     last_error_text: Mapped[str | None] = mapped_column(Text, default=None)
+
+
+class WatchORM(TimestampMixin, Base):
+    __tablename__ = "watches"
+
+    watch_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(160), unique=True, index=True)
+    slug: Mapped[str] = mapped_column(String(160), unique=True, index=True)
+    objective: Mapped[str] = mapped_column(Text)
+    description: Mapped[str] = mapped_column(Text, default="")
+    watch_type: Mapped[str] = mapped_column(String(40), index=True)
+    state: Mapped[str] = mapped_column(String(30), default="enabled", index=True)
+    rule_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    source_id: Mapped[int | None] = mapped_column(
+        ForeignKey("source_definitions.source_id"),
+        default=None,
+        index=True,
+    )
+    camera_inventory_id: Mapped[int | None] = mapped_column(
+        ForeignKey("camera_inventory.camera_inventory_id"),
+        default=None,
+        index=True,
+    )
+    camera_source_inventory_id: Mapped[int | None] = mapped_column(
+        ForeignKey("camera_source_inventory.camera_source_inventory_id"),
+        default=None,
+        index=True,
+    )
+    layer_key: Mapped[str | None] = mapped_column(String(80), default=None, index=True)
+    event_id: Mapped[int | None] = mapped_column(
+        ForeignKey("events.event_id"),
+        default=None,
+        index=True,
+    )
+    geofence_id: Mapped[int | None] = mapped_column(
+        ForeignKey("geofences.geofence_id"),
+        default=None,
+        index=True,
+    )
+    scheduled_task_id: Mapped[int | None] = mapped_column(
+        ForeignKey("scheduled_tasks.task_id"),
+        default=None,
+        index=True,
+    )
+    interval_seconds: Mapped[int | None] = mapped_column(Integer, default=None)
+    severity: Mapped[str] = mapped_column(String(30), default="info", index=True)
+    notification_policy_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    baseline_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    dedupe_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    last_evaluated_at: Mapped[datetime | None] = mapped_column(default=None, index=True)
+    last_changed_at: Mapped[datetime | None] = mapped_column(default=None, index=True)
+    next_run_at: Mapped[datetime | None] = mapped_column(default=None, index=True)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    provenance_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+    runs: Mapped[list["WatchRunORM"]] = relationship(back_populates="watch")
+
+
+class WatchRunORM(Base):
+    __tablename__ = "watch_runs"
+
+    watch_run_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    watch_id: Mapped[int] = mapped_column(ForeignKey("watches.watch_id"), index=True)
+    scheduled_task_run_id: Mapped[int | None] = mapped_column(
+        ForeignKey("scheduled_task_runs.task_run_id"),
+        default=None,
+        index=True,
+    )
+    source_run_id: Mapped[int | None] = mapped_column(
+        ForeignKey("source_runs.source_run_id"),
+        default=None,
+        index=True,
+    )
+    alert_id: Mapped[int | None] = mapped_column(
+        ForeignKey("alerts.alert_id"),
+        default=None,
+        index=True,
+    )
+    storage_object_id: Mapped[int | None] = mapped_column(
+        ForeignKey("storage_objects.storage_object_id"),
+        default=None,
+        index=True,
+    )
+    status: Mapped[str] = mapped_column(String(30), default="running", index=True)
+    outcome: Mapped[str] = mapped_column(String(30), default="pending", index=True)
+    started_at: Mapped[datetime] = mapped_column(default=utcnow, index=True)
+    finished_at: Mapped[datetime | None] = mapped_column(default=None)
+    change_detected: Mapped[bool] = mapped_column(default=False)
+    baseline_initialized: Mapped[bool] = mapped_column(default=False)
+    dedupe_key: Mapped[str | None] = mapped_column(String(200), default=None, index=True)
+    evidence_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    checkpoint_before_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    checkpoint_after_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    output_summary: Mapped[str] = mapped_column(Text, default="")
+    error_text: Mapped[str | None] = mapped_column(Text, default=None)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+    watch: Mapped[WatchORM] = relationship(back_populates="runs")
