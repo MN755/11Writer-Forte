@@ -16,6 +16,7 @@ from src.schemas import (
     DiscoveryCampaignUpdate,
     DiscoveryDomainPolicyCreate,
     DiscoveryDomainPolicyRead,
+    DiscoveryDomainPolicyUpdate,
     DiscoveryExportSummaryRead,
     DiscoveryHealthSummaryRead,
     DiscoveryInventoryDiffRead,
@@ -53,6 +54,7 @@ from src.services.discovery_service import (
     scan_candidate_health,
     suppress_source_candidate,
     update_discovery_campaign,
+    update_domain_policy,
     upsert_domain_policy,
 )
 
@@ -126,6 +128,23 @@ def put_discovery_domain_policy(
 ) -> object:
     try:
         return upsert_domain_policy(session, payload, actor="api_discovery")
+    except ValueError as exc:
+        raise translate_discovery_error(exc) from exc
+
+
+@router.patch("/domain-policies/{normalized_domain:path}", response_model=DiscoveryDomainPolicyRead)
+def patch_discovery_domain_policy(
+    normalized_domain: str,
+    payload: DiscoveryDomainPolicyUpdate,
+    session: Session = Depends(get_db),
+) -> object:
+    try:
+        return update_domain_policy(
+            session,
+            normalized_domain,
+            payload,
+            actor="api_discovery",
+        )
     except ValueError as exc:
         raise translate_discovery_error(exc) from exc
 

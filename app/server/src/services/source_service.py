@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import base64
+import csv
 import hashlib
+import io
 import json
+import math
 import os
 import time
 from collections import defaultdict
@@ -11,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlencode, urlparse, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 from xml.etree import ElementTree
 
@@ -46,6 +49,35 @@ class SourceFetchConfig:
 class MaterializedSourcePayload:
     path: str
     metadata: dict[str, Any]
+
+
+RAW_HTTP_SOURCE_KINDS = {"http_json", "http_jsonl", "http_text"}
+STRUCTURED_HTTP_SOURCE_KINDS = {
+    "http_xml",
+    "http_csv",
+    "rss",
+    "arcgis_feature_json",
+    "ckan_package_search",
+}
+PAGINATED_STRUCTURED_HTTP_SOURCE_KINDS = {"arcgis_feature_json", "ckan_package_search"}
+DISCOVERY_HTTP_SOURCE_KINDS = {"web_search", "web_crawl", "web_discovery"}
+HTTP_SOURCE_KINDS = RAW_HTTP_SOURCE_KINDS | STRUCTURED_HTTP_SOURCE_KINDS | DISCOVERY_HTTP_SOURCE_KINDS
+
+
+@dataclass(frozen=True)
+class SourcePaginationConfig:
+    enabled: bool
+    initial_offset: int
+    page_size: int
+    max_pages: int
+
+
+@dataclass(frozen=True)
+class ParsedSourcePage:
+    records: list[dict[str, Any]]
+    item_count: int
+    total_available: int | None = None
+    has_more: bool | None = None
 
 
 def source_now() -> datetime:
@@ -703,93 +735,18 @@ def materialize_source_payload(source: SourceDefinitionORM) -> MaterializedSourc
             },
         )
 
-    http_kinds = {
-        "http_json",
-        "http_jsonl",
-        "http_text",
-        "http_xml",
-        "rss",
-        "web_search",
-        "web_crawl",
-        "web_discovery",
-    }
-    if source.source_kind in http_kinds:
-        source_metadata = source.metadata_json if isinstance(source.metadata_json, dict) else {}
-        discovery_metadata = source_metadata.get("discovery", {})
-        discovered_format = (
-            discovery_metadata.get("format_hint")
-            if isinstance(discovery_metadata, dict)
-            else None
-        )
-        suffix_by_kind = {
-            "http_json": ".json",
-            "http_jsonl": ".jsonl",
-            "http_text": ".csv" if discovered_format == "csv" else ".txt",
-            "http_xml": ".json",
-            "rss": ".json",
-            "web_search": ".json",
-            "web_crawl": ".json",
-            "web_discovery": ".json",
-        }
-        suffix = suffix_by_kind[source.source_kind]
-        destination = build_cached_path(source.source_id, suffix)
+    if source.source_kind in HTTP_SOURCE_KINDS:
         fetch_config = parse_fetch_config(source)
+        if source.source_kind in PAGINATED_STRUCTURED_HTTP_SOURCE_KINDS:
+            pagination = parse_source_pagination_config(source)
+            if pagination.enabled:
+                return materialize_paginated_http_source_payload(
+                    source,
+                    fetch_config,
+                    pagination,
+                )
         payload, fetch_metadata = fetch_http_source(source, fetch_config)
-        if source.source_kind in {"http_xml", "rss"}:
-            records = (
-                parse_rss_atom_payload(payload, source.target_uri)
-                if source.source_kind == "rss"
-                else parse_http_xml_payload(payload, source.target_uri)
-            )
-            destination.write_text(json.dumps(records), encoding="utf-8")
-            fetch_metadata = {
-                **fetch_metadata,
-                "cached_record_count": len(records),
-                "materialized_content_type": "application/json",
-                "original_content_type": fetch_metadata.get("content_type"),
-            }
-        elif source.source_kind in {"web_search", "web_crawl", "web_discovery"}:
-            from src.services.discovery_analysis import analyze_document
-
-            analysis = analyze_document(
-                source.target_uri,
-                payload,
-                content_type=fetch_metadata.get("content_type"),
-                headers={},
-            )
-            destination.write_text(
-                json.dumps(
-                    [
-                        {
-                            "url": source.target_uri,
-                            "title": analysis.title,
-                            "text": analysis.text_excerpt,
-                            "candidate_type": analysis.candidate_type,
-                            "format_hint": analysis.format_hint,
-                            "geo_hints": analysis.geo_hints,
-                            "temporal_hints": analysis.temporal_hints,
-                            "links": [link.url for link in analysis.links],
-                        }
-                    ]
-                ),
-                encoding="utf-8",
-            )
-            fetch_metadata = {
-                **fetch_metadata,
-                "cached_record_count": 1,
-                "materialized_content_type": "application/json",
-                "original_content_type": fetch_metadata.get("content_type"),
-            }
-        else:
-            destination.write_bytes(payload)
-        return MaterializedSourcePayload(
-            path=str(destination),
-            metadata={
-                "materialization_kind": "http_fetch",
-                "cached_path": str(destination),
-                **fetch_metadata,
-            },
-        )
+        return materialize_http_source_payload(source, payload, fetch_metadata)
 
     if source.source_kind in {
         "websocket_stream",
@@ -819,15 +776,7 @@ def parse_fetch_config(source: SourceDefinitionORM) -> SourceFetchConfig:
     user_headers = metadata.get("headers", {})
     headers = {
         "User-Agent": str(metadata.get("user_agent", "11Writer-Forte/0.1 (+headless-source-fetch)")),
-        "Accept": (
-            "application/json, application/geo+json, application/x-ndjson, */*"
-            if source.source_kind in {"http_json", "http_jsonl"}
-            else "application/rss+xml, application/atom+xml, application/xml, text/xml, */*"
-            if source.source_kind in {"http_xml", "rss"}
-            else "text/html, application/xhtml+xml, */*"
-            if source.source_kind in {"web_search", "web_crawl", "web_discovery"}
-            else "text/plain, text/csv, */*"
-        ),
+        "Accept": resolve_source_accept_header(source.source_kind),
     }
     if isinstance(user_headers, dict):
         headers.update({str(key): str(value) for key, value in user_headers.items()})
@@ -837,6 +786,49 @@ def parse_fetch_config(source: SourceDefinitionORM) -> SourceFetchConfig:
         retry_attempts=retry_attempts,
         retry_backoff_seconds=retry_backoff_seconds,
         headers=headers,
+    )
+
+
+def parse_source_pagination_config(source: SourceDefinitionORM) -> SourcePaginationConfig:
+    metadata = source.metadata_json if isinstance(source.metadata_json, dict) else {}
+    pagination_meta = metadata.get("pagination")
+    pagination_dict = pagination_meta if isinstance(pagination_meta, dict) else {}
+    query = parse_qs(urlsplit(source.target_uri).query, keep_blank_values=True)
+
+    if source.source_kind == "ckan_package_search":
+        default_page_size = 100
+        offset_key = "start"
+        size_key = "rows"
+    elif source.source_kind == "arcgis_feature_json":
+        default_page_size = 1000
+        offset_key = "resultOffset"
+        size_key = "resultRecordCount"
+    else:
+        return SourcePaginationConfig(enabled=False, initial_offset=0, page_size=0, max_pages=0)
+
+    enabled = bool(pagination_dict.get("enabled", True))
+    initial_offset = first_int_value(
+        pagination_dict.get("initial_offset"),
+        metadata.get("pagination_initial_offset"),
+        first_query_value(query, offset_key),
+        default=0,
+    )
+    page_size = first_int_value(
+        pagination_dict.get("page_size"),
+        metadata.get("pagination_page_size"),
+        first_query_value(query, size_key),
+        default=default_page_size,
+    )
+    max_pages = first_int_value(
+        pagination_dict.get("max_pages"),
+        metadata.get("pagination_max_pages"),
+        default=10,
+    )
+    return SourcePaginationConfig(
+        enabled=enabled,
+        initial_offset=max(0, initial_offset),
+        page_size=max(1, min(page_size, 5000)),
+        max_pages=max(1, min(max_pages, 100)),
     )
 
 
@@ -873,8 +865,11 @@ def source_skip_unchanged_enabled(source: SourceDefinitionORM) -> bool:
 def fetch_http_source(
     source: SourceDefinitionORM,
     fetch_config: SourceFetchConfig,
+    *,
+    target_uri: str | None = None,
 ) -> tuple[bytes, dict[str, Any]]:
     metadata = source.metadata_json if isinstance(source.metadata_json, dict) else {}
+    request_uri = target_uri or source.target_uri
     max_response_bytes = max(1024, int(metadata.get("max_response_bytes", 20 * 1024 * 1024)))
     discovery_managed = isinstance(metadata.get("discovery"), dict)
     block_private_networks = bool(metadata.get("block_private_networks", False)) or discovery_managed
@@ -883,7 +878,7 @@ def fetch_http_source(
     )
     if block_private_networks:
         result = fetch_url(
-            source.target_uri,
+            request_uri,
             policy=FetchPolicy(
                 timeout_seconds=fetch_config.timeout_seconds,
                 retry_attempts=fetch_config.retry_attempts,
@@ -916,7 +911,7 @@ def fetch_http_source(
 
     last_error: Exception | None = None
     for attempt in range(1, fetch_config.retry_attempts + 1):
-        request = Request(source.target_uri, headers=fetch_config.headers)
+        request = Request(request_uri, headers=fetch_config.headers)
         try:
             with urlopen(request, timeout=fetch_config.timeout_seconds) as response:
                 payload = read_bounded(response, max_response_bytes)
@@ -931,7 +926,7 @@ def fetch_http_source(
                     "request_timeout_seconds": fetch_config.timeout_seconds,
                     "retry_attempts": fetch_config.retry_attempts,
                     "headers": redact_request_headers(fetch_config.headers),
-                    "host": urlparse(source.target_uri).netloc,
+                    "host": urlparse(request_uri).netloc,
                     "max_response_bytes": max_response_bytes,
                 }
         except HTTPError as exc:
@@ -977,6 +972,311 @@ def apply_basic_auth_headers(metadata: dict[str, Any], headers: dict[str, str]) 
     headers.setdefault("Authorization", f"Basic {token}")
 
 
+def resolve_source_accept_header(source_kind: str) -> str:
+    if source_kind in {"http_json", "arcgis_feature_json", "ckan_package_search"}:
+        return "application/json"
+    if source_kind == "http_jsonl":
+        return "application/x-ndjson, application/jsonl, application/json, text/plain, */*"
+    if source_kind in {"http_xml", "rss"}:
+        return "application/rss+xml, application/atom+xml, application/xml, text/xml, */*"
+    if source_kind in DISCOVERY_HTTP_SOURCE_KINDS:
+        return "text/html, application/xhtml+xml, */*"
+    if source_kind == "http_csv":
+        return "text/csv, application/csv, text/plain, */*"
+    return "text/plain, */*"
+
+
+def materialize_http_source_payload(
+    source: SourceDefinitionORM,
+    payload: bytes,
+    fetch_metadata: dict[str, Any],
+) -> MaterializedSourcePayload:
+    if source.source_kind in DISCOVERY_HTTP_SOURCE_KINDS:
+        return materialize_discovery_http_source_payload(source, payload, fetch_metadata)
+
+    if source.source_kind in RAW_HTTP_SOURCE_KINDS:
+        suffix = resolve_raw_http_source_suffix(source)
+        destination = build_cached_path(source.source_id, suffix)
+        destination.write_bytes(payload)
+        return MaterializedSourcePayload(
+            path=str(destination),
+            metadata={
+                "materialization_kind": "http_fetch",
+                "cached_path": str(destination),
+                **fetch_metadata,
+            },
+        )
+
+    records = parse_structured_http_source_payload(source, payload)
+    destination = build_cached_path(source.source_id, ".json")
+    destination.write_text(json.dumps(records), encoding="utf-8")
+    return MaterializedSourcePayload(
+        path=str(destination),
+        metadata={
+            "materialization_kind": "http_fetch",
+            "cached_path": str(destination),
+            "cached_record_count": len(records),
+            "materialized_content_type": "application/json",
+            "original_content_type": fetch_metadata.get("content_type"),
+            **fetch_metadata,
+        },
+    )
+
+
+def materialize_paginated_http_source_payload(
+    source: SourceDefinitionORM,
+    fetch_config: SourceFetchConfig,
+    pagination: SourcePaginationConfig,
+) -> MaterializedSourcePayload:
+    records: list[dict[str, Any]] = []
+    seen_signatures: set[str] = set()
+    page_count = 0
+    offset = pagination.initial_offset
+    total_items = 0
+    total_attempt_count = 0
+    total_byte_count = 0
+    total_available: int | None = None
+    page_item_counts: list[int] = []
+    page_record_counts: list[int] = []
+    payload_hasher = hashlib.sha256()
+    base_fetch_metadata: dict[str, Any] | None = None
+    more_pages_available = False
+
+    while page_count < pagination.max_pages:
+        page_url = build_paginated_source_request_url(
+            source.target_uri,
+            source.source_kind,
+            offset=offset,
+            page_size=pagination.page_size,
+        )
+        payload, fetch_metadata = fetch_http_source(
+            source,
+            fetch_config,
+            target_uri=page_url,
+        )
+        base_fetch_metadata = base_fetch_metadata or strip_payload_hash(fetch_metadata)
+        page = parse_paginated_source_page(
+            source,
+            payload,
+            page_url,
+            page_size=pagination.page_size,
+        )
+        unique_record_count = 0
+        for record in page.records:
+            signature = stable_record_signature(record)
+            if signature in seen_signatures:
+                continue
+            seen_signatures.add(signature)
+            records.append(record)
+            unique_record_count += 1
+
+        page_count += 1
+        total_items += page.item_count
+        total_attempt_count += int(fetch_metadata.get("attempt_count") or 0)
+        total_byte_count += len(payload)
+        page_item_counts.append(page.item_count)
+        page_record_counts.append(unique_record_count)
+        total_available = page.total_available if page.total_available is not None else total_available
+        payload_hasher.update(page_url.encode("utf-8"))
+        payload_hasher.update(b"\0")
+        payload_hasher.update(payload)
+        payload_hasher.update(b"\0")
+
+        offset += page.item_count
+        more_pages_available = True
+        if page.item_count <= 0:
+            more_pages_available = False
+        elif total_available is not None and offset >= total_available:
+            more_pages_available = False
+        elif page.has_more is False:
+            more_pages_available = False
+        elif (
+            page.has_more is None
+            and total_available is None
+            and page.item_count < pagination.page_size
+        ):
+            more_pages_available = False
+        if not more_pages_available:
+            break
+
+    pagination_truncated = more_pages_available and page_count >= pagination.max_pages
+
+    destination = build_cached_path(source.source_id, ".json")
+    destination.write_text(json.dumps(records), encoding="utf-8")
+    metadata = {
+        "materialization_kind": "http_fetch",
+        "cached_path": str(destination),
+        "cached_record_count": len(records),
+        "materialized_content_type": "application/json",
+        "original_content_type": (
+            base_fetch_metadata.get("content_type") if isinstance(base_fetch_metadata, dict) else None
+        ),
+        **(base_fetch_metadata or {}),
+        "attempt_count": total_attempt_count,
+        "byte_count": total_byte_count,
+        "payload_sha256": payload_hasher.hexdigest(),
+        "page_count": page_count,
+        "page_item_counts": page_item_counts,
+        "page_record_counts": page_record_counts,
+        "pagination": {
+            "enabled": True,
+            "initial_offset": pagination.initial_offset,
+            "page_size": pagination.page_size,
+            "max_pages": pagination.max_pages,
+            "truncated": pagination_truncated,
+            "total_available": total_available,
+        },
+    }
+    return MaterializedSourcePayload(path=str(destination), metadata=metadata)
+
+
+def materialize_discovery_http_source_payload(
+    source: SourceDefinitionORM,
+    payload: bytes,
+    fetch_metadata: dict[str, Any],
+) -> MaterializedSourcePayload:
+    from src.services.discovery_analysis import analyze_document
+
+    analysis = analyze_document(
+        source.target_uri,
+        payload,
+        content_type=fetch_metadata.get("content_type"),
+        headers={},
+    )
+    destination = build_cached_path(source.source_id, ".json")
+    destination.write_text(
+        json.dumps(
+            [
+                {
+                    "url": source.target_uri,
+                    "title": analysis.title,
+                    "text": analysis.text_excerpt,
+                    "candidate_type": analysis.candidate_type,
+                    "format_hint": analysis.format_hint,
+                    "geo_hints": analysis.geo_hints,
+                    "temporal_hints": analysis.temporal_hints,
+                    "links": [link.url for link in analysis.links],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return MaterializedSourcePayload(
+        path=str(destination),
+        metadata={
+            "materialization_kind": "http_fetch",
+            "cached_path": str(destination),
+            "cached_record_count": 1,
+            "materialized_content_type": "application/json",
+            "original_content_type": fetch_metadata.get("content_type"),
+            **fetch_metadata,
+        },
+    )
+
+
+def resolve_raw_http_source_suffix(source: SourceDefinitionORM) -> str:
+    if source.source_kind == "http_json":
+        return ".json"
+    if source.source_kind == "http_jsonl":
+        return ".jsonl"
+    if source.source_kind == "http_text":
+        metadata = source.metadata_json if isinstance(source.metadata_json, dict) else {}
+        discovery_metadata = metadata.get("discovery", {})
+        format_hint = discovery_metadata.get("format_hint") if isinstance(discovery_metadata, dict) else None
+        return ".csv" if format_hint == "csv" else ".txt"
+    raise ValueError(f"Unsupported raw HTTP source kind: {source.source_kind}")
+
+
+def parse_structured_http_source_payload(
+    source: SourceDefinitionORM,
+    payload: bytes,
+) -> list[dict[str, Any]]:
+    if source.source_kind == "http_xml":
+        return parse_http_xml_payload(payload, source.target_uri)
+    if source.source_kind == "http_csv":
+        return parse_http_csv_payload(payload, source.target_uri)
+    if source.source_kind == "rss":
+        return parse_rss_payload(payload, source.target_uri)
+    if source.source_kind == "arcgis_feature_json":
+        return parse_arcgis_feature_payload(payload, source.target_uri)
+    if source.source_kind == "ckan_package_search":
+        return parse_ckan_package_search_payload(payload, source.target_uri)
+    raise ValueError(f"Unsupported structured HTTP source kind: {source.source_kind}")
+
+
+def parse_paginated_source_page(
+    source: SourceDefinitionORM,
+    payload: bytes,
+    source_uri: str,
+    *,
+    page_size: int,
+) -> ParsedSourcePage:
+    if source.source_kind == "arcgis_feature_json":
+        document = parse_json_payload(payload, "ArcGIS feature payload")
+        features = document.get("features")
+        if not isinstance(features, list):
+            raise RuntimeError("ArcGIS feature payload did not contain a features list.")
+        has_more = document.get("exceededTransferLimit")
+        if not isinstance(has_more, bool):
+            has_more = len(features) >= page_size
+        return ParsedSourcePage(
+            records=parse_arcgis_feature_document(document, source_uri),
+            item_count=len(features),
+            has_more=has_more,
+        )
+    if source.source_kind == "ckan_package_search":
+        document = parse_json_payload(payload, "CKAN package search payload")
+        result = document.get("result")
+        if not isinstance(result, dict):
+            raise RuntimeError("CKAN package search payload did not contain a result object.")
+        packages = result.get("results")
+        if not isinstance(packages, list):
+            raise RuntimeError("CKAN package search payload did not contain a results list.")
+        return ParsedSourcePage(
+            records=parse_ckan_package_search_document(document, source_uri),
+            item_count=len(packages),
+            total_available=safe_int(result.get("count")),
+            has_more=None,
+        )
+    raise ValueError(f"Unsupported paginated source kind: {source.source_kind}")
+
+
+def build_paginated_source_request_url(
+    source_uri: str,
+    source_kind: str,
+    *,
+    offset: int,
+    page_size: int,
+) -> str:
+    parts = urlsplit(source_uri)
+    query = parse_qs(parts.query, keep_blank_values=True)
+    if source_kind == "ckan_package_search":
+        query["start"] = [str(offset)]
+        query["rows"] = [str(page_size)]
+    elif source_kind == "arcgis_feature_json":
+        query["resultOffset"] = [str(offset)]
+        query["resultRecordCount"] = [str(page_size)]
+    else:
+        return source_uri
+    return urlunsplit(
+        (
+            parts.scheme,
+            parts.netloc,
+            parts.path,
+            urlencode(query, doseq=True),
+            parts.fragment,
+        )
+    )
+
+
+def strip_payload_hash(metadata: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in metadata.items() if key not in {"payload_sha256", "byte_count", "attempt_count"}}
+
+
+def stable_record_signature(record: dict[str, Any]) -> str:
+    return json.dumps(record, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
 def redact_request_headers(headers: dict[str, str]) -> dict[str, str]:
     sensitive_markers = ("authorization", "cookie", "token", "secret", "api-key", "apikey")
     return {
@@ -993,45 +1293,7 @@ def safe_parse_xml_payload(payload: bytes) -> ElementTree.Element:
 
 
 def parse_rss_atom_payload(payload: bytes, source_uri: str) -> list[dict[str, Any]]:
-    root = safe_parse_xml_payload(payload)
-    root_tag = strip_xml_namespace(root.tag).lower()
-    if root_tag == "rss":
-        channel = next(
-            (child for child in root if strip_xml_namespace(child.tag).lower() == "channel"),
-            root,
-        )
-        entries = [
-            child for child in channel if strip_xml_namespace(child.tag).lower() == "item"
-        ]
-    else:
-        entries = [
-            child for child in root if strip_xml_namespace(child.tag).lower() == "entry"
-        ]
-
-    records: list[dict[str, Any]] = []
-    for entry in entries:
-        values: dict[str, Any] = {}
-        for child in entry:
-            key = strip_xml_namespace(child.tag).lower()
-            if key == "link":
-                value = child.attrib.get("href") or (child.text or "").strip()
-            else:
-                value = (child.text or "").strip()
-            if value:
-                values[key] = value
-        link = values.get("link")
-        title = str(values.get("title") or values.get("id") or "Feed item")
-        record = {
-            "source_url": source_uri,
-            "url": link or source_uri,
-            "title": title,
-            "text": str(values.get("description") or values.get("summary") or title),
-            "published_at": values.get("pubdate") or values.get("published") or values.get("updated"),
-            "feed_type": root_tag,
-            "raw_feed": values,
-        }
-        records.append(record)
-    return records
+    return parse_rss_payload(payload, source_uri)
 
 
 def parse_http_xml_payload(payload: bytes, source_uri: str) -> list[dict[str, Any]]:
@@ -1078,6 +1340,229 @@ def parse_http_xml_payload(payload: bytes, source_uri: str) -> list[dict[str, An
             record["latitude"] = latitude
             record["longitude"] = longitude
         records.append(record)
+    return records
+
+
+def parse_http_csv_payload(payload: bytes, source_uri: str) -> list[dict[str, Any]]:
+    text = payload.decode("utf-8-sig")
+    reader = csv.DictReader(io.StringIO(text))
+    records: list[dict[str, Any]] = []
+    for index, row in enumerate(reader, start=1):
+        normalized = {
+            str(key).strip(): value.strip() if isinstance(value, str) else value
+            for key, value in row.items()
+            if key is not None
+        }
+        if not normalized:
+            continue
+        normalize_numeric_coordinates(normalized)
+        title = first_present_string(
+            normalized.get("title"),
+            normalized.get("name"),
+            normalized.get("id"),
+            normalized.get("external_id"),
+        ) or f"csv-record-{index}"
+        record = {
+            **normalized,
+            "source_url": source_uri,
+            "title": title,
+            "text": build_record_text(normalized, fallback=title),
+        }
+        records.append(record)
+    return records
+
+
+def parse_rss_payload(payload: bytes, source_uri: str) -> list[dict[str, Any]]:
+    root = safe_parse_xml_payload(payload)
+    root_tag = strip_xml_namespace(root.tag).lower()
+    feed_title = extract_feed_title(root)
+    feed_link = extract_feed_link(root)
+    records: list[dict[str, Any]] = []
+
+    if root_tag == "feed":
+        entries = [child for child in root if isinstance(child.tag, str) and strip_xml_namespace(child.tag) == "entry"]
+        for index, entry in enumerate(entries, start=1):
+            payload_json = xml_element_to_data(entry)
+            if not isinstance(payload_json, dict):
+                payload_json = {"value": payload_json}
+            title = first_nested_value(payload_json, "title") or f"atom-entry-{index}"
+            summary = first_nested_value(payload_json, "summary") or first_nested_value(payload_json, "content")
+            record = {
+                "source_url": source_uri,
+                "feed_type": "atom",
+                "feed_title": feed_title,
+                "feed_link": feed_link,
+                "title": title,
+                "text": summary or title,
+                "link": extract_atom_entry_link(entry) or feed_link,
+                "published_at": first_nested_value(payload_json, "updated")
+                or first_nested_value(payload_json, "published"),
+                "entry_id": first_nested_value(payload_json, "id"),
+                "author": first_nested_value(payload_json, "name") or first_nested_value(payload_json, "author"),
+                "raw_feed_entry": payload_json,
+            }
+            records.append(record)
+        return records
+
+    channel = next(
+        (child for child in root if isinstance(child.tag, str) and strip_xml_namespace(child.tag) == "channel"),
+        root,
+    )
+    items = [child for child in channel if isinstance(child.tag, str) and strip_xml_namespace(child.tag) == "item"]
+    for index, item in enumerate(items, start=1):
+        payload_json = xml_element_to_data(item)
+        if not isinstance(payload_json, dict):
+            payload_json = {"value": payload_json}
+        title = first_nested_value(payload_json, "title") or f"rss-item-{index}"
+        description = first_nested_value(payload_json, "description")
+        record = {
+            "source_url": source_uri,
+            "feed_type": "rss",
+            "feed_title": feed_title,
+            "feed_link": feed_link,
+            "title": title,
+            "text": description or title,
+            "link": first_nested_value(payload_json, "link") or feed_link,
+            "published_at": first_nested_value(payload_json, "pubDate"),
+            "guid": first_nested_value(payload_json, "guid"),
+            "author": first_nested_value(payload_json, "author"),
+            "category": first_nested_value(payload_json, "category"),
+            "raw_feed_entry": payload_json,
+        }
+        records.append(record)
+    return records
+
+
+def parse_arcgis_feature_payload(payload: bytes, source_uri: str) -> list[dict[str, Any]]:
+    document = parse_json_payload(payload, "ArcGIS feature payload")
+    return parse_arcgis_feature_document(document, source_uri)
+
+
+def parse_arcgis_feature_document(document: dict[str, Any], source_uri: str) -> list[dict[str, Any]]:
+    features = document.get("features")
+    if not isinstance(features, list):
+        raise RuntimeError("ArcGIS feature payload did not contain a features list.")
+    spatial_reference = document.get("spatialReference")
+    wkid = extract_arcgis_wkid(spatial_reference)
+    records: list[dict[str, Any]] = []
+    for index, feature in enumerate(features, start=1):
+        if not isinstance(feature, dict):
+            continue
+        attributes = feature.get("attributes")
+        record = dict(attributes) if isinstance(attributes, dict) else {}
+        geometry = feature.get("geometry")
+        geojson = arcgis_geometry_to_geojson(geometry, wkid)
+        if geojson is not None:
+            if geojson.get("type") == "Point":
+                coordinates = geojson.get("coordinates")
+                if (
+                    isinstance(coordinates, list)
+                    and len(coordinates) >= 2
+                    and isinstance(coordinates[0], (int, float))
+                    and isinstance(coordinates[1], (int, float))
+                ):
+                    record["longitude"] = float(coordinates[0])
+                    record["latitude"] = float(coordinates[1])
+            record["geometry"] = geojson
+        title = first_present_string(
+            record.get("title"),
+            record.get("name"),
+            record.get("site_name"),
+            record.get("camera_name"),
+            record.get("OBJECTID"),
+            record.get("objectid"),
+        ) or f"arcgis-feature-{index}"
+        record.update(
+            {
+                "source_url": source_uri,
+                "title": str(title),
+                "text": build_record_text(record, fallback=str(title)),
+                "arcgis_geometry_type": document.get("geometryType"),
+                "arcgis_spatial_reference": spatial_reference,
+            }
+        )
+        records.append(record)
+    return records
+
+
+def parse_ckan_package_search_payload(payload: bytes, source_uri: str) -> list[dict[str, Any]]:
+    document = parse_json_payload(payload, "CKAN package search payload")
+    return parse_ckan_package_search_document(document, source_uri)
+
+
+def parse_ckan_package_search_document(
+    document: dict[str, Any],
+    source_uri: str,
+) -> list[dict[str, Any]]:
+    result = document.get("result")
+    if not isinstance(result, dict):
+        raise RuntimeError("CKAN package search payload did not contain a result object.")
+    packages = result.get("results")
+    if not isinstance(packages, list):
+        raise RuntimeError("CKAN package search payload did not contain a results list.")
+
+    records: list[dict[str, Any]] = []
+    for package in packages:
+        if not isinstance(package, dict):
+            continue
+        package_title = first_present_string(package.get("title"), package.get("name"), package.get("id")) or "ckan-package"
+        package_url = first_present_string(package.get("url"), package.get("notes"))
+        resources = package.get("resources")
+        if isinstance(resources, list) and resources:
+            for index, resource in enumerate(resources, start=1):
+                if not isinstance(resource, dict):
+                    continue
+                resource_title = first_present_string(
+                    resource.get("name"),
+                    resource.get("description"),
+                    resource.get("id"),
+                ) or f"{package_title}-resource-{index}"
+                records.append(
+                    {
+                        "source_url": source_uri,
+                        "title": str(resource_title),
+                        "text": build_record_text(
+                            {
+                                "package_title": package_title,
+                                "resource_title": resource_title,
+                                "format": resource.get("format"),
+                                "url": resource.get("url"),
+                            },
+                            fallback=str(resource_title),
+                        ),
+                        "url": resource.get("url"),
+                        "page_url": package_url,
+                        "package_id": package.get("id"),
+                        "package_name": package.get("name"),
+                        "package_title": package_title,
+                        "resource_id": resource.get("id"),
+                        "resource_name": resource.get("name"),
+                        "resource_format": resource.get("format"),
+                        "resource_mimetype": resource.get("mimetype"),
+                        "resource_created": resource.get("created"),
+                        "resource_last_modified": resource.get("last_modified"),
+                        "organization_title": nested_dict_value(package.get("organization"), "title"),
+                        "organization_name": nested_dict_value(package.get("organization"), "name"),
+                        "license_title": package.get("license_title"),
+                        "tags": extract_named_values(package.get("tags")),
+                        "groups": extract_named_values(package.get("groups")),
+                    }
+                )
+            continue
+        records.append(
+            {
+                "source_url": source_uri,
+                "title": str(package_title),
+                "text": build_record_text(package, fallback=str(package_title)),
+                "page_url": package_url,
+                "package_id": package.get("id"),
+                "package_name": package.get("name"),
+                "package_title": package_title,
+                "license_title": package.get("license_title"),
+                "tags": extract_named_values(package.get("tags")),
+                "groups": extract_named_values(package.get("groups")),
+            }
+        )
     return records
 
 
@@ -1173,6 +1658,239 @@ def first_feu_timestamp(payload: dict[str, Any]) -> str | None:
         if timestamp:
             return timestamp
     return None
+
+
+def parse_json_payload(payload: bytes, label: str) -> dict[str, Any]:
+    try:
+        parsed = json.loads(payload.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"{label} could not be decoded as JSON.") from exc
+    if not isinstance(parsed, dict):
+        raise RuntimeError(f"{label} did not decode to a JSON object.")
+    return parsed
+
+
+def normalize_numeric_coordinates(payload: dict[str, Any]) -> None:
+    for key in ("latitude", "lat", "longitude", "lon"):
+        value = payload.get(key)
+        if isinstance(value, str):
+            number = parse_float(value)
+            if number is not None:
+                payload[key] = number
+
+
+def build_record_text(payload: dict[str, Any], *, fallback: str) -> str:
+    parts = [
+        first_present_string(
+            payload.get("title"),
+            payload.get("name"),
+            payload.get("description"),
+            payload.get("summary"),
+            payload.get("format"),
+            payload.get("url"),
+        )
+    ]
+    values = [part for part in parts if part]
+    return " | ".join(values) if values else fallback
+
+
+def first_present_string(*values: Any) -> str | None:
+    for value in values:
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        if isinstance(value, (int, float)):
+            return str(value)
+    return None
+
+
+def extract_feed_title(root: ElementTree.Element) -> str | None:
+    for child in root.iter():
+        if not isinstance(child.tag, str):
+            continue
+        local_name = strip_xml_namespace(child.tag)
+        if local_name == "title":
+            text = (child.text or "").strip()
+            if text:
+                return text
+    return None
+
+
+def extract_feed_link(root: ElementTree.Element) -> str | None:
+    for child in root.iter():
+        if not isinstance(child.tag, str):
+            continue
+        local_name = strip_xml_namespace(child.tag)
+        if local_name != "link":
+            continue
+        href = child.attrib.get("href")
+        if href and href.strip():
+            return href.strip()
+        text = (child.text or "").strip()
+        if text:
+            return text
+    return None
+
+
+def extract_atom_entry_link(entry: ElementTree.Element) -> str | None:
+    for child in entry:
+        if not isinstance(child.tag, str) or strip_xml_namespace(child.tag) != "link":
+            continue
+        rel = child.attrib.get("rel", "alternate")
+        href = child.attrib.get("href")
+        if href and rel in {"alternate", ""}:
+            return href.strip()
+        text = (child.text or "").strip()
+        if text:
+            return text
+    return None
+
+
+def extract_arcgis_wkid(spatial_reference: Any) -> int | None:
+    if isinstance(spatial_reference, dict):
+        value = spatial_reference.get("latestWkid", spatial_reference.get("wkid"))
+        if isinstance(value, int):
+            return value
+        if isinstance(value, str) and value.isdigit():
+            return int(value)
+    return None
+
+
+def arcgis_geometry_to_geojson(geometry: Any, wkid: int | None) -> dict[str, Any] | None:
+    if not isinstance(geometry, dict):
+        return None
+    if "x" in geometry and "y" in geometry:
+        point = transform_arcgis_position(geometry.get("x"), geometry.get("y"), wkid)
+        if point is None:
+            return None
+        return {"type": "Point", "coordinates": list(point)}
+    if isinstance(geometry.get("points"), list):
+        points = [
+            transformed
+            for point in geometry["points"]
+            for transformed in [transform_arcgis_point_list(point, wkid)]
+            if transformed is not None
+        ]
+        if points:
+            return {"type": "MultiPoint", "coordinates": points}
+    if isinstance(geometry.get("paths"), list):
+        paths = [
+            path
+            for raw_path in geometry["paths"]
+            for path in [transform_arcgis_path(raw_path, wkid)]
+            if path
+        ]
+        if paths:
+            return {
+                "type": "LineString" if len(paths) == 1 else "MultiLineString",
+                "coordinates": paths[0] if len(paths) == 1 else paths,
+            }
+    if isinstance(geometry.get("rings"), list):
+        rings = [
+            ring
+            for raw_ring in geometry["rings"]
+            for ring in [transform_arcgis_path(raw_ring, wkid)]
+            if ring
+        ]
+        if rings:
+            return {"type": "Polygon", "coordinates": rings}
+    return None
+
+
+def transform_arcgis_point_list(point: Any, wkid: int | None) -> list[float] | None:
+    if not isinstance(point, list) or len(point) < 2:
+        return None
+    transformed = transform_arcgis_position(point[0], point[1], wkid)
+    if transformed is None:
+        return None
+    return [transformed[0], transformed[1]]
+
+
+def transform_arcgis_path(points: Any, wkid: int | None) -> list[list[float]]:
+    if not isinstance(points, list):
+        return []
+    transformed = [value for point in points for value in [transform_arcgis_point_list(point, wkid)] if value is not None]
+    return transformed
+
+
+def transform_arcgis_position(x: Any, y: Any, wkid: int | None) -> tuple[float, float] | None:
+    x_value = parse_float(x)
+    y_value = parse_float(y)
+    if x_value is None or y_value is None:
+        return None
+    if wkid in {3857, 102100, 102113}:
+        return web_mercator_to_wgs84(x_value, y_value)
+    return float(x_value), float(y_value)
+
+
+def web_mercator_to_wgs84(x: float, y: float) -> tuple[float, float]:
+    lon = (x / 20037508.34) * 180.0
+    lat = (y / 20037508.34) * 180.0
+    lat = 180.0 / math.pi * (2.0 * math.atan(math.exp(lat * math.pi / 180.0)) - math.pi / 2.0)
+    return lon, lat
+
+
+def parse_float(value: Any) -> float | None:
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value.strip())
+        except ValueError:
+            return None
+    return None
+
+
+def safe_int(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value) if value.is_integer() else None
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return None
+        try:
+            return int(stripped)
+        except ValueError:
+            return None
+    return None
+
+
+def first_query_value(query: dict[str, list[str]], key: str) -> str | None:
+    values = query.get(key)
+    if not values:
+        return None
+    return values[0]
+
+
+def first_int_value(*values: Any, default: int) -> int:
+    for value in values:
+        candidate = safe_int(value)
+        if candidate is not None:
+            return candidate
+    return default
+
+
+def nested_dict_value(value: Any, key: str) -> str | None:
+    if isinstance(value, dict):
+        nested = value.get(key)
+        if isinstance(nested, str) and nested.strip():
+            return nested.strip()
+    return None
+
+
+def extract_named_values(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    names: list[str] = []
+    for item in value:
+        if isinstance(item, dict):
+            name = first_present_string(item.get("display_name"), item.get("title"), item.get("name"))
+            if name:
+                names.append(name)
+    return names
 
 
 def find_timestamp_in_payload(payload: Any) -> str | None:

@@ -296,7 +296,10 @@ creating duplicates. Every decision remains a separate audit record.
 | JSON Lines / NDJSON | `http_jsonl` | Runnable |
 | XML, KML, sitemap | `http_xml` | Runnable |
 | RSS or Atom | `rss` | Runnable |
-| CSV or plain text | `http_text` | Runnable |
+| CSV | `http_csv` | Runnable |
+| ArcGIS FeatureServer query JSON | `arcgis_feature_json` | Runnable |
+| CKAN `package_search` catalog JSON | `ckan_package_search` | Runnable |
+| Plain text | `http_text` | Runnable |
 | Search results | `web_search` | Runnable bounded materialization |
 | Article/general HTML | `web_crawl` | Runnable bounded materialization |
 | API docs, camera page, other discovery document | `web_discovery` | Runnable bounded materialization |
@@ -341,6 +344,9 @@ elevenwriter create-discovery-campaign "mn-transport" \
 Run and inspect it:
 
 ```bash
+elevenwriter add-source-web-search search-seed "https://search.example.net/search?q=mn+transport" alert-feed
+elevenwriter add-source-web-crawl alert-page https://example.com/alerts alert-feed
+elevenwriter add-source-web-discovery api-docs https://example.com/developer/api alert-feed
 elevenwriter run-discovery 1 --max-pages 25
 elevenwriter list-discovery-campaigns
 elevenwriter show-discovery-campaign 1
@@ -349,6 +355,10 @@ elevenwriter list-discovery-candidates --campaign-id 1 --min-score 50
 elevenwriter show-discovery-candidate 12
 elevenwriter explain-discovery-candidate 12
 elevenwriter show-discovery-lineage 12
+elevenwriter update-discovery-campaign 1 --status paused --enabled false --crawl-policy-json '{"max_concurrency":4}'
+elevenwriter list-discovery-domain-policies --domain 511mn.org
+elevenwriter upsert-discovery-domain-policy 511mn.org --policy allow --robots-mode respect --max-concurrency 2
+elevenwriter update-discovery-domain-policy 511mn.org --policy deny --robots-mode ignore --enabled false --notes "Temporarily blocked"
 ```
 
 Disposition and operations:
@@ -364,6 +374,8 @@ elevenwriter show-discovery-ops --stale-after-hours 24
 elevenwriter export-discovery-summary ./exports/discovery.json
 elevenwriter diff-discovery-inventories 4 7 --campaign-id 1
 elevenwriter add-discovery-schedule mn-discovery 1 3600 --max-pages 50
+elevenwriter add-discovery-health-scan-schedule mn-discovery-health 3600 --campaign-id 1 --limit 100
+elevenwriter add-discovery-revisit-schedule mn-discovery-revisit 3600 --campaign-id 1 --force
 ```
 
 Use `run-discovery --dry-run` to persist and inspect the run/frontier request without
@@ -394,6 +406,7 @@ Core routes are mounted under `/api/discovery`:
 | `GET /export/summary` | Export campaign/run/candidate/promotion inventory |
 | `GET /inventory-diff` | Compare candidate state between two runs |
 | `GET`, `PUT /domain-policies` | Inspect or upsert crawl policy |
+| `PATCH /domain-policies/{normalized_domain}` | Update an existing persisted domain policy |
 
 Example run and promotion:
 
@@ -422,7 +435,10 @@ curl -X POST http://127.0.0.1:8000/api/discovery/candidates/12/promote \
 Task output persists run ID, page and candidate counters, errors, frontier counts, and
 candidate IDs. The scheduler also accepts `discovery_health_scan` and
 `discovery_revisit` tasks with the same filter payloads used by their API request
-schemas. Candidate promotion can create `source_sync` tasks for runnable sources.
+schemas, and the CLI exposes `add-discovery-health-scan-schedule` plus
+`add-discovery-revisit-schedule` so operators do not have to handcraft generic
+scheduler payload JSON every time. Candidate promotion can create `source_sync` tasks
+for runnable sources.
 
 Discovery emits deduplicated alerts for:
 
@@ -446,7 +462,10 @@ When artifact storage is enabled, each fetched document is written beneath the l
 data directory and registered in both `discovery_artifacts` and the storage-object
 ledger. Metadata preserves source URL, hashes, media type, size, request attempt count,
 response headers, run, frontier entry, and candidate. The default expiry is 30 days;
-the normal storage lifecycle can promote, archive, or expire it.
+the normal storage lifecycle can promote, archive, or expire it. For managed files that
+live beneath Forte's configured local `data_dir`, archive transitions move the bytes
+into a storage-archive subtree and expiry deletes the managed file while preserving the
+action in custody and storage metadata.
 
 Campaign creation/update, run start/resume/checkpoint/completion, frontier failures,
 alerts, promotion, suppression, revisit, schedules, and health changes all add custody
@@ -455,11 +474,15 @@ records.
 Runtime snapshots include every discovery table listed above, including frontier
 checkpoints, revisions, graph edges, robots observations, health, promotion/suppression,
 and artifact links. Restore validates the snapshot section contracts and inserts tables
-in dependency order. Use the normal commands:
+in dependency order. Use the JSON snapshot commands for metadata-only database export,
+or the runtime bundle commands when you need the managed local `data_dir` bytes as
+well:
 
 ```bash
 elevenwriter export-runtime-snapshot ./exports/runtime.json
 elevenwriter restore-runtime-snapshot ./exports/runtime.json --replace-existing
+elevenwriter export-runtime-bundle ./exports/runtime-bundle.zip
+elevenwriter restore-runtime-bundle ./exports/runtime-bundle.zip --replace-existing
 ```
 
 ## Known limitations and intentionally skipped adapters
@@ -476,20 +499,24 @@ elevenwriter restore-runtime-snapshot ./exports/runtime.json --replace-existing
 - WebSocket, SSE, webhook, and camera stream/image definitions are reference-only until
   a kind-specific runtime is deliberately implemented.
 - Social/profile pages are references, not a promise of full social ingestion.
-- CKAN, Socrata, ArcGIS Hub/REST, APIs.guru OpenAPI Directory, Transitland Atlas, and
-  other registry adapters were intentionally not wired in. Their catalogs can be used
-  today as bounded campaign seeds. Dedicated pagination/licensing-aware adapters are a
-  sensible next increment, but vendoring giant crawlers would undermine this subsystem's
-  local-first and bounded operating model.
+- CKAN `package_search` and ArcGIS FeatureServer query endpoints are wired into the
+  managed source runtime with bounded pagination. Broader registry adapters such as
+  Socrata, ArcGIS Hub catalogs, APIs.guru OpenAPI Directory, Transitland Atlas, and
+  other licensing-aware registries are still intentionally not wired in. Their catalogs
+  can be used today as bounded campaign seeds without vendoring giant crawlers that
+  would undermine this subsystem's local-first and bounded operating model.
 - The engine does not bypass authentication, paywalls, access controls, or robots rules.
   It has no dark-web mode, credential guessing, or “scan everything forever” switch.
-- Runtime snapshots preserve artifact and storage-ledger metadata, not fetched artifact
-  bytes themselves. Back up the configured local data directory alongside a snapshot
-  when byte-for-byte recovery is required.
-- Crawling is synchronous and intentionally conservative. PostgreSQL protects frontier
-  row claims, but deployments should run one discovery worker per campaign; there is no
-  distributed campaign lease or horizontal crawler fleet. `max_concurrency` is reserved
-  policy state and does not make the current engine parallel.
+- JSON runtime snapshots preserve artifact and storage-ledger metadata, not fetched
+  artifact bytes themselves. Use the runtime bundle workflow when byte-faithful recovery
+  of the managed local `data_dir` is required.
+- Crawling remains intentionally conservative, but it is no longer strictly single-file.
+  PostgreSQL still protects frontier row claims and Forte records a per-campaign
+  active-run lease with heartbeat and stale-lease recovery so overlapping
+  scheduler/manual resumes fail closed instead of racing the same run. Within one run,
+  `max_concurrency` now enables bounded parallel HTTP fetches while preserving
+  per-domain pacing and the persisted frontier as the source of truth. There is still no
+  horizontal crawler fleet.
 - A temporary suppression expiry restores candidate eligibility and history, but it does
   not automatically re-enable a managed source that the suppression disabled. Re-promote
   with `enabled=true` after review to resume that schedule deliberately.

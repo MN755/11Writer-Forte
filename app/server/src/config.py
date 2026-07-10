@@ -20,6 +20,14 @@ class Settings(BaseSettings):
     data_dir: Path = Field(default=Path("./var"))
     import_row_limit: int = 5000
     scheduler_poll_seconds: float = 30.0
+    # The agent runtime is opt-in and invokes the locally installed Codex CLI.  It
+    # deliberately has no direct write tools; Forte's deterministic runtime owns
+    # source ingestion, schedules, alerts, and storage transitions.
+    codex_cli_path: Path | None = None
+    codex_model: str = "gpt-5.4-mini"
+    codex_reasoning_effort: Literal["low", "medium", "high"] = "medium"
+    codex_timeout_seconds: float = 900.0
+    codex_report_max_chars: int = 30000
     allowed_origins: list[str] = Field(default_factory=list)
     # Campaign payloads are operator-controlled API data.  They may request access to
     # private targets, but that request is inert unless the server owner enables this

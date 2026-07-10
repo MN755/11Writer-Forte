@@ -3,28 +3,20 @@ from __future__ import annotations
 import json
 import threading
 from contextlib import contextmanager
-<<<<<<< HEAD
-=======
 from datetime import datetime, timedelta, timezone
->>>>>>> 05aeee6 (chore: initialize repository)
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from typer.testing import CliRunner
 
-<<<<<<< HEAD
-from src.db import get_session_factory
-from src.models import ScheduledTaskORM
-from src.services.scheduler_runtime_service import run_scheduler_worker
-from src.services.scheduler_service import scheduler_now
-=======
+from src.cli import app as cli_app
 from src.config import reset_settings_cache
 from src.db import get_session_factory
 from src.models import ScheduledTaskORM
 from src.services import clickhouse_service
 from src.services.scheduler_runtime_service import run_scheduler_worker
 from src.services.scheduler_service import run_task, scheduler_now
->>>>>>> 05aeee6 (chore: initialize repository)
 
 
 @contextmanager
@@ -59,8 +51,6 @@ def flaky_scheduler_json_server(payload: list[dict[str, object]]):
         thread.join(timeout=5)
 
 
-<<<<<<< HEAD
-=======
 class FakeClickHouseResponse:
     def __init__(self, payload: str) -> None:
         self.payload = payload
@@ -114,7 +104,6 @@ def configure_fake_clickhouse(monkeypatch, *, row_count: int = 1) -> list[dict[s
     return requests
 
 
->>>>>>> 05aeee6 (chore: initialize repository)
 def test_geofence_schedule_creates_alert_and_custody_log(
     client: TestClient,
     tmp_path: Path,
@@ -274,8 +263,6 @@ def test_local_import_schedule_runs_manually(client: TestClient, tmp_path: Path)
     )
 
 
-<<<<<<< HEAD
-=======
 def test_storage_lifecycle_schedule_expires_due_objects(client: TestClient) -> None:
     expired_at = datetime.now(timezone.utc) - timedelta(hours=3)
     create_response = client.post(
@@ -339,6 +326,69 @@ def test_storage_lifecycle_schedule_expires_due_objects(client: TestClient) -> N
         and row["details_json"]["task_id"] == task_id
         for row in custody_rows
     )
+
+
+def test_integrity_seed_schedule_seeds_profiles_and_custody(client: TestClient) -> None:
+    schedule_response = client.post(
+        "/api/scheduler/tasks",
+        json={
+            "name": "integrity-seed-schedule",
+            "task_type": "integrity_seed",
+            "interval_seconds": 3600,
+        },
+    )
+    assert schedule_response.status_code == 200
+    task_id = schedule_response.json()["task_id"]
+
+    run_response = client.post(f"/api/scheduler/tasks/{task_id}/run")
+    assert run_response.status_code == 200
+    run_payload = run_response.json()
+    assert run_payload["status"] == "completed"
+    assert run_payload["records_affected"] >= 1
+    assert "nytimes.com" in run_payload["output_json"]["domains"]
+
+    trust_response = client.get("/api/source-trust/profiles")
+    assert trust_response.status_code == 200
+    assert any(row["domain"] == "nytimes.com" for row in trust_response.json())
+
+    custody_response = client.get("/api/custody/logs")
+    assert custody_response.status_code == 200
+    custody_rows = custody_response.json()
+    assert any(
+        row["object_type"] == "scheduled_task_run"
+        and row["action"] == "task_run_completed"
+        and row["details_json"]["task_id"] == task_id
+        for row in custody_rows
+    )
+    assert any(row["action"] == "integrity_sources_seeded" for row in custody_rows)
+    assert any(
+        row["object_type"] == "source_trust_profile"
+        and row["action"] == "source_trust_profile_created"
+        for row in custody_rows
+    )
+
+
+def test_real_typer_add_integrity_seed_schedule(client: TestClient) -> None:
+    runner = CliRunner()
+    result = runner.invoke(
+        cli_app,
+        [
+            "add-integrity-seed-schedule",
+            "cli-integrity-seed",
+            "86400",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "created for integrity seeding" in result.output
+
+    session = get_session_factory()()
+    try:
+        task = session.query(ScheduledTaskORM).filter_by(name="cli-integrity-seed").one()
+        assert task.task_type == "integrity_seed"
+        assert task.interval_seconds == 86400
+        assert task.enabled is True
+    finally:
+        session.close()
 
 
 def test_clickhouse_sync_schedule_mirrors_runtime_facts(
@@ -470,7 +520,6 @@ def test_clickhouse_archive_schedule_exports_r2(
     reset_settings_cache()
 
 
->>>>>>> 05aeee6 (chore: initialize repository)
 def test_camera_inventory_refresh_schedule_materializes_camera_inventory(
     client: TestClient,
     tmp_path: Path,
@@ -521,12 +570,9 @@ def test_camera_inventory_refresh_schedule_materializes_camera_inventory(
     assert payload["output_json"]["created_count"] == 1
     assert payload["output_json"]["updated_count"] == 0
     assert payload["output_json"]["scanned_count"] == 1
-<<<<<<< HEAD
-=======
     assert payload["output_json"]["source_created_count"] == 2
     assert payload["output_json"]["source_updated_count"] == 0
     assert payload["output_json"]["source_scanned_endpoint_count"] == 2
->>>>>>> 05aeee6 (chore: initialize repository)
     assert len(payload["output_json"]["camera_inventory_ids"]) == 1
 
     cameras_response = client.get("/api/cameras", params={"layer_key": "traffic-camera-feed"})
@@ -536,8 +582,6 @@ def test_camera_inventory_refresh_schedule_materializes_camera_inventory(
     assert cameras[0]["external_id"] == "mndot-i35w-001"
     assert cameras[0]["source_domain"] == "images.511mn.org"
 
-<<<<<<< HEAD
-=======
     camera_sources_response = client.get(
         "/api/camera-sources",
         params={"layer_key": "traffic-camera-feed", "limit": 10},
@@ -547,7 +591,6 @@ def test_camera_inventory_refresh_schedule_materializes_camera_inventory(
     assert len(camera_sources) == 2
     assert {row["endpoint_kind"] for row in camera_sources} == {"image", "page"}
 
->>>>>>> 05aeee6 (chore: initialize repository)
     custody_response = client.get("/api/custody/logs")
     assert custody_response.status_code == 200
     assert any(
@@ -1109,8 +1152,6 @@ def test_schedule_update_can_disable_then_reenable_task(client: TestClient, tmp_
         and row["action"] == "task_updated"
         for row in custody_response.json()
     )
-<<<<<<< HEAD
-=======
 
 
 def test_scheduler_summary_and_report_index_capture_overdue_failing_and_maintenance_tasks(
@@ -1267,4 +1308,3 @@ def test_scheduler_summary_and_report_index_capture_overdue_failing_and_maintena
     assert export_payload["report_index"]["inventory_summary"]["total_count"] == 4
     assert len(export_payload["tasks"]) == 4
     assert any(row["task_type"] == "storage_lifecycle" for row in export_payload["tasks"])
->>>>>>> 05aeee6 (chore: initialize repository)

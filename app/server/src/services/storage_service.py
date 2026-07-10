@@ -1,20 +1,17 @@
 from __future__ import annotations
 
 import hashlib
+import shutil
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, urlsplit
+from urllib.request import url2pathname
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-<<<<<<< HEAD
-from src.models import CameraInventoryORM, CustodyLogORM, LocalImportRunORM, StorageObjectORM
-from src.schemas import (
-    StorageObjectCreate,
-    StorageObjectPromoteRequest,
-    StorageObjectTransitionRequest,
-=======
+from src.config import get_settings
 from src.models import (
     CameraInventoryORM,
     CustodyLogORM,
@@ -29,7 +26,6 @@ from src.schemas import (
     StorageObjectPromoteRequest,
     StorageObjectTransitionRequest,
     StorageReportRead,
->>>>>>> 05aeee6 (chore: initialize repository)
 )
 
 RETENTION_WINDOWS_HOURS: dict[str, float | None] = {
@@ -38,6 +34,7 @@ RETENTION_WINDOWS_HOURS: dict[str, float | None] = {
     "investigative": 24.0 * 30,
     "permanent": None,
 }
+MANAGED_STORAGE_ARCHIVE_DIRNAME = "storage_archive"
 
 
 def utcnow() -> datetime:
@@ -102,8 +99,6 @@ def create_storage_object(
     return record
 
 
-<<<<<<< HEAD
-=======
 def build_storage_report(
     session: Session,
     *,
@@ -212,7 +207,6 @@ def sweep_expired_storage_objects(
     )
 
 
->>>>>>> 05aeee6 (chore: initialize repository)
 def promote_storage_object(
     session: Session,
     storage_object_id: int,
@@ -223,52 +217,7 @@ def promote_storage_object(
     record = session.get(StorageObjectORM, storage_object_id)
     if record is None:
         raise ValueError(f"Storage object {storage_object_id} does not exist.")
-<<<<<<< HEAD
-
-    previous = {
-        "storage_tier": record.storage_tier,
-        "retention_class": record.retention_class,
-        "lifecycle_status": record.lifecycle_status,
-        "expires_at": normalize_timestamp(record.expires_at),
-    }
-    record.storage_tier = payload.storage_tier
-    if payload.retention_class is not None:
-        record.retention_class = payload.retention_class
-    record.promoted_by_type = payload.promoted_by_type
-    record.promoted_by_id = payload.promoted_by_id
-    record.lifecycle_status = "promoted"
-    record.expires_at = resolve_expiration(
-        record.retention_class,
-        observed_at=record.observed_at,
-        explicit_expires_at=payload.expires_at,
-    )
-    if payload.metadata_json:
-        record.metadata_json = merge_metadata(record.metadata_json, payload.metadata_json)
-    session.add(
-        CustodyLogORM(
-            object_type="storage_object",
-            object_id=str(record.storage_object_id),
-            action="storage_promoted",
-            actor=actor,
-            details_json={
-                "object_key": record.object_key,
-                "previous": serialize_storage_values(previous),
-                "current": {
-                    "storage_tier": record.storage_tier,
-                    "retention_class": record.retention_class,
-                    "lifecycle_status": record.lifecycle_status,
-                    "expires_at": normalize_timestamp(record.expires_at).isoformat()
-                    if normalize_timestamp(record.expires_at)
-                    else None,
-                    "promoted_by_type": record.promoted_by_type,
-                    "promoted_by_id": record.promoted_by_id,
-                },
-            },
-        )
-    )
-=======
     apply_storage_promotion(session, record, payload, actor=actor)
->>>>>>> 05aeee6 (chore: initialize repository)
     session.commit()
     session.refresh(record)
     return record
@@ -284,39 +233,6 @@ def transition_storage_object(
     record = session.get(StorageObjectORM, storage_object_id)
     if record is None:
         raise ValueError(f"Storage object {storage_object_id} does not exist.")
-<<<<<<< HEAD
-
-    previous = {
-        "storage_tier": record.storage_tier,
-        "lifecycle_status": record.lifecycle_status,
-        "expires_at": normalize_timestamp(record.expires_at),
-    }
-    record.lifecycle_status = payload.lifecycle_status
-    if payload.storage_tier is not None:
-        record.storage_tier = payload.storage_tier
-    if payload.expires_at is not None or payload.lifecycle_status == "expired":
-        record.expires_at = payload.expires_at or utcnow()
-    if payload.metadata_json:
-        record.metadata_json = merge_metadata(record.metadata_json, payload.metadata_json)
-    session.add(
-        CustodyLogORM(
-            object_type="storage_object",
-            object_id=str(record.storage_object_id),
-            action="storage_transitioned",
-            actor=actor,
-            details_json={
-                "object_key": record.object_key,
-                "previous": serialize_storage_values(previous),
-                "current": {
-                    "storage_tier": record.storage_tier,
-                    "lifecycle_status": record.lifecycle_status,
-                    "expires_at": normalize_timestamp(record.expires_at).isoformat()
-                    if normalize_timestamp(record.expires_at)
-                    else None,
-                },
-            },
-        )
-=======
     apply_storage_transition(
         session,
         record,
@@ -325,7 +241,6 @@ def transition_storage_object(
         expires_at=payload.expires_at,
         metadata_json=payload.metadata_json,
         actor=actor,
->>>>>>> 05aeee6 (chore: initialize repository)
     )
     session.commit()
     session.refresh(record)
@@ -514,8 +429,6 @@ def register_camera_storage_objects(
     return registered
 
 
-<<<<<<< HEAD
-=======
 def register_source_run_storage_object(
     session: Session,
     source: SourceDefinitionORM,
@@ -659,8 +572,17 @@ def apply_storage_promotion(
         observed_at=record.observed_at,
         explicit_expires_at=payload.expires_at,
     )
-    if payload.metadata_json:
-        record.metadata_json = merge_metadata(record.metadata_json, payload.metadata_json)
+    metadata_updates = dict(payload.metadata_json or {})
+    file_details = apply_managed_storage_file_transition(
+        record,
+        target_lifecycle_status=record.lifecycle_status,
+        target_storage_tier=record.storage_tier,
+        now=utcnow(),
+    )
+    if file_details:
+        metadata_updates["managed_file"] = file_details
+    if metadata_updates:
+        record.metadata_json = merge_metadata(record.metadata_json, metadata_updates)
     session.add(
         CustodyLogORM(
             object_type="storage_object",
@@ -679,7 +601,9 @@ def apply_storage_promotion(
                     else None,
                     "promoted_by_type": record.promoted_by_type,
                     "promoted_by_id": record.promoted_by_id,
+                    "object_uri": record.object_uri,
                 },
+                "managed_file": file_details,
             },
         )
     )
@@ -698,18 +622,31 @@ def apply_storage_transition(
     action: str = "storage_transitioned",
     extra_details: dict[str, Any] | None = None,
 ) -> StorageObjectORM:
+    now = utcnow()
     previous = {
         "storage_tier": record.storage_tier,
         "lifecycle_status": record.lifecycle_status,
         "expires_at": normalize_timestamp(record.expires_at),
+        "object_uri": record.object_uri,
     }
     record.lifecycle_status = lifecycle_status
     if storage_tier is not None:
         record.storage_tier = storage_tier
+    elif lifecycle_status == "archived":
+        record.storage_tier = "archive"
     if expires_at is not None or lifecycle_status == "expired":
-        record.expires_at = normalize_timestamp(expires_at) or utcnow()
-    if metadata_json:
-        record.metadata_json = merge_metadata(record.metadata_json, metadata_json)
+        record.expires_at = normalize_timestamp(expires_at) or now
+    metadata_updates = dict(metadata_json or {})
+    file_details = apply_managed_storage_file_transition(
+        record,
+        target_lifecycle_status=record.lifecycle_status,
+        target_storage_tier=record.storage_tier,
+        now=now,
+    )
+    if file_details:
+        metadata_updates["managed_file"] = file_details
+    if metadata_updates:
+        record.metadata_json = merge_metadata(record.metadata_json, metadata_updates)
     details_json = {
         "object_key": record.object_key,
         "previous": serialize_storage_values(previous),
@@ -719,7 +656,9 @@ def apply_storage_transition(
             "expires_at": normalize_timestamp(record.expires_at).isoformat()
             if normalize_timestamp(record.expires_at)
             else None,
+            "object_uri": record.object_uri,
         },
+        "managed_file": file_details,
     }
     if extra_details:
         details_json.update(extra_details)
@@ -735,7 +674,56 @@ def apply_storage_transition(
     return record
 
 
->>>>>>> 05aeee6 (chore: initialize repository)
+def apply_managed_storage_file_transition(
+    record: StorageObjectORM,
+    *,
+    target_lifecycle_status: str,
+    target_storage_tier: str,
+    now: datetime,
+) -> dict[str, Any] | None:
+    managed_path = resolve_managed_storage_object_path(record.object_uri)
+    if managed_path is None:
+        return None
+    original_uri = record.object_uri
+    original_exists = managed_path.exists()
+    details: dict[str, Any] = {
+        "managed": True,
+        "original_path": str(managed_path),
+        "original_exists": original_exists,
+        "target_lifecycle_status": target_lifecycle_status,
+        "target_storage_tier": target_storage_tier,
+        "handled_at": now.isoformat(),
+    }
+    if target_lifecycle_status == "archived":
+        archive_path = build_managed_archive_path(record, managed_path)
+        details["archive_path"] = str(archive_path)
+        if archive_path == managed_path:
+            details["action"] = "already_archived"
+            return details
+        if not original_exists:
+            details["action"] = "archive_missing_source"
+            return details
+        if archive_path.exists():
+            raise ValueError(
+                f"Managed archive destination already exists for storage object {record.storage_object_id}: {archive_path}"
+            )
+        archive_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(managed_path), str(archive_path))
+        record.object_uri = format_storage_object_uri(archive_path, original_uri)
+        details["action"] = "moved_to_archive"
+        details["object_uri"] = record.object_uri
+        return details
+    if target_lifecycle_status == "expired":
+        details["expired_path"] = str(managed_path)
+        if original_exists:
+            managed_path.unlink()
+            details["action"] = "deleted"
+        else:
+            details["action"] = "already_missing"
+        return details
+    return None
+
+
 def resolve_expiration(
     retention_class: str,
     *,
@@ -771,8 +759,6 @@ def build_camera_storage_key(camera_inventory_id: int, object_kind: str, uri: st
     return f"camera_inventory:{camera_inventory_id}:{object_kind}:{hash_text(uri)[:16]}"
 
 
-<<<<<<< HEAD
-=======
 def build_export_storage_key(
     owner_type: str,
     owner_id: str,
@@ -786,7 +772,43 @@ def build_export_storage_key(
     )
 
 
->>>>>>> 05aeee6 (chore: initialize repository)
+def resolve_managed_storage_object_path(object_uri: str) -> Path | None:
+    local_path = resolve_storage_object_local_path(object_uri)
+    if local_path is None:
+        return None
+    managed_root = get_settings().data_dir.resolve()
+    if local_path == managed_root or managed_root in local_path.parents:
+        return local_path
+    return None
+
+
+def resolve_storage_object_local_path(object_uri: str) -> Path | None:
+    parsed = urlsplit(object_uri)
+    if parsed.scheme == "file":
+        if parsed.netloc not in {"", "localhost"}:
+            return None
+        pathname = url2pathname(unquote(parsed.path))
+        return Path(pathname).resolve(strict=False)
+    if parsed.scheme:
+        return None
+    return Path(object_uri).expanduser().resolve(strict=False)
+
+
+def build_managed_archive_path(record: StorageObjectORM, source_path: Path) -> Path:
+    managed_root = get_settings().data_dir.resolve()
+    archive_root = managed_root / MANAGED_STORAGE_ARCHIVE_DIRNAME / f"storage-object-{record.storage_object_id}"
+    try:
+        relative = source_path.relative_to(managed_root)
+    except ValueError:
+        relative = Path(source_path.name)
+    return (archive_root / relative).resolve(strict=False)
+
+
+def format_storage_object_uri(path: Path, original_uri: str) -> str:
+    resolved = path.resolve(strict=False)
+    return resolved.as_uri() if original_uri.startswith("file:") else str(resolved)
+
+
 def hash_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -799,8 +821,6 @@ def hash_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
-<<<<<<< HEAD
-=======
 def media_type_for_export_path(path: Path) -> str:
     return {
         ".json": "application/json",
@@ -809,10 +829,10 @@ def media_type_for_export_path(path: Path) -> str:
         ".md": "text/markdown",
         ".csv": "text/csv",
         ".html": "text/html",
+        ".zip": "application/zip",
     }.get(path.suffix.lower(), "application/octet-stream")
 
 
->>>>>>> 05aeee6 (chore: initialize repository)
 def merge_metadata(
     current: dict[str, Any] | None,
     incoming: dict[str, Any] | None,
@@ -837,8 +857,6 @@ def serialize_storage_values(value: Any) -> Any:
     if isinstance(value, list):
         return [serialize_storage_values(item) for item in value]
     return value
-<<<<<<< HEAD
-=======
 
 
 def is_storage_object_expired(record: StorageObjectORM, reference: datetime | None = None) -> bool:
@@ -909,4 +927,3 @@ def as_optional_string(value: Any) -> str | None:
     if isinstance(value, str) and value.strip():
         return value.strip()
     return None
->>>>>>> 05aeee6 (chore: initialize repository)

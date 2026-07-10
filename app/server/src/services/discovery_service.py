@@ -3,7 +3,9 @@ from __future__ import annotations
 import hashlib
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 from collections import Counter
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable
@@ -121,6 +123,21 @@ FORMAT_EXTENSIONS = {
     ".yaml",
     ".yml",
 }
+
+
+@dataclass(frozen=True)
+class FrontierFetchTask:
+    entry_id: int
+    canonical_url: str
+    fetch_policy: FetchPolicy
+    allowed_content_types: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class FrontierFetchOutcome:
+    entry_id: int
+    fetch_result: FetchResult
+    analysis: DocumentAnalysis
 
 
 def discovery_now() -> datetime:
@@ -342,6 +359,18 @@ def update_discovery_campaign(
     for field_name in dict_fields:
         if field_name in changes and changes[field_name] is None:
             changes[field_name] = {}
+    if "crawl_policy_json" in changes:
+        existing_policy = (
+            dict(record.crawl_policy_json)
+            if isinstance(record.crawl_policy_json, dict)
+            else {}
+        )
+        incoming_policy = (
+            dict(changes["crawl_policy_json"])
+            if isinstance(changes["crawl_policy_json"], dict)
+            else {}
+        )
+        changes["crawl_policy_json"] = {**existing_policy, **incoming_policy}
     if changes.get("layer_key"):
         ensure_data_layer(session, str(changes["layer_key"]), actor=actor)
     change_log: dict[str, dict[str, Any]] = {}
@@ -528,6 +557,62 @@ def upsert_domain_policy(
     return record
 
 
+def update_domain_policy(
+    session: Session,
+    normalized_domain: str,
+    payload: object,
+    *,
+    actor: str = "system",
+) -> DiscoveryDomainPolicyORM:
+    normalized = normalize_domain(normalized_domain)
+    if not normalized:
+        raise ValueError("Discovery domain policy requires a valid normalized_domain.")
+    record = session.scalar(
+        select(DiscoveryDomainPolicyORM).where(
+            DiscoveryDomainPolicyORM.normalized_domain == normalized
+        )
+    )
+    if record is None:
+        raise ValueError(f"Discovery domain policy for domain '{normalized}' does not exist.")
+    if isinstance(payload, dict):
+        changes = {key: value for key, value in payload.items() if value is not None}
+    else:
+        model_dump = getattr(payload, "model_dump", None)
+        if callable(model_dump):
+            changes = dict(model_dump(exclude_unset=True, exclude_none=True))
+        else:
+            changes = payload_changes(payload)
+    change_log: dict[str, dict[str, Any]] = {}
+    for key, value in changes.items():
+        if key == "normalized_domain" or not hasattr(record, key):
+            continue
+        old_value = getattr(record, key)
+        if old_value == value:
+            continue
+        setattr(record, key, value)
+        change_log[key] = {
+            "old": to_json_safe(old_value),
+            "new": to_json_safe(value),
+        }
+    if not change_log:
+        return record
+    session.add(
+        CustodyLogORM(
+            object_type="discovery_domain_policy",
+            object_id=str(record.domain_policy_id),
+            action="discovery_domain_policy_updated",
+            actor=actor,
+            details_json={
+                "normalized_domain": normalized,
+                "changes": change_log,
+            },
+        )
+    )
+    session.commit()
+    session.refresh(record)
+    return record
+
+
 def domain_matches(candidate: str, configured: str) -> bool:
     return candidate == configured or candidate.endswith(f".{configured}")
 
@@ -567,6 +652,7 @@ def ensure_domain_policy(
         policy="allow",
         robots_mode="respect" if campaign_policy.get("robots_aware", True) else "ignore",
         crawl_delay_seconds=float(campaign_policy.get("crawl_delay_seconds", 1.0)),
+        max_concurrency=int(campaign_policy.get("max_concurrency", 1)),
         max_depth=int(campaign_policy.get("max_depth", 2)),
         max_pages_per_run=int(campaign_policy.get("max_pages_per_domain", 25)),
         max_response_bytes=int(campaign_policy.get("max_response_bytes", 5_000_000)),
@@ -607,6 +693,7 @@ def effective_campaign_policy(campaign: DiscoveryCampaignORM) -> dict[str, Any]:
     policy["crawl_delay_seconds"] = clamp_float(
         policy.get("crawl_delay_seconds"), 1.0, 0.0, 3600.0
     )
+    policy["max_concurrency"] = clamp_int(policy.get("max_concurrency"), 1, 1, 20)
     policy["max_pages_per_domain"] = clamp_int(
         policy.get("max_pages_per_domain"), 25, 1, 10_000
     )
@@ -621,6 +708,196 @@ def effective_campaign_policy(campaign: DiscoveryCampaignORM) -> dict[str, Any]:
         policy.get("user_agent") or DEFAULT_CRAWL_POLICY["user_agent"]
     )[:500]
     return policy
+
+
+def discovery_fetch_claim_timeout_seconds(policy: dict[str, Any]) -> float:
+    return max(
+        60.0,
+        float(policy.get("request_timeout_seconds", 15.0))
+        * min(5, int(policy.get("retry_attempts", 2)))
+        + max(
+            60.0,
+            float(policy.get("retry_backoff_seconds", 1.0)),
+            float(policy.get("crawl_delay_seconds", 1.0)),
+        )
+        * max(0, min(5, int(policy.get("retry_attempts", 2))) - 1)
+        + 30.0,
+    )
+
+
+def discovery_run_lease_timeout_seconds(policy: dict[str, Any]) -> float:
+    return max(
+        300.0,
+        min(float(policy.get("max_seconds", 300.0)) + 120.0, 7_200.0),
+        discovery_fetch_claim_timeout_seconds(policy) + 120.0,
+    )
+
+
+def active_discovery_run_lease(campaign: DiscoveryCampaignORM) -> dict[str, Any] | None:
+    metadata = campaign.metadata_json if isinstance(campaign.metadata_json, dict) else {}
+    lease = metadata.get("active_run_lease")
+    return dict(lease) if isinstance(lease, dict) else None
+
+
+def discovery_lease_expires_at(lease: dict[str, Any]) -> datetime | None:
+    explicit = lease.get("expires_at")
+    if isinstance(explicit, str):
+        try:
+            return normalize_timestamp(datetime.fromisoformat(explicit.replace("Z", "+00:00")))
+        except ValueError:
+            return None
+    heartbeat = lease.get("heartbeat_at")
+    timeout_seconds = clamp_float(lease.get("lease_timeout_seconds"), 300.0, 60.0, 86_400.0)
+    if isinstance(heartbeat, str):
+        try:
+            heartbeat_at = normalize_timestamp(datetime.fromisoformat(heartbeat.replace("Z", "+00:00")))
+        except ValueError:
+            return None
+        if heartbeat_at is not None:
+            return heartbeat_at + timedelta(seconds=timeout_seconds)
+    return None
+
+
+def discovery_lease_is_active(lease: dict[str, Any], *, now: datetime | None = None) -> bool:
+    expires_at = discovery_lease_expires_at(lease)
+    reference = now or discovery_now()
+    return expires_at is not None and expires_at > reference
+
+
+def build_discovery_run_lease(
+    campaign: DiscoveryCampaignORM,
+    run: DiscoveryRunORM,
+    *,
+    actor: str,
+    policy: dict[str, Any],
+    previous_takeover_count: int = 0,
+) -> dict[str, Any]:
+    now = discovery_now()
+    timeout_seconds = discovery_run_lease_timeout_seconds(policy)
+    token_seed = (
+        f"{campaign.campaign_id}:{run.discovery_run_id}:{actor}:"
+        f"{now.isoformat()}:{time.monotonic_ns()}"
+    )
+    return {
+        "campaign_id": campaign.campaign_id,
+        "run_id": run.discovery_run_id,
+        "actor": actor,
+        "lease_token": hashlib.sha256(token_seed.encode("utf-8")).hexdigest(),
+        "acquired_at": now.isoformat(),
+        "heartbeat_at": now.isoformat(),
+        "expires_at": (now + timedelta(seconds=timeout_seconds)).isoformat(),
+        "lease_timeout_seconds": timeout_seconds,
+        "stale_takeover_count": max(0, int(previous_takeover_count)),
+    }
+
+
+def set_discovery_run_lease(
+    campaign: DiscoveryCampaignORM,
+    run: DiscoveryRunORM,
+    lease: dict[str, Any],
+) -> None:
+    campaign_metadata = dict(campaign.metadata_json or {})
+    campaign_metadata["active_run_lease"] = lease
+    campaign.metadata_json = campaign_metadata
+    run_metadata = dict(run.metadata_json or {})
+    run_metadata["active_lease"] = lease
+    run.metadata_json = run_metadata
+
+
+def release_discovery_run_lease(
+    campaign: DiscoveryCampaignORM,
+    run: DiscoveryRunORM,
+    *,
+    actor: str,
+    reason: str,
+) -> None:
+    metadata = dict(campaign.metadata_json or {})
+    active_lease = metadata.get("active_run_lease")
+    if isinstance(active_lease, dict) and int(active_lease.get("run_id") or 0) == run.discovery_run_id:
+        metadata.pop("active_run_lease", None)
+        campaign.metadata_json = metadata
+    run_metadata = dict(run.metadata_json or {})
+    active_lease = run_metadata.pop("active_lease", None)
+    history = dict(run_metadata.get("last_released_lease") or {})
+    if isinstance(active_lease, dict):
+        history = {
+            **active_lease,
+            "released_at": discovery_now().isoformat(),
+            "released_by": actor,
+            "release_reason": reason,
+        }
+    run_metadata["last_released_lease"] = history
+    run.metadata_json = run_metadata
+
+
+def heartbeat_discovery_run_lease(
+    campaign: DiscoveryCampaignORM,
+    run: DiscoveryRunORM,
+    *,
+    actor: str,
+) -> None:
+    metadata = dict(campaign.metadata_json or {})
+    lease = metadata.get("active_run_lease")
+    if not isinstance(lease, dict):
+        return
+    if int(lease.get("run_id") or 0) != run.discovery_run_id:
+        return
+    now = discovery_now()
+    timeout_seconds = clamp_float(lease.get("lease_timeout_seconds"), 300.0, 60.0, 86_400.0)
+    refreshed = {
+        **lease,
+        "actor": actor,
+        "heartbeat_at": now.isoformat(),
+        "expires_at": (now + timedelta(seconds=timeout_seconds)).isoformat(),
+    }
+    set_discovery_run_lease(campaign, run, refreshed)
+
+
+def acquire_discovery_run_lease(
+    session: Session,
+    campaign: DiscoveryCampaignORM,
+    run: DiscoveryRunORM,
+    *,
+    actor: str,
+    policy: dict[str, Any],
+) -> dict[str, Any]:
+    existing = active_discovery_run_lease(campaign)
+    now = discovery_now()
+    if existing is not None and discovery_lease_is_active(existing, now=now):
+        active_run_id = int(existing.get("run_id") or 0)
+        raise ValueError(
+            f"Discovery campaign {campaign.campaign_id} is already leased by run "
+            f"{active_run_id or 'unknown'} ({existing.get('actor') or 'unknown'}); "
+            "wait for that lease to expire or resume the active run."
+        )
+    previous_takeover_count = 0
+    stale_takeover = existing is not None and not discovery_lease_is_active(existing, now=now)
+    if stale_takeover:
+        previous_takeover_count = int(existing.get("stale_takeover_count") or 0) + 1
+    lease = build_discovery_run_lease(
+        campaign,
+        run,
+        actor=actor,
+        policy=policy,
+        previous_takeover_count=previous_takeover_count,
+    )
+    set_discovery_run_lease(campaign, run, lease)
+    if stale_takeover:
+        session.add(
+            CustodyLogORM(
+                object_type="discovery_campaign",
+                object_id=str(campaign.campaign_id),
+                action="discovery_run_lease_recovered",
+                actor=actor,
+                details_json={
+                    "recovered_run_id": existing.get("run_id"),
+                    "recovered_actor": existing.get("actor"),
+                    "recovered_heartbeat_at": existing.get("heartbeat_at"),
+                    "new_run_id": run.discovery_run_id,
+                },
+            )
+        )
+    return lease
 
 
 def clamp_int(value: Any, default: int, minimum: int, maximum: int) -> int:
@@ -1046,6 +1323,7 @@ def run_discovery_campaign(
             .limit(1)
         )
 
+    persisted_policy = effective_campaign_policy(campaign)
     if run is None:
         active_run = session.scalar(
             select(DiscoveryRunORM)
@@ -1077,7 +1355,7 @@ def run_discovery_campaign(
                 "entities": campaign.entity_seeds_json or [],
                 "format_targets": campaign_format_targets(campaign),
             },
-            policy_snapshot_json=effective_campaign_policy(campaign),
+            policy_snapshot_json=persisted_policy,
         )
         session.add(run)
         session.flush()
@@ -1125,12 +1403,20 @@ def run_discovery_campaign(
         )
     campaign.status = "running"
     campaign.last_run_at = discovery_now()
+    acquire_discovery_run_lease(
+        session,
+        campaign,
+        run,
+        actor=actor,
+        policy=(run.policy_snapshot_json or persisted_policy),
+    )
     session.commit()
 
     if bool(payload_value(payload, "dry_run", False)):
         run.status = "dry_run"
         run.finished_at = discovery_now()
         campaign.status = "active"
+        release_discovery_run_lease(campaign, run, actor=actor, reason="dry_run")
         session.commit()
         session.refresh(run)
         return build_discovery_run_result(session, run)
@@ -1141,17 +1427,52 @@ def run_discovery_campaign(
     )
     max_seconds = float(
         payload_value(payload, "max_seconds", None)
-        or effective_campaign_policy(campaign).get("max_seconds", 300.0)
+        or (run.policy_snapshot_json or persisted_policy).get("max_seconds", 300.0)
     )
-    process_discovery_frontier(
-        session,
-        campaign,
-        run,
-        max_pages=max(1, min(max_pages, campaign.max_pages)),
-        max_candidates=max(1, min(max_candidates, campaign.max_candidates)),
-        max_seconds=max(1.0, min(max_seconds, 3600.0)),
-        actor=actor,
-    )
+    try:
+        process_discovery_frontier(
+            session,
+            campaign,
+            run,
+            max_pages=max(1, min(max_pages, campaign.max_pages)),
+            max_candidates=max(1, min(max_candidates, campaign.max_candidates)),
+            max_seconds=max(1.0, min(max_seconds, 3600.0)),
+            actor=actor,
+        )
+    except Exception as exc:
+        session.rollback()
+        failed_campaign = session.get(DiscoveryCampaignORM, campaign_id)
+        failed_run = session.get(DiscoveryRunORM, run.discovery_run_id)
+        if failed_campaign is not None and failed_run is not None:
+            failed_run.status = "paused"
+            failed_run.error_count += 1
+            failed_run.error_text = str(exc)[:4000]
+            failed_campaign.status = "paused"
+            release_discovery_run_lease(
+                failed_campaign,
+                failed_run,
+                actor=actor,
+                reason="unhandled_exception",
+            )
+            session.add(
+                CustodyLogORM(
+                    object_type="discovery_run",
+                    object_id=str(failed_run.discovery_run_id),
+                    action="discovery_run_paused",
+                    actor=actor,
+                    details_json={
+                        "campaign_id": campaign_id,
+                        "error_type": type(exc).__name__,
+                        "error_text": str(exc)[:1000],
+                    },
+                )
+            )
+            session.commit()
+        raise
+    session.refresh(run)
+    session.refresh(campaign)
+    release_discovery_run_lease(campaign, run, actor=actor, reason="run_finished")
+    session.commit()
     session.refresh(run)
     return build_discovery_run_result(session, run)
 
@@ -1178,6 +1499,7 @@ def process_discovery_frontier(
     )
     touched_this_call: set[int] = set()
     persisted_policy = run.policy_snapshot_json or effective_campaign_policy(campaign)
+    max_concurrency = max(1, min(int(persisted_policy.get("max_concurrency", 1)), 20))
     run_page_budget = max(
         1,
         min(int(persisted_policy.get("max_pages", campaign.max_pages)), 10_000),
@@ -1216,6 +1538,32 @@ def process_discovery_frontier(
             break
         if len(touched_this_call) >= max_candidates:
             break
+        if max_concurrency > 1:
+            batch_limit = min(
+                max_concurrency,
+                max_pages - processed_this_call,
+                max_candidates - len(touched_this_call),
+            )
+            (
+                batch_processed,
+                batch_candidate_ids,
+                started_entry_count,
+            ) = process_frontier_batch(
+                session,
+                campaign,
+                run,
+                actor=actor,
+                batch_limit=max(1, batch_limit),
+                run_page_budget=run_page_budget,
+                started_entry_count=started_entry_count,
+                domain_fetch_counts=domain_fetch_counts,
+            )
+            if batch_processed == 0:
+                break
+            processed_this_call += batch_processed
+            touched_candidate_ids.update(batch_candidate_ids)
+            touched_this_call.update(batch_candidate_ids)
+            continue
         page_budget_exhausted = started_entry_count >= run_page_budget
         claim_statement = (
             select(DiscoveryFrontierEntryORM)
@@ -1255,6 +1603,7 @@ def process_discovery_frontier(
             entry.last_error_text = "per_domain_page_limit"
             session.commit()
             continue
+        heartbeat_discovery_run_lease(campaign, run, actor=actor)
         entry.state = "fetching"
         entry.claimed_at = now
         entry.last_attempt_at = now
@@ -1336,6 +1685,7 @@ def process_discovery_frontier(
         campaign.last_completed_at = run.finished_at
     else:
         campaign.status = "checkpointed"
+    heartbeat_discovery_run_lease(campaign, run, actor=actor)
     session.add(
         CustodyLogORM(
             object_type="discovery_run",
@@ -1396,18 +1746,7 @@ def reclaim_stale_frontier_claims(
     """
 
     policy = effective_campaign_policy(campaign)
-    claim_timeout_seconds = max(
-        60.0,
-        float(policy.get("request_timeout_seconds", 15.0))
-        * min(5, int(policy.get("retry_attempts", 2)))
-        + max(
-            60.0,
-            float(policy.get("retry_backoff_seconds", 1.0)),
-            float(policy.get("crawl_delay_seconds", 1.0)),
-        )
-        * max(0, min(5, int(policy.get("retry_attempts", 2))) - 1)
-        + 30.0,
-    )
+    claim_timeout_seconds = discovery_fetch_claim_timeout_seconds(policy)
     now = discovery_now()
     stale_before = now - timedelta(seconds=claim_timeout_seconds)
     stale_entries = list(
@@ -1451,6 +1790,316 @@ def reclaim_stale_frontier_claims(
     if stale_entries:
         session.commit()
     return len(stale_entries)
+
+
+def process_frontier_batch(
+    session: Session,
+    campaign: DiscoveryCampaignORM,
+    run: DiscoveryRunORM,
+    *,
+    actor: str,
+    batch_limit: int,
+    run_page_budget: int,
+    started_entry_count: int,
+    domain_fetch_counts: Counter[str],
+) -> tuple[int, set[int], int]:
+    processed_count = 0
+    candidate_ids: set[int] = set()
+    in_flight_by_domain: Counter[str] = Counter()
+    skipped_entry_ids: set[int] = set()
+    tasks: list[FrontierFetchTask] = []
+    campaign_policy = effective_campaign_policy(campaign)
+
+    while len(tasks) < batch_limit:
+        page_budget_exhausted = started_entry_count >= run_page_budget
+        statement = select(DiscoveryFrontierEntryORM).where(
+            DiscoveryFrontierEntryORM.discovery_run_id == run.discovery_run_id,
+            DiscoveryFrontierEntryORM.state.in_(("queued", "retry_wait")),
+            or_(
+                DiscoveryFrontierEntryORM.next_attempt_at.is_(None),
+                DiscoveryFrontierEntryORM.next_attempt_at <= discovery_now(),
+            ),
+            *(
+                (DiscoveryFrontierEntryORM.attempt_count > 0,)
+                if page_budget_exhausted
+                else ()
+            ),
+        )
+        if skipped_entry_ids:
+            statement = statement.where(
+                DiscoveryFrontierEntryORM.frontier_entry_id.not_in(skipped_entry_ids)
+            )
+        entry = session.scalar(
+            statement.order_by(
+                DiscoveryFrontierEntryORM.priority.desc(),
+                DiscoveryFrontierEntryORM.frontier_entry_id.asc(),
+            )
+            .limit(1)
+            .with_for_update(skip_locked=True)
+        )
+        if entry is None:
+            break
+        domain = normalize_domain(entry.canonical_url) or "unknown"
+        domain_policy = ensure_domain_policy(session, domain, campaign_policy)
+        per_domain_limit = min(
+            domain_policy.max_pages_per_run,
+            int(campaign_policy.get("max_pages_per_domain", 25)),
+        )
+        if domain_fetch_counts[domain] >= per_domain_limit:
+            entry.state = "deferred"
+            entry.completed_at = discovery_now()
+            entry.last_error_text = "per_domain_page_limit"
+            session.commit()
+            continue
+        if in_flight_by_domain[domain] >= resolve_domain_concurrency_limit(
+            domain_policy,
+            campaign_policy,
+        ):
+            skipped_entry_ids.add(entry.frontier_entry_id)
+            continue
+        heartbeat_discovery_run_lease(campaign, run, actor=actor)
+        entry.state = "fetching"
+        entry.claimed_at = discovery_now()
+        entry.last_attempt_at = entry.claimed_at
+        entry.attempt_count += 1
+        if entry.attempt_count == 1:
+            started_entry_count += 1
+        session.commit()
+        domain_fetch_counts[domain] += 1
+        in_flight_by_domain[domain] += 1
+        try:
+            task = prepare_frontier_fetch_task(
+                session,
+                campaign,
+                run,
+                entry,
+                domain_policy=domain_policy,
+                actor=actor,
+            )
+        except Exception as exc:
+            session.rollback()
+            handle_frontier_error(session, campaign, run, entry, exc, actor=actor)
+            processed_count += 1
+            in_flight_by_domain[domain] -= 1
+            continue
+        if task is None:
+            processed_count += 1
+            in_flight_by_domain[domain] -= 1
+            refreshed_entry = session.get(DiscoveryFrontierEntryORM, entry.frontier_entry_id)
+            if refreshed_entry is not None and refreshed_entry.candidate_id is not None:
+                candidate_ids.add(refreshed_entry.candidate_id)
+            continue
+        tasks.append(task)
+
+    if tasks:
+        with ThreadPoolExecutor(max_workers=len(tasks)) as executor:
+            future_map = {
+                executor.submit(execute_frontier_fetch_task, task): task
+                for task in tasks
+            }
+            for future, task in future_map.items():
+                entry = session.get(DiscoveryFrontierEntryORM, task.entry_id)
+                if entry is None:
+                    processed_count += 1
+                    continue
+                try:
+                    outcome = future.result()
+                    candidate = finalize_frontier_fetch_success(
+                        session,
+                        campaign,
+                        run,
+                        entry,
+                        fetch_result=outcome.fetch_result,
+                        analysis=outcome.analysis,
+                        actor=actor,
+                    )
+                    if candidate is not None:
+                        candidate_ids.add(candidate.candidate_id)
+                except Exception as exc:
+                    session.rollback()
+                    handle_frontier_error(session, campaign, run, entry, exc, actor=actor)
+                processed_count += 1
+    return processed_count, candidate_ids, started_entry_count
+
+
+def resolve_domain_concurrency_limit(
+    domain_policy: DiscoveryDomainPolicyORM,
+    campaign_policy: dict[str, Any],
+) -> int:
+    campaign_limit = max(1, int(campaign_policy.get("max_concurrency", 1)))
+    auto_created = bool((domain_policy.metadata_json or {}).get("auto_created"))
+    domain_limit = max(1, int(domain_policy.max_concurrency or 1))
+    if auto_created and domain_limit == 1 and campaign_limit > 1:
+        domain_limit = campaign_limit
+    if domain_policy.crawl_delay_seconds > 0:
+        return 1
+    return max(1, min(domain_limit, campaign_limit))
+
+
+def prepare_frontier_fetch_task(
+    session: Session,
+    campaign: DiscoveryCampaignORM,
+    run: DiscoveryRunORM,
+    entry: DiscoveryFrontierEntryORM,
+    *,
+    domain_policy: DiscoveryDomainPolicyORM,
+    actor: str,
+) -> FrontierFetchTask | None:
+    policy = effective_campaign_policy(campaign)
+    allowed, reason = url_allowed_for_campaign(
+        campaign,
+        entry.canonical_url,
+        domain_policy=domain_policy,
+    )
+    if not allowed:
+        entry.state = "blocked"
+        entry.completed_at = discovery_now()
+        entry.last_error_text = reason
+        session.commit()
+        return None
+    if entry.depth > min(campaign.max_depth, domain_policy.max_depth):
+        entry.state = "blocked"
+        entry.completed_at = discovery_now()
+        entry.last_error_text = "domain_policy_max_depth"
+        session.commit()
+        return None
+    if urlsplit(entry.canonical_url).scheme not in {"http", "https"}:
+        candidate = process_frontier_entry(
+            session,
+            campaign,
+            run,
+            entry,
+            domain_policy=domain_policy,
+            actor=actor,
+        )
+        return None if candidate is None else None
+
+    fetch_policy = effective_fetch_policy(policy, domain_policy)
+    validate_fetch_url(
+        entry.canonical_url,
+        allow_private_networks=fetch_policy.allow_private_networks,
+    )
+    robots_allowed, robots_observation = check_robots_permission(
+        session,
+        campaign,
+        run,
+        entry.canonical_url,
+        domain_policy,
+    )
+    if not robots_allowed:
+        entry.state = "robots_blocked"
+        entry.completed_at = discovery_now()
+        entry.last_error_text = "robots_disallowed"
+        run.error_count += 1
+        emit_discovery_alert(
+            session,
+            alert_type="robots_block",
+            dedupe_scope=f"run:{run.discovery_run_id}:domain:{domain_policy.normalized_domain}",
+            severity="info",
+            message=f"Robots policy blocked discovery fetches on {domain_policy.normalized_domain}.",
+            basis={
+                "campaign_id": campaign.campaign_id,
+                "discovery_run_id": run.discovery_run_id,
+                "robots_observation_id": (
+                    robots_observation.robots_observation_id if robots_observation else None
+                ),
+            },
+            actor=actor,
+        )
+        session.commit()
+        return None
+    apply_domain_pacing(domain_policy.last_fetch_at, domain_policy.crawl_delay_seconds)
+    return FrontierFetchTask(
+        entry_id=entry.frontier_entry_id,
+        canonical_url=entry.canonical_url,
+        fetch_policy=fetch_policy,
+        allowed_content_types=tuple(
+            str(pattern) for pattern in (domain_policy.allowed_content_types_json or [])
+        ),
+    )
+
+
+def execute_frontier_fetch_task(task: FrontierFetchTask) -> FrontierFetchOutcome:
+    fetch_result = fetch_url(
+        task.canonical_url,
+        policy=task.fetch_policy,
+    )
+    if task.allowed_content_types and not any(
+        content_type_matches(fetch_result.content_type, pattern)
+        for pattern in task.allowed_content_types
+    ):
+        raise UnsafeTargetError(
+            f"Response content type {fetch_result.content_type or 'unknown'} is not allowed by policy."
+        )
+    analysis = analyze_document(
+        fetch_result.final_url,
+        fetch_result.payload,
+        content_type=fetch_result.content_type,
+        headers=fetch_result.headers,
+    )
+    return FrontierFetchOutcome(
+        entry_id=task.entry_id,
+        fetch_result=fetch_result,
+        analysis=analysis,
+    )
+
+
+def finalize_frontier_fetch_success(
+    session: Session,
+    campaign: DiscoveryCampaignORM,
+    run: DiscoveryRunORM,
+    entry: DiscoveryFrontierEntryORM,
+    *,
+    fetch_result: FetchResult,
+    analysis: DocumentAnalysis,
+    actor: str,
+) -> SourceCandidateORM | None:
+    domain = normalize_domain(entry.canonical_url) or "unknown"
+    domain_policy = ensure_domain_policy(session, domain, effective_campaign_policy(campaign))
+    fetched_at = discovery_now()
+    domain_policy.last_fetch_at = fetched_at
+    domain_policy.next_allowed_at = fetched_at + timedelta(
+        seconds=max(0.0, domain_policy.crawl_delay_seconds)
+    )
+    candidate, created = upsert_fetched_candidate(
+        session,
+        campaign,
+        run,
+        entry,
+        fetch_result,
+        analysis,
+        robots_allowed=True,
+    )
+    if created:
+        run.candidates_discovered += 1
+    else:
+        run.candidates_updated += 1
+    run.pages_fetched += 1
+    entry.candidate_id = candidate.candidate_id
+    entry.state = "completed"
+    entry.fetched_at = fetched_at
+    entry.completed_at = fetched_at
+    entry.last_error_text = None
+    created_artifact_path: Path | None = None
+    try:
+        _, created_artifact_path = persist_discovery_artifact(
+            session,
+            campaign,
+            run,
+            entry,
+            candidate,
+            fetch_result,
+            analysis,
+        )
+        create_discovery_edge(session, campaign, run, entry, candidate)
+        enqueue_analysis_links(session, campaign, run, entry, candidate, analysis)
+        maybe_emit_candidate_alert(session, campaign, run, candidate, created=created, actor=actor)
+        session.commit()
+    except Exception:
+        if created_artifact_path is not None:
+            created_artifact_path.unlink(missing_ok=True)
+        raise
+    return candidate
 
 
 def process_frontier_entry(

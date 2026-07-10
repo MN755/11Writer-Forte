@@ -6,9 +6,12 @@ import threading
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 from fastapi.testclient import TestClient
+from typer.testing import CliRunner
 
+from src.cli import app as cli_app
 from src.db import get_session_factory
 from src.services.source_service import run_source_definition
 
@@ -106,6 +109,34 @@ def static_http_server(
     thread.start()
     try:
         yield f"http://127.0.0.1:{server.server_port}{path}", state
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+@contextmanager
+def dynamic_http_server(responder):
+    state = {"requests": [], "last_accept": None}
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            state["requests"].append(self.path)
+            state["last_accept"] = self.headers.get("Accept")
+            status_code, content_type, payload = responder(self.path)
+            self.send_response(status_code)
+            self.send_header("Content-Type", content_type)
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, format: str, *args: object) -> None:  # noqa: A003
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}", state
     finally:
         server.shutdown()
         server.server_close()
@@ -875,6 +906,75 @@ def test_arcgis_feature_json_source_normalizes_features(client: TestClient) -> N
         assert round(coordinates[1], 2) == 44.98
 
 
+def test_arcgis_feature_json_source_paginates_bounded_results(client: TestClient) -> None:
+    page_one = {
+        "geometryType": "esriGeometryPoint",
+        "spatialReference": {"wkid": 4326},
+        "exceededTransferLimit": True,
+        "features": [
+            {"attributes": {"OBJECTID": 1, "name": "Camera One"}, "geometry": {"x": -93.1, "y": 44.9}},
+            {"attributes": {"OBJECTID": 2, "name": "Camera Two"}, "geometry": {"x": -93.2, "y": 45.0}},
+        ],
+    }
+    page_two = {
+        "geometryType": "esriGeometryPoint",
+        "spatialReference": {"wkid": 4326},
+        "exceededTransferLimit": False,
+        "features": [
+            {"attributes": {"OBJECTID": 3, "name": "Camera Three"}, "geometry": {"x": -93.3, "y": 45.1}}
+        ],
+    }
+
+    def responder(path: str) -> tuple[int, str, bytes]:
+        query = parse_qs(urlsplit(path).query)
+        offset = int(query.get("resultOffset", ["0"])[0])
+        page_size = int(query.get("resultRecordCount", ["1000"])[0])
+        assert page_size == 1000
+        if offset == 0:
+            return 200, "application/json", json.dumps(page_one).encode("utf-8")
+        if offset == 2:
+            return 200, "application/json", json.dumps(page_two).encode("utf-8")
+        return 404, "application/json", b"{}"
+
+    with dynamic_http_server(responder) as (base_url, state):
+        target_uri = f"{base_url}/FeatureServer/0/query?where=1%3D1&outFields=*&f=json"
+        source_response = client.post(
+            "/api/sources",
+            json={
+                "name": "arcgis-source-paginated",
+                "source_kind": "arcgis_feature_json",
+                "layer_key": "sensor-feed-paginated",
+                "target_uri": target_uri,
+            },
+        )
+        assert source_response.status_code == 200
+        source_id = source_response.json()["source_id"]
+
+        run_response = client.post(f"/api/sources/{source_id}/run")
+        assert run_response.status_code == 200
+        run_payload = run_response.json()
+        assert run_payload["status"] == "completed"
+        assert run_payload["records_imported"] == 3
+        assert run_payload["output_json"]["page_count"] == 2
+        assert run_payload["output_json"]["page_item_counts"] == [2, 1]
+        assert run_payload["output_json"]["pagination"]["truncated"] is False
+        assert len(state["requests"]) == 2
+        assert "application/json" in (state["last_accept"] or "")
+
+        observations_response = client.get(
+            "/api/observations",
+            params={"layer_key": "sensor-feed-paginated"},
+        )
+        assert observations_response.status_code == 200
+        observations = observations_response.json()
+        assert len(observations) == 3
+        assert {row["content_json"]["name"] for row in observations} == {
+            "Camera One",
+            "Camera Two",
+            "Camera Three",
+        }
+
+
 def test_ckan_package_search_source_expands_resource_records(client: TestClient) -> None:
     payload = {
         "help": "https://data.example.com/api/3/action/help_show?name=package_search",
@@ -935,3 +1035,146 @@ def test_ckan_package_search_source_expands_resource_records(client: TestClient)
         assert observation["content_json"]["resource_format"] == "JSON"
         assert observation["content_json"]["organization_title"] == "State DOT"
         assert observation["source_domain"] == "data.example.com"
+
+
+def test_ckan_package_search_source_paginates_bounded_results(client: TestClient) -> None:
+    def build_package(index: int) -> dict[str, object]:
+        return {
+            "id": f"dataset-{index}",
+            "name": f"traffic-cameras-{index}",
+            "title": f"Traffic Cameras {index}",
+            "url": f"https://data.example.com/dataset/traffic-cameras-{index}",
+            "organization": {"name": "dot", "title": "State DOT"},
+            "resources": [
+                {
+                    "id": f"resource-{index}",
+                    "name": f"Camera Feed {index}",
+                    "format": "JSON",
+                    "url": f"https://data.example.com/dataset/traffic-cameras-{index}/resource-{index}/download/feed.json",
+                }
+            ],
+        }
+
+    page_one = {
+        "help": "https://data.example.com/api/3/action/help_show?name=package_search",
+        "success": True,
+        "result": {"count": 3, "results": [build_package(1), build_package(2)]},
+    }
+    page_two = {
+        "help": "https://data.example.com/api/3/action/help_show?name=package_search",
+        "success": True,
+        "result": {"count": 3, "results": [build_package(3)]},
+    }
+
+    def responder(path: str) -> tuple[int, str, bytes]:
+        query = parse_qs(urlsplit(path).query)
+        start = int(query.get("start", ["0"])[0])
+        rows = int(query.get("rows", ["100"])[0])
+        assert rows == 100
+        if start == 0:
+            return 200, "application/json", json.dumps(page_one).encode("utf-8")
+        if start == 2:
+            return 200, "application/json", json.dumps(page_two).encode("utf-8")
+        return 404, "application/json", b"{}"
+
+    with dynamic_http_server(responder) as (base_url, state):
+        target_uri = f"{base_url}/api/3/action/package_search?q=traffic"
+        source_response = client.post(
+            "/api/sources",
+            json={
+                "name": "ckan-source-paginated",
+                "source_kind": "ckan_package_search",
+                "layer_key": "catalog-feed-paginated",
+                "target_uri": target_uri,
+            },
+        )
+        assert source_response.status_code == 200
+        source_id = source_response.json()["source_id"]
+
+        run_response = client.post(f"/api/sources/{source_id}/run")
+        assert run_response.status_code == 200
+        run_payload = run_response.json()
+        assert run_payload["status"] == "completed"
+        assert run_payload["records_imported"] == 3
+        assert run_payload["output_json"]["page_count"] == 2
+        assert run_payload["output_json"]["page_item_counts"] == [2, 1]
+        assert run_payload["output_json"]["pagination"]["total_available"] == 3
+        assert len(state["requests"]) == 2
+        assert "application/json" in (state["last_accept"] or "")
+
+        observations_response = client.get(
+            "/api/observations",
+            params={"layer_key": "catalog-feed-paginated"},
+        )
+        assert observations_response.status_code == 200
+        observations = observations_response.json()
+        assert len(observations) == 3
+        assert {row["content_json"]["package_title"] for row in observations} == {
+            "Traffic Cameras 1",
+            "Traffic Cameras 2",
+            "Traffic Cameras 3",
+        }
+
+
+def test_real_typer_can_create_discovery_native_http_sources(client: TestClient) -> None:
+    runner = CliRunner()
+    commands = [
+        (
+            "add-source-web-search",
+            "search-source",
+            "https://search.example.com/?q=traffic+cameras",
+            "web_search",
+        ),
+        (
+            "add-source-web-crawl",
+            "crawl-source",
+            "https://www.example.com/alerts",
+            "web_crawl",
+        ),
+        (
+            "add-source-web-discovery",
+            "discovery-source",
+            "https://www.example.com/developer/api",
+            "web_discovery",
+        ),
+    ]
+
+    for command_name, source_name, target_uri, source_kind in commands:
+        result = runner.invoke(
+            cli_app,
+            [
+                command_name,
+                source_name,
+                target_uri,
+                "web-ops",
+                "--notes",
+                f"{source_kind} source",
+                "--timeout-seconds",
+                "45",
+                "--retry-attempts",
+                "4",
+                "--retry-backoff-seconds",
+                "1.5",
+                "--no-skip-unchanged",
+                "--header",
+                "X-Test-Token: cli-web",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert "created for" in result.output
+
+    listed = client.get("/api/sources")
+    assert listed.status_code == 200
+    rows = {row["name"]: row for row in listed.json()}
+
+    for _command_name, source_name, target_uri, source_kind in commands:
+        assert source_name in rows
+        row = rows[source_name]
+        assert row["source_kind"] == source_kind
+        assert row["target_uri"] == target_uri
+        assert row["layer_key"] == "web-ops"
+        assert row["metadata_json"]["request_timeout_seconds"] == 45
+        assert row["metadata_json"]["retry_attempts"] == 4
+        assert row["metadata_json"]["retry_backoff_seconds"] == 1.5
+        assert row["metadata_json"]["skip_unchanged"] is False
+        assert row["metadata_json"]["headers"]["X-Test-Token"] == "cli-web"

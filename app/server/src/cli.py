@@ -15,7 +15,6 @@ from src.models import (
     CustodyLogORM,
     EntityObservationLinkORM,
     EntityORM,
-    EventORM,
     LocalImportRunORM,
     ScheduledTaskORM,
     ScheduledTaskRunORM,
@@ -23,6 +22,8 @@ from src.models import (
     SourceTrustProfileORM,
 )
 from src.schemas import (
+    AlertCreate,
+    AlertUpdate,
     CandidateHealthCheckRead,
     CandidateHealthScanRequest,
     CandidateHealthScanResultRead,
@@ -48,6 +49,10 @@ from src.schemas import (
     DatabaseDiagnosticsRead,
     DiscoveryCampaignCreate,
     DiscoveryCampaignRead,
+    DiscoveryCampaignUpdate,
+    DiscoveryDomainPolicyCreate,
+    DiscoveryDomainPolicyRead,
+    DiscoveryDomainPolicyUpdate,
     DiscoveryExportSummaryRead,
     DiscoveryInventoryDiffRead,
     DiscoveryLineageSummaryRead,
@@ -58,7 +63,11 @@ from src.schemas import (
     DiscoveryRunRequest,
     DiscoveryRunResultRead,
     EventExportBundleRead,
+    EventCreate,
     EventFusionRequest,
+    EventRead,
+    GeofenceCreate,
+    GeofenceRead,
     EntityResolutionRequest,
     OperationsReportRead,
     RuntimeRestoreResultRead,
@@ -81,6 +90,8 @@ from src.schemas import (
     SourceOpsReportIndexRead,
     SourceCandidateDetailRead,
     SourceCandidateRead,
+    SourceTrustProfileCreate,
+    SourceTrustProfileUpdate,
 )
 from src.services.camera_source_service import (
     build_camera_source_inventory_ops_detail,
@@ -89,6 +100,18 @@ from src.services.camera_source_service import (
     build_camera_source_inventory_summary,
     list_camera_sources,
     materialize_camera_source_inventory,
+)
+from src.services.codex_agent_service import (
+    CodexAgentError,
+    build_codex_exec_command,
+    build_codex_mcp_add_command,
+    register_codex_mcp,
+    run_codex_research,
+)
+from src.services.alert_service import (
+    create_alert as create_alert_record,
+    list_alerts as list_alert_records,
+    update_alert as update_alert_record,
 )
 from src.services.clickhouse_service import (
     archive_clickhouse_observations_to_r2,
@@ -105,6 +128,7 @@ from src.services.camera_service import build_camera_ops_export_summary
 from src.services.camera_service import build_camera_ops_report_index
 from src.services.camera_service import build_camera_inventory_ops_detail
 from src.services.camera_service import build_camera_inventory_summary
+from src.services.custody_service import list_custody_logs
 from src.services.database_diagnostics_service import build_database_diagnostics
 from src.services.discovery_service import (
     build_candidate_lineage,
@@ -117,6 +141,7 @@ from src.services.discovery_service import (
     diff_discovery_inventories,
     explain_candidate_score,
     list_discovery_campaigns,
+    list_domain_policies,
     list_discovery_runs,
     list_source_candidates,
     promote_source_candidate,
@@ -124,16 +149,23 @@ from src.services.discovery_service import (
     run_discovery_campaign,
     scan_candidate_health,
     suppress_source_candidate,
+    update_discovery_campaign,
+    update_domain_policy,
+    upsert_domain_policy,
 )
 from src.services.entity_resolution_service import materialize_entities
 from src.services.export_artifact_service import write_json_export_artifact, write_text_export_artifact
 from src.services.event_export_service import build_event_export_bundle
 from src.services.event_fusion_service import materialize_fused_events
+from src.services.event_service import create_event as create_event_record
+from src.services.event_service import list_events as list_event_records
+from src.services.geofence_service import create_geofence, list_geofences
 from src.services.import_service import import_local_path
 from src.services.layer_service import create_data_layer, list_data_layers
 from src.services.observation_service import build_cross_verification_summaries, query_observations
 from src.services.operations_report_service import build_operations_report
 from src.services.redaction_service import enforce_export_redaction
+from src.services.runtime_bundle_service import export_runtime_bundle, restore_runtime_bundle
 from src.services.runtime_snapshot_service import build_runtime_snapshot
 from src.services.runtime_snapshot_service import restore_runtime_snapshot
 from src.services.scheduler_runtime_service import run_scheduler_worker
@@ -165,7 +197,11 @@ from src.services.source_service import (
     run_source_definition,
     update_source_definition,
 )
-from src.services.trust_service import seed_default_integrity_sources
+from src.services.trust_service import (
+    create_source_trust_profile,
+    seed_default_integrity_sources,
+    update_source_trust_profile,
+)
 
 app = typer.Typer(help="11Writer Forte backend operator CLI")
 
@@ -259,6 +295,17 @@ def parse_json_value_option(value: str | None, option_name: str) -> object | Non
         return json.loads(value)
     except json.JSONDecodeError as exc:
         raise typer.BadParameter(f"{option_name} must be valid JSON.") from exc
+
+
+def parse_optional_bool_option(value: str | None, option_name: str) -> bool | None:
+    if value is None:
+        return None
+    normalized = value.strip().lower()
+    if normalized in {"true", "1", "yes", "on"}:
+        return True
+    if normalized in {"false", "0", "no", "off"}:
+        return False
+    raise typer.BadParameter(f"{option_name} must be a boolean value.")
 
 
 def echo_model_json(schema_cls: type, value: object) -> None:
@@ -502,8 +549,103 @@ def seed_integrity() -> None:
     init_db()
     session = get_session_factory()()
     try:
-        created = seed_default_integrity_sources(session)
+        created = seed_default_integrity_sources(session, actor="cli_trust")
         typer.echo(f"seeded {len(created)} integrity domains")
+    finally:
+        session.close()
+
+
+@app.command("show-codex-agent-command")
+def show_codex_agent_command(
+    objective: str,
+    model: str | None = None,
+    reasoning_effort: str | None = None,
+) -> None:
+    try:
+        typer.echo(json.dumps(build_codex_exec_command(
+            objective,
+            model=model,
+            reasoning_effort=reasoning_effort,
+        )))
+    except CodexAgentError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+
+@app.command("show-codex-mcp-command")
+def show_codex_mcp_command() -> None:
+    typer.echo(json.dumps(build_codex_mcp_add_command()))
+
+
+@app.command("configure-codex-agent")
+def configure_codex_agent() -> None:
+    """Register Forte's read-only MCP evidence server with the local Codex CLI."""
+    try:
+        result = register_codex_mcp()
+    except CodexAgentError as exc:
+        typer.echo(f"Codex MCP registration failed: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    print_banner()
+    typer.echo(result)
+
+
+@app.command("research")
+def research(
+    objective: str,
+    model: str | None = None,
+    reasoning_effort: str | None = None,
+) -> None:
+    """Run a bounded Codex investigation against local Forte evidence."""
+    init_db()
+    session = get_session_factory()()
+    try:
+        result = run_codex_research(
+            session,
+            objective,
+            model=model,
+            reasoning_effort=reasoning_effort,
+        )
+    except CodexAgentError as exc:
+        typer.echo(f"research failed: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    finally:
+        session.close()
+    print_banner()
+    typer.echo(
+        f"model={result.model} effort={result.reasoning_effort} storage_object={result.storage_object_id}"
+    )
+    typer.echo(f"report={result.report_path}")
+    typer.echo(result.output_text)
+
+
+@app.command("add-trust-profile")
+def add_trust_profile(
+    domain: str,
+    trust_level: str = "neutral",
+    approval_policy: str = "manual_review",
+    integrity_source: bool = False,
+    notes: str = "",
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        profile = create_source_trust_profile(
+            session,
+            SourceTrustProfileCreate(
+                domain=domain,
+                trust_level=trust_level,  # type: ignore[arg-type]
+                approval_policy=approval_policy,  # type: ignore[arg-type]
+                integrity_source=integrity_source,
+                notes=notes,
+            ),
+            actor="cli_trust",
+        )
+        print_banner()
+        typer.echo(
+            f"{profile.trust_profile_id} | {profile.domain} | {profile.trust_level} | "
+            f"{profile.approval_policy} | integrity={profile.integrity_source}"
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
     finally:
         session.close()
 
@@ -521,6 +663,41 @@ def trust_profiles() -> None:
             typer.echo(
                 f"{profile.domain} | {profile.trust_level} | {profile.approval_policy} | integrity={profile.integrity_source}"
             )
+    finally:
+        session.close()
+
+
+@app.command("update-trust-profile")
+def update_trust_profile(
+    trust_profile_id: int,
+    domain: str | None = None,
+    trust_level: str | None = None,
+    approval_policy: str | None = None,
+    integrity_source: bool | None = None,
+    notes: str | None = None,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        profile = update_source_trust_profile(
+            session,
+            trust_profile_id,
+            SourceTrustProfileUpdate(
+                domain=domain,
+                trust_level=trust_level,  # type: ignore[arg-type]
+                approval_policy=approval_policy,  # type: ignore[arg-type]
+                integrity_source=integrity_source,
+                notes=notes,
+            ),
+            actor="cli_trust",
+        )
+        print_banner()
+        typer.echo(
+            f"{profile.trust_profile_id} | {profile.domain} | {profile.trust_level} | "
+            f"{profile.approval_policy} | integrity={profile.integrity_source}"
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
     finally:
         session.close()
 
@@ -595,6 +772,52 @@ def list_layers_command() -> None:
         for row in rows:
             typer.echo(
                 f"{row.layer_id} | {row.key} | {row.name} | resolution={row.temporal_resolution} | latency={row.data_latency}"
+            )
+    finally:
+        session.close()
+
+
+@app.command("add-geofence")
+def add_geofence(
+    name: str,
+    geometry_json: str,
+    description: str = "",
+    rule_expression: str = "",
+    enabled: bool = True,
+) -> None:
+    geometry_geojson = parse_json_object_option(geometry_json, "geometry_json")
+    if geometry_geojson is None:
+        raise typer.BadParameter("geometry_json must decode to a JSON object.")
+    init_db()
+    session = get_session_factory()()
+    try:
+        geofence = create_geofence(
+            session,
+            GeofenceCreate(
+                name=name,
+                description=description,
+                geometry_geojson=geometry_geojson,
+                rule_expression=rule_expression,
+                enabled=enabled,
+            ),
+            actor="cli",
+        )
+        print_banner()
+        typer.echo(f"geofence {geofence.geofence_id} created for {geofence.name}")
+    finally:
+        session.close()
+
+
+@app.command("list-geofences")
+def list_geofences_command() -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        rows = list_geofences(session)
+        print_banner()
+        for row in rows:
+            typer.echo(
+                f"{row.geofence_id} | enabled={row.enabled} | {row.name} | {row.rule_expression}"
             )
     finally:
         session.close()
@@ -741,6 +964,358 @@ def add_source_http_xml(
             SourceDefinitionCreate(
                 name=name,
                 source_kind="http_xml",
+                layer_key=layer,
+                target_uri=target_uri,
+                notes=notes,
+                integrity_source=integrity_source,
+                metadata_json=build_http_source_metadata(
+                    timeout_seconds=timeout_seconds,
+                    retry_attempts=retry_attempts,
+                    retry_backoff_seconds=retry_backoff_seconds,
+                    skip_unchanged=skip_unchanged,
+                    header=header,
+                    basic_auth_username=basic_auth_username,
+                    basic_auth_password_env=basic_auth_password_env,
+                ),
+            ),
+        )
+        print_banner()
+        typer.echo(f"source {source.source_id} created for {source.target_uri}")
+    finally:
+        session.close()
+
+
+@app.command("add-source-http-jsonl")
+def add_source_http_jsonl(
+    name: str,
+    target_uri: str,
+    layer: str,
+    notes: str = "",
+    integrity_source: bool = False,
+    timeout_seconds: float = 30.0,
+    retry_attempts: int = 3,
+    retry_backoff_seconds: float = 0.0,
+    skip_unchanged: bool = True,
+    header: list[str] = typer.Option(default_factory=list),
+    basic_auth_username: str | None = None,
+    basic_auth_password_env: str | None = None,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        source = create_source_definition(
+            session,
+            SourceDefinitionCreate(
+                name=name,
+                source_kind="http_jsonl",
+                layer_key=layer,
+                target_uri=target_uri,
+                notes=notes,
+                integrity_source=integrity_source,
+                metadata_json=build_http_source_metadata(
+                    timeout_seconds=timeout_seconds,
+                    retry_attempts=retry_attempts,
+                    retry_backoff_seconds=retry_backoff_seconds,
+                    skip_unchanged=skip_unchanged,
+                    header=header,
+                    basic_auth_username=basic_auth_username,
+                    basic_auth_password_env=basic_auth_password_env,
+                ),
+            ),
+        )
+        print_banner()
+        typer.echo(f"source {source.source_id} created for {source.target_uri}")
+    finally:
+        session.close()
+
+
+@app.command("add-source-http-csv")
+def add_source_http_csv(
+    name: str,
+    target_uri: str,
+    layer: str,
+    notes: str = "",
+    integrity_source: bool = False,
+    timeout_seconds: float = 30.0,
+    retry_attempts: int = 3,
+    retry_backoff_seconds: float = 0.0,
+    skip_unchanged: bool = True,
+    header: list[str] = typer.Option(default_factory=list),
+    basic_auth_username: str | None = None,
+    basic_auth_password_env: str | None = None,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        source = create_source_definition(
+            session,
+            SourceDefinitionCreate(
+                name=name,
+                source_kind="http_csv",
+                layer_key=layer,
+                target_uri=target_uri,
+                notes=notes,
+                integrity_source=integrity_source,
+                metadata_json=build_http_source_metadata(
+                    timeout_seconds=timeout_seconds,
+                    retry_attempts=retry_attempts,
+                    retry_backoff_seconds=retry_backoff_seconds,
+                    skip_unchanged=skip_unchanged,
+                    header=header,
+                    basic_auth_username=basic_auth_username,
+                    basic_auth_password_env=basic_auth_password_env,
+                ),
+            ),
+        )
+        print_banner()
+        typer.echo(f"source {source.source_id} created for {source.target_uri}")
+    finally:
+        session.close()
+
+
+@app.command("add-source-rss")
+def add_source_rss(
+    name: str,
+    target_uri: str,
+    layer: str,
+    notes: str = "",
+    integrity_source: bool = False,
+    timeout_seconds: float = 30.0,
+    retry_attempts: int = 3,
+    retry_backoff_seconds: float = 0.0,
+    skip_unchanged: bool = True,
+    header: list[str] = typer.Option(default_factory=list),
+    basic_auth_username: str | None = None,
+    basic_auth_password_env: str | None = None,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        source = create_source_definition(
+            session,
+            SourceDefinitionCreate(
+                name=name,
+                source_kind="rss",
+                layer_key=layer,
+                target_uri=target_uri,
+                notes=notes,
+                integrity_source=integrity_source,
+                metadata_json=build_http_source_metadata(
+                    timeout_seconds=timeout_seconds,
+                    retry_attempts=retry_attempts,
+                    retry_backoff_seconds=retry_backoff_seconds,
+                    skip_unchanged=skip_unchanged,
+                    header=header,
+                    basic_auth_username=basic_auth_username,
+                    basic_auth_password_env=basic_auth_password_env,
+                ),
+            ),
+        )
+        print_banner()
+        typer.echo(f"source {source.source_id} created for {source.target_uri}")
+    finally:
+        session.close()
+
+
+@app.command("add-source-arcgis-feature-json")
+def add_source_arcgis_feature_json(
+    name: str,
+    target_uri: str,
+    layer: str,
+    notes: str = "",
+    integrity_source: bool = False,
+    timeout_seconds: float = 30.0,
+    retry_attempts: int = 3,
+    retry_backoff_seconds: float = 0.0,
+    skip_unchanged: bool = True,
+    header: list[str] = typer.Option(default_factory=list),
+    basic_auth_username: str | None = None,
+    basic_auth_password_env: str | None = None,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        source = create_source_definition(
+            session,
+            SourceDefinitionCreate(
+                name=name,
+                source_kind="arcgis_feature_json",
+                layer_key=layer,
+                target_uri=target_uri,
+                notes=notes,
+                integrity_source=integrity_source,
+                metadata_json=build_http_source_metadata(
+                    timeout_seconds=timeout_seconds,
+                    retry_attempts=retry_attempts,
+                    retry_backoff_seconds=retry_backoff_seconds,
+                    skip_unchanged=skip_unchanged,
+                    header=header,
+                    basic_auth_username=basic_auth_username,
+                    basic_auth_password_env=basic_auth_password_env,
+                ),
+            ),
+        )
+        print_banner()
+        typer.echo(f"source {source.source_id} created for {source.target_uri}")
+    finally:
+        session.close()
+
+
+@app.command("add-source-ckan-package-search")
+def add_source_ckan_package_search(
+    name: str,
+    target_uri: str,
+    layer: str,
+    notes: str = "",
+    integrity_source: bool = False,
+    timeout_seconds: float = 30.0,
+    retry_attempts: int = 3,
+    retry_backoff_seconds: float = 0.0,
+    skip_unchanged: bool = True,
+    header: list[str] = typer.Option(default_factory=list),
+    basic_auth_username: str | None = None,
+    basic_auth_password_env: str | None = None,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        source = create_source_definition(
+            session,
+            SourceDefinitionCreate(
+                name=name,
+                source_kind="ckan_package_search",
+                layer_key=layer,
+                target_uri=target_uri,
+                notes=notes,
+                integrity_source=integrity_source,
+                metadata_json=build_http_source_metadata(
+                    timeout_seconds=timeout_seconds,
+                    retry_attempts=retry_attempts,
+                    retry_backoff_seconds=retry_backoff_seconds,
+                    skip_unchanged=skip_unchanged,
+                    header=header,
+                    basic_auth_username=basic_auth_username,
+                    basic_auth_password_env=basic_auth_password_env,
+                ),
+            ),
+        )
+        print_banner()
+        typer.echo(f"source {source.source_id} created for {source.target_uri}")
+    finally:
+        session.close()
+
+
+@app.command("add-source-web-search")
+def add_source_web_search(
+    name: str,
+    target_uri: str,
+    layer: str,
+    notes: str = "",
+    integrity_source: bool = False,
+    timeout_seconds: float = 30.0,
+    retry_attempts: int = 3,
+    retry_backoff_seconds: float = 0.0,
+    skip_unchanged: bool = True,
+    header: list[str] = typer.Option(default_factory=list),
+    basic_auth_username: str | None = None,
+    basic_auth_password_env: str | None = None,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        source = create_source_definition(
+            session,
+            SourceDefinitionCreate(
+                name=name,
+                source_kind="web_search",
+                layer_key=layer,
+                target_uri=target_uri,
+                notes=notes,
+                integrity_source=integrity_source,
+                metadata_json=build_http_source_metadata(
+                    timeout_seconds=timeout_seconds,
+                    retry_attempts=retry_attempts,
+                    retry_backoff_seconds=retry_backoff_seconds,
+                    skip_unchanged=skip_unchanged,
+                    header=header,
+                    basic_auth_username=basic_auth_username,
+                    basic_auth_password_env=basic_auth_password_env,
+                ),
+            ),
+        )
+        print_banner()
+        typer.echo(f"source {source.source_id} created for {source.target_uri}")
+    finally:
+        session.close()
+
+
+@app.command("add-source-web-crawl")
+def add_source_web_crawl(
+    name: str,
+    target_uri: str,
+    layer: str,
+    notes: str = "",
+    integrity_source: bool = False,
+    timeout_seconds: float = 30.0,
+    retry_attempts: int = 3,
+    retry_backoff_seconds: float = 0.0,
+    skip_unchanged: bool = True,
+    header: list[str] = typer.Option(default_factory=list),
+    basic_auth_username: str | None = None,
+    basic_auth_password_env: str | None = None,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        source = create_source_definition(
+            session,
+            SourceDefinitionCreate(
+                name=name,
+                source_kind="web_crawl",
+                layer_key=layer,
+                target_uri=target_uri,
+                notes=notes,
+                integrity_source=integrity_source,
+                metadata_json=build_http_source_metadata(
+                    timeout_seconds=timeout_seconds,
+                    retry_attempts=retry_attempts,
+                    retry_backoff_seconds=retry_backoff_seconds,
+                    skip_unchanged=skip_unchanged,
+                    header=header,
+                    basic_auth_username=basic_auth_username,
+                    basic_auth_password_env=basic_auth_password_env,
+                ),
+            ),
+        )
+        print_banner()
+        typer.echo(f"source {source.source_id} created for {source.target_uri}")
+    finally:
+        session.close()
+
+
+@app.command("add-source-web-discovery")
+def add_source_web_discovery(
+    name: str,
+    target_uri: str,
+    layer: str,
+    notes: str = "",
+    integrity_source: bool = False,
+    timeout_seconds: float = 30.0,
+    retry_attempts: int = 3,
+    retry_backoff_seconds: float = 0.0,
+    skip_unchanged: bool = True,
+    header: list[str] = typer.Option(default_factory=list),
+    basic_auth_username: str | None = None,
+    basic_auth_password_env: str | None = None,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        source = create_source_definition(
+            session,
+            SourceDefinitionCreate(
+                name=name,
+                source_kind="web_discovery",
                 layer_key=layer,
                 target_uri=target_uri,
                 notes=notes,
@@ -1493,6 +2068,46 @@ def export_camera_summary_command(
         session.close()
 
 
+@app.command("create-event")
+def create_event_command(
+    slug: str,
+    title: str,
+    summary: str = "",
+    occurred_at: str | None = None,
+    status: str = "open",
+    redaction_level: str = "public",
+    metadata_json: str | None = None,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        parsed_metadata = parse_json_object_option(metadata_json, "--metadata-json") or {}
+        occurred_at_value = (
+            TypeAdapter(datetime).validate_python(occurred_at)
+            if occurred_at is not None
+            else None
+        )
+        event = create_event_record(
+            session,
+            EventCreate(
+                slug=slug,
+                title=title,
+                summary=summary,
+                occurred_at=occurred_at_value,
+                status=status,
+                redaction_level=redaction_level,
+                metadata_json=parsed_metadata,
+            ),
+            actor="cli",
+        )
+        print_banner()
+        typer.echo(f"event {event.event_id} created for slug={event.slug}")
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
 @app.command("fuse-events")
 def fuse_events_command(
     bbox: str | None = None,
@@ -1534,7 +2149,7 @@ def list_events() -> None:
     init_db()
     session = get_session_factory()()
     try:
-        rows = list(session.scalars(select(EventORM).order_by(EventORM.created_at.desc())))
+        rows = list_event_records(session)
         print_banner()
         for row in rows:
             typer.echo(f"{row.event_id} | {row.slug} | {row.title} | {row.redaction_level}")
@@ -1806,12 +2421,58 @@ def cross_verify_command(
         session.close()
 
 
-@app.command("list-alerts")
-def list_alerts() -> None:
+@app.command("create-alert")
+def create_alert_command(
+    message: str,
+    severity: str = "info",
+    status: str = "open",
+    geofence_id: int | None = None,
+    event_id: int | None = None,
+    dedupe_key: str | None = None,
+    trigger_basis_json: str | None = None,
+) -> None:
     init_db()
     session = get_session_factory()()
     try:
-        alerts = list(session.scalars(select(AlertORM).order_by(AlertORM.created_at.desc())))
+        parsed_trigger_basis = (
+            parse_json_object_option(trigger_basis_json, "--trigger-basis-json") or {}
+        )
+        alert = create_alert_record(
+            session,
+            AlertCreate(
+                event_id=event_id,
+                geofence_id=geofence_id,
+                severity=severity,
+                status=status,
+                dedupe_key=dedupe_key,
+                message=message,
+                trigger_basis_json=parsed_trigger_basis,
+            ),
+            actor="cli",
+        )
+        print_banner()
+        typer.echo(
+            f"alert={alert.alert_id} geofence={alert.geofence_id} event={alert.event_id} severity={alert.severity} status={alert.status}"
+        )
+    finally:
+        session.close()
+
+
+@app.command("list-alerts")
+def list_alerts(
+    status: str | None = None,
+    geofence_id: int | None = None,
+    event_id: int | None = None,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        alerts = list_alert_records(
+            session,
+            status=status,
+            geofence_id=geofence_id,
+            event_id=event_id,
+        )
         print_banner()
         for alert in alerts:
             typer.echo(
@@ -1831,48 +2492,54 @@ def update_alert_command(
     init_db()
     session = get_session_factory()()
     try:
-        alert = session.get(AlertORM, alert_id)
-        if alert is None:
-            raise typer.BadParameter(f"Alert {alert_id} does not exist.")
-        previous_status = alert.status
-        alert.status = status
-        if severity is not None:
-            alert.severity = severity
-        alert.disposition_note = disposition_note
-        session.add(
-            CustodyLogORM(
-                object_type="alert",
-                object_id=str(alert.alert_id),
-                action="alert_updated",
-                actor="cli",
-                details_json={
-                    "previous_status": previous_status,
-                    "status": alert.status,
-                    "severity": alert.severity,
-                    "disposition_note": alert.disposition_note,
-                },
-            )
+        alert = update_alert_record(
+            session,
+            alert_id,
+            AlertUpdate(
+                status=status,
+                severity=severity,
+                disposition_note=disposition_note,
+            ),
+            actor="cli",
         )
-        session.commit()
-        session.refresh(alert)
         print_banner()
         typer.echo(
             f"alert={alert.alert_id} status={alert.status} severity={alert.severity} note={alert.disposition_note}"
         )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
     finally:
         session.close()
 
-
 @app.command("list-custody")
-def list_custody(limit: int = 20) -> None:
+def list_custody(
+    limit: int = 20,
+    object_type: str | None = None,
+    object_id: str | None = None,
+    action: str | None = None,
+    actor: str | None = None,
+    since: datetime | None = None,
+    until: datetime | None = None,
+) -> None:
     init_db()
     session = get_session_factory()()
     try:
-        statement = select(CustodyLogORM).order_by(CustodyLogORM.created_at.desc()).limit(limit)
-        rows = list(session.scalars(statement))
+        rows = list_custody_logs(
+            session,
+            object_type=object_type,
+            object_id=object_id,
+            action=action,
+            actor=actor,
+            since=since,
+            until=until,
+            limit=limit,
+        )
         print_banner()
         for row in rows:
-            typer.echo(f"{row.custody_log_id} | {row.object_type} | {row.action} | {row.actor}")
+            typer.echo(
+                f"{row.custody_log_id} | {row.object_type} | {row.object_id} | "
+                f"{row.action} | {row.actor} | {row.created_at}"
+            )
     finally:
         session.close()
 
@@ -2226,6 +2893,23 @@ def export_runtime_snapshot_command(output_path: Path) -> None:
         session.close()
 
 
+@app.command("export-runtime-bundle")
+def export_runtime_bundle_command(output_path: Path) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        result = export_runtime_bundle(session, output_path, actor="cli_export")
+        print_banner()
+        typer.echo(
+            "exported runtime bundle "
+            f"| files={result['data_file_count']} "
+            f"| sha256={result['bundle_sha256']} "
+            f"| path={result['output_path']}"
+        )
+    finally:
+        session.close()
+
+
 @app.command("restore-runtime-snapshot")
 def restore_runtime_snapshot_command(
     input_path: Path,
@@ -2251,6 +2935,35 @@ def restore_runtime_snapshot_command(
             f"| total_records={serializable['total_records']}"
         )
         for item in serializable["row_counts"]:
+            typer.echo(f"{item['table_name']}: {item['row_count']}")
+    finally:
+        session.close()
+
+
+@app.command("restore-runtime-bundle")
+def restore_runtime_bundle_command(
+    input_path: Path,
+    replace_existing: bool = False,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        try:
+            result = restore_runtime_bundle(
+                session,
+                input_path,
+                replace_existing=replace_existing,
+            )
+        except ValueError as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        print_banner()
+        typer.echo(
+            "restored runtime bundle "
+            f"| replaced_existing={result['replaced_existing']} "
+            f"| total_records={result['total_records']} "
+            f"| restored_files={result['restored_file_count']}"
+        )
+        for item in result["row_counts"]:
             typer.echo(f"{item['table_name']}: {item['row_count']}")
     finally:
         session.close()
@@ -2344,6 +3057,34 @@ def add_source_sync_schedule(
         )
         print_banner()
         typer.echo(f"scheduled task {task.task_id} created for source sync")
+    finally:
+        session.close()
+
+
+@app.command("add-integrity-seed-schedule")
+def add_integrity_seed_schedule(
+    name: str,
+    interval_seconds: int,
+    notes: str = "",
+    retry_attempts: int = 1,
+    retry_backoff_seconds: float = 0.0,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        task = create_scheduled_task(
+            session,
+            ScheduledTaskCreate(
+                name=name,
+                task_type="integrity_seed",
+                interval_seconds=interval_seconds,
+                retry_attempts=retry_attempts,
+                retry_backoff_seconds=retry_backoff_seconds,
+                notes=notes,
+            ),
+        )
+        print_banner()
+        typer.echo(f"scheduled task {task.task_id} created for integrity seeding")
     finally:
         session.close()
 
@@ -2964,6 +3705,150 @@ def create_discovery_campaign_command(
         session.close()
 
 
+@app.command("update-discovery-campaign")
+def update_discovery_campaign_command(
+    campaign_id: int,
+    name: str | None = None,
+    description: str | None = None,
+    mode: str | None = None,
+    status: str | None = None,
+    enabled: str | None = None,
+    layer: str | None = None,
+    query_text: str | None = None,
+    modes_json: str | None = None,
+    query_strings_json: str | None = None,
+    search_templates_json: str | None = None,
+    format_targets_json: str | None = None,
+    seed_urls_json: str | None = None,
+    locale_variants_json: str | None = None,
+    language_variants_json: str | None = None,
+    domain_allowlist_json: str | None = None,
+    domain_denylist_json: str | None = None,
+    target_geography_json: str | None = None,
+    entity_seeds_json: str | None = None,
+    historical_backfill: str | None = None,
+    recency_days: int | None = None,
+    max_depth: int | None = None,
+    max_pages: int | None = None,
+    max_candidates: int | None = None,
+    request_json: str | None = None,
+    crawl_policy_json: str | None = None,
+    scoring_weights_json: str | None = None,
+    schedule_json: str | None = None,
+    metadata_json: str | None = None,
+) -> None:
+    payload_data: dict[str, object] = {}
+    if name is not None:
+        payload_data["name"] = name
+    if description is not None:
+        payload_data["description"] = description
+    if mode is not None:
+        payload_data["mode"] = mode
+    if status is not None:
+        payload_data["status"] = status
+    parsed_enabled = parse_optional_bool_option(enabled, "--enabled")
+    if parsed_enabled is not None:
+        payload_data["enabled"] = parsed_enabled
+    if layer is not None:
+        payload_data["layer_key"] = layer
+    if query_text is not None:
+        payload_data["query_text"] = query_text
+    if modes_json is not None:
+        payload_data["modes_json"] = parse_json_value_option(
+            modes_json, "--modes-json"
+        )
+    if query_strings_json is not None:
+        payload_data["query_strings_json"] = parse_json_value_option(
+            query_strings_json, "--query-strings-json"
+        )
+    if search_templates_json is not None:
+        payload_data["search_templates_json"] = parse_json_value_option(
+            search_templates_json, "--search-templates-json"
+        )
+    if format_targets_json is not None:
+        payload_data["format_targets_json"] = parse_json_value_option(
+            format_targets_json, "--format-targets-json"
+        )
+    if seed_urls_json is not None:
+        payload_data["seed_urls_json"] = parse_json_value_option(
+            seed_urls_json, "--seed-urls-json"
+        )
+    if locale_variants_json is not None:
+        payload_data["locale_variants_json"] = parse_json_value_option(
+            locale_variants_json, "--locale-variants-json"
+        )
+    if language_variants_json is not None:
+        payload_data["language_variants_json"] = parse_json_value_option(
+            language_variants_json, "--language-variants-json"
+        )
+    if domain_allowlist_json is not None:
+        payload_data["domain_allowlist_json"] = parse_json_value_option(
+            domain_allowlist_json, "--domain-allowlist-json"
+        )
+    if domain_denylist_json is not None:
+        payload_data["domain_denylist_json"] = parse_json_value_option(
+            domain_denylist_json, "--domain-denylist-json"
+        )
+    parsed_target_geography = parse_json_object_option(
+        target_geography_json, "--target-geography-json"
+    )
+    if parsed_target_geography is not None:
+        payload_data["target_geography_json"] = parsed_target_geography
+    if entity_seeds_json is not None:
+        payload_data["entity_seeds_json"] = parse_json_value_option(
+            entity_seeds_json, "--entity-seeds-json"
+        )
+    parsed_historical_backfill = parse_optional_bool_option(
+        historical_backfill, "--historical-backfill"
+    )
+    if parsed_historical_backfill is not None:
+        payload_data["historical_backfill"] = parsed_historical_backfill
+    if recency_days is not None:
+        payload_data["recency_days"] = recency_days
+    if max_depth is not None:
+        payload_data["max_depth"] = max_depth
+    if max_pages is not None:
+        payload_data["max_pages"] = max_pages
+    if max_candidates is not None:
+        payload_data["max_candidates"] = max_candidates
+    parsed_request = parse_json_object_option(request_json, "--request-json")
+    if parsed_request is not None:
+        payload_data["request_json"] = parsed_request
+    parsed_crawl_policy = parse_json_object_option(
+        crawl_policy_json, "--crawl-policy-json"
+    )
+    if parsed_crawl_policy is not None:
+        payload_data["crawl_policy_json"] = parsed_crawl_policy
+    parsed_scoring_weights = parse_json_object_option(
+        scoring_weights_json, "--scoring-weights-json"
+    )
+    if parsed_scoring_weights is not None:
+        payload_data["scoring_weights_json"] = parsed_scoring_weights
+    parsed_schedule = parse_json_object_option(schedule_json, "--schedule-json")
+    if parsed_schedule is not None:
+        payload_data["schedule_json"] = parsed_schedule
+    parsed_metadata = parse_json_object_option(metadata_json, "--metadata-json")
+    if parsed_metadata is not None:
+        payload_data["metadata_json"] = parsed_metadata
+
+    payload = DiscoveryCampaignUpdate(**payload_data)
+    init_db()
+    session = get_session_factory()()
+    try:
+        campaign = update_discovery_campaign(
+            session,
+            campaign_id,
+            payload,
+            actor="cli_discovery",
+        )
+        print_banner()
+        echo_model_json(DiscoveryCampaignRead, campaign)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
 @app.command("run-discovery")
 def run_discovery_command(
     campaign_id: int,
@@ -3418,6 +4303,172 @@ def diff_discovery_inventories_command(
         session.close()
 
 
+@app.command("list-discovery-domain-policies")
+def list_discovery_domain_policies_command(
+    domain: str | None = None,
+    limit: int = 200,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        rows = list_domain_policies(session, domain=domain, limit=limit)
+        adapter = TypeAdapter(list[DiscoveryDomainPolicyRead])
+        serializable = adapter.dump_python(adapter.validate_python(rows), mode="json")
+        print_banner()
+        for row in serializable:
+            typer.echo(
+                f"{row['domain_policy_id']} | {row['normalized_domain']} | "
+                f"{row['policy']} | robots={row['robots_mode']} | enabled={row['enabled']} | "
+                f"subdomains={row['allow_subdomains']} | concurrency={row['max_concurrency']}"
+            )
+    finally:
+        session.close()
+
+
+@app.command("upsert-discovery-domain-policy")
+def upsert_discovery_domain_policy_command(
+    normalized_domain: str,
+    policy: str = "allow",
+    robots_mode: str = "respect",
+    enabled: bool = typer.Option(True, "--enabled/--disabled"),
+    allow_subdomains: bool = typer.Option(True, "--allow-subdomains/--no-allow-subdomains"),
+    crawl_delay_seconds: float = 1.0,
+    max_concurrency: int = 1,
+    max_depth: int = 2,
+    max_pages_per_run: int = 100,
+    max_response_bytes: int = 5_000_000,
+    request_timeout_seconds: float = 20.0,
+    retry_attempts: int = 2,
+    retry_backoff_seconds: float = 1.0,
+    allowed_path_patterns_json: str | None = None,
+    denied_path_patterns_json: str | None = None,
+    allowed_content_types_json: str | None = None,
+    notes: str = "",
+    metadata_json: str | None = None,
+) -> None:
+    allowed_path_patterns = parse_json_value_option(
+        allowed_path_patterns_json, "--allowed-path-patterns-json"
+    )
+    denied_path_patterns = parse_json_value_option(
+        denied_path_patterns_json, "--denied-path-patterns-json"
+    )
+    allowed_content_types = parse_json_value_option(
+        allowed_content_types_json, "--allowed-content-types-json"
+    )
+    metadata = parse_json_object_option(metadata_json, "--metadata-json") or {}
+    payload = DiscoveryDomainPolicyCreate(
+        normalized_domain=normalized_domain,
+        policy=policy,
+        robots_mode=robots_mode,
+        enabled=enabled,
+        allow_subdomains=allow_subdomains,
+        crawl_delay_seconds=crawl_delay_seconds,
+        max_concurrency=max_concurrency,
+        max_depth=max_depth,
+        max_pages_per_run=max_pages_per_run,
+        max_response_bytes=max_response_bytes,
+        request_timeout_seconds=request_timeout_seconds,
+        retry_attempts=retry_attempts,
+        retry_backoff_seconds=retry_backoff_seconds,
+        allowed_path_patterns_json=(
+            allowed_path_patterns if isinstance(allowed_path_patterns, list) else []
+        ),
+        denied_path_patterns_json=(
+            denied_path_patterns if isinstance(denied_path_patterns, list) else []
+        ),
+        allowed_content_types_json=(
+            allowed_content_types if isinstance(allowed_content_types, list) else []
+        ),
+        notes=notes,
+        metadata_json=metadata,
+    )
+    init_db()
+    session = get_session_factory()()
+    try:
+        record = upsert_domain_policy(session, payload, actor="cli_discovery")
+        print_banner()
+        echo_model_json(DiscoveryDomainPolicyRead, record)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.command("update-discovery-domain-policy")
+def update_discovery_domain_policy_command(
+    normalized_domain: str,
+    policy: str | None = None,
+    robots_mode: str | None = None,
+    enabled: str | None = None,
+    allow_subdomains: str | None = None,
+    crawl_delay_seconds: float | None = None,
+    max_concurrency: int | None = None,
+    max_depth: int | None = None,
+    max_pages_per_run: int | None = None,
+    max_response_bytes: int | None = None,
+    request_timeout_seconds: float | None = None,
+    retry_attempts: int | None = None,
+    retry_backoff_seconds: float | None = None,
+    allowed_path_patterns_json: str | None = None,
+    denied_path_patterns_json: str | None = None,
+    allowed_content_types_json: str | None = None,
+    notes: str | None = None,
+    metadata_json: str | None = None,
+) -> None:
+    allowed_path_patterns = parse_json_value_option(
+        allowed_path_patterns_json, "--allowed-path-patterns-json"
+    )
+    denied_path_patterns = parse_json_value_option(
+        denied_path_patterns_json, "--denied-path-patterns-json"
+    )
+    allowed_content_types = parse_json_value_option(
+        allowed_content_types_json, "--allowed-content-types-json"
+    )
+    metadata = parse_json_object_option(metadata_json, "--metadata-json")
+    payload = DiscoveryDomainPolicyUpdate(
+        policy=policy,
+        robots_mode=robots_mode,
+        enabled=parse_optional_bool_option(enabled, "--enabled"),
+        allow_subdomains=parse_optional_bool_option(
+            allow_subdomains, "--allow-subdomains"
+        ),
+        crawl_delay_seconds=crawl_delay_seconds,
+        max_concurrency=max_concurrency,
+        max_depth=max_depth,
+        max_pages_per_run=max_pages_per_run,
+        max_response_bytes=max_response_bytes,
+        request_timeout_seconds=request_timeout_seconds,
+        retry_attempts=retry_attempts,
+        retry_backoff_seconds=retry_backoff_seconds,
+        allowed_path_patterns_json=(
+            allowed_path_patterns if isinstance(allowed_path_patterns, list) else None
+        ),
+        denied_path_patterns_json=(
+            denied_path_patterns if isinstance(denied_path_patterns, list) else None
+        ),
+        allowed_content_types_json=(
+            allowed_content_types if isinstance(allowed_content_types, list) else None
+        ),
+        notes=notes,
+        metadata_json=metadata,
+    )
+    init_db()
+    session = get_session_factory()()
+    try:
+        record = update_domain_policy(
+            session,
+            normalized_domain,
+            payload,
+            actor="cli_discovery",
+        )
+        print_banner()
+        echo_model_json(DiscoveryDomainPolicyRead, record)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
 @app.command("add-discovery-schedule")
 def add_discovery_schedule_command(
     name: str,
@@ -3460,5 +4511,96 @@ def add_discovery_schedule_command(
         session.close()
 
 
+@app.command("add-discovery-health-scan-schedule")
+def add_discovery_health_scan_schedule_command(
+    name: str,
+    interval_seconds: int,
+    candidate_id: int | None = None,
+    normalized_domain: str | None = None,
+    campaign_id: int | None = None,
+    limit: int = 100,
+    notes: str = "",
+    retry_attempts: int = 1,
+    retry_backoff_seconds: float = 0.0,
+) -> None:
+    payload_json: dict[str, object] = {"limit": limit}
+    if candidate_id is not None:
+        payload_json["candidate_id"] = candidate_id
+    if normalized_domain is not None:
+        payload_json["normalized_domain"] = normalized_domain
+    if campaign_id is not None:
+        payload_json["campaign_id"] = campaign_id
+    init_db()
+    session = get_session_factory()()
+    try:
+        task = create_scheduled_task(
+            session,
+            ScheduledTaskCreate(
+                name=name,
+                task_type="discovery_health_scan",
+                interval_seconds=interval_seconds,
+                retry_attempts=retry_attempts,
+                retry_backoff_seconds=retry_backoff_seconds,
+                notes=notes,
+                payload_json=payload_json,
+            ),
+        )
+        print_banner()
+        typer.echo(f"scheduled task {task.task_id} created for discovery health scans")
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.command("add-discovery-revisit-schedule")
+def add_discovery_revisit_schedule_command(
+    name: str,
+    interval_seconds: int,
+    candidate_id: int | None = None,
+    normalized_domain: str | None = None,
+    campaign_id: int | None = None,
+    force: bool = False,
+    include_suppressed: bool = False,
+    priority: float = 0.0,
+    notes: str = "",
+    retry_attempts: int = 1,
+    retry_backoff_seconds: float = 0.0,
+) -> None:
+    payload_json: dict[str, object] = {
+        "force": force,
+        "include_suppressed": include_suppressed,
+        "priority": priority,
+    }
+    if candidate_id is not None:
+        payload_json["candidate_id"] = candidate_id
+    if normalized_domain is not None:
+        payload_json["normalized_domain"] = normalized_domain
+    if campaign_id is not None:
+        payload_json["campaign_id"] = campaign_id
+    init_db()
+    session = get_session_factory()()
+    try:
+        task = create_scheduled_task(
+            session,
+            ScheduledTaskCreate(
+                name=name,
+                task_type="discovery_revisit",
+                interval_seconds=interval_seconds,
+                retry_attempts=retry_attempts,
+                retry_backoff_seconds=retry_backoff_seconds,
+                notes=notes,
+                payload_json=payload_json,
+            ),
+        )
+        print_banner()
+        typer.echo(f"scheduled task {task.task_id} created for discovery revisits")
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
 if __name__ == "__main__":
     app()
+

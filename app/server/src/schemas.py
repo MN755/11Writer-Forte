@@ -299,6 +299,13 @@ class RuntimeRestoreResultRead(ForteModel):
     row_counts: list[DatabaseTableCountRead]
 
 
+class RuntimeBundleRestoreResultRead(RuntimeRestoreResultRead):
+    restored_file_count: int
+    bundle_sha256: str
+    bundle_format_version: int
+    data_dir: str
+
+
 class DataLayerCreate(ForteModel):
     key: str
     name: str
@@ -647,6 +654,14 @@ class SourceTrustProfileCreate(ForteModel):
     approval_policy: ApprovalPolicy = "manual_review"
     integrity_source: bool = False
     notes: str = ""
+
+
+class SourceTrustProfileUpdate(ForteModel):
+    domain: str | None = None
+    trust_level: TrustLevel | None = None
+    approval_policy: ApprovalPolicy | None = None
+    integrity_source: bool | None = None
+    notes: str | None = None
 
 
 class SourceTrustProfileRead(SourceTrustProfileCreate):

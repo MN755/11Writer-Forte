@@ -18,6 +18,7 @@ from src.schemas import (
 )
 from src.services.event_export_service import build_event_export_bundle
 from src.services.event_fusion_service import materialize_fused_events
+from src.services.event_service import create_event, list_events
 from src.services.layer_service import create_data_layer, list_data_layers
 from src.services.redaction_service import enforce_export_redaction, filter_records_by_redaction_level
 
@@ -26,17 +27,16 @@ layer_router = APIRouter(prefix="/layers", tags=["layers"])
 
 
 @router.get("", response_model=list[EventRead])
-def list_events(session: Session = Depends(get_db)) -> list[EventORM]:
-    return list(session.scalars(select(EventORM).order_by(EventORM.created_at.desc())))
+def get_events(session: Session = Depends(get_db)) -> list[EventORM]:
+    return list_events(session)
 
 
 @router.post("", response_model=EventRead)
-def create_event(payload: EventCreate, session: Session = Depends(get_db)) -> EventORM:
-    record = EventORM(**payload.model_dump())
-    session.add(record)
-    session.commit()
-    session.refresh(record)
-    return record
+def post_event(payload: EventCreate, session: Session = Depends(get_db)) -> EventORM:
+    try:
+        return create_event(session, payload, actor="api_event")
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.post("/fuse", response_model=EventFusionResponse)
