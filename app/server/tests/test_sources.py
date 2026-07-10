@@ -259,7 +259,9 @@ def test_http_source_retries_and_records_fetch_metadata(client: TestClient) -> N
         assert run_payload["output_json"]["attempt_count"] == 2
         assert run_payload["output_json"]["http_status"] == 200
         assert run_payload["output_json"]["content_type"] == "application/json"
-        assert run_payload["output_json"]["headers"]["X-Test-Token"] == "forte"
+        # Request credentials are used for the fetch but never persisted back into
+        # source-run metadata.  The server-side assertion below proves transport.
+        assert run_payload["output_json"]["headers"]["X-Test-Token"] == "<redacted>"
         assert run_payload["output_json"]["cached_path"].endswith(".json")
 
         assert state["requests"] == 2

@@ -15,6 +15,9 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     data_path = tmp_path / "var"
     monkeypatch.setenv("ELEVENWRITER_DATABASE_URL", f"sqlite:///{database_path}")
     monkeypatch.setenv("ELEVENWRITER_DATA_DIR", str(data_path))
+    # Integration fixtures intentionally run on a loopback HTTP server.  Production
+    # remains public-network-only unless the deployment owner sets this explicit gate.
+    monkeypatch.setenv("ELEVENWRITER_DISCOVERY_ALLOW_PRIVATE_NETWORKS", "true")
     reset_settings_cache()
     reset_db_state()
 

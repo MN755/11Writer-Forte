@@ -3,16 +3,25 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from pydantic import BaseModel, TypeAdapter
-from sqlalchemy import delete, func, insert, select
+from sqlalchemy import delete, func, insert, select, text
 from sqlalchemy.orm import Session
 
 from src.config import get_settings
 from src.models import (
     AlertORM,
+    CandidateHealthCheckORM,
+    CandidatePromotionDecisionORM,
+    CandidateSuppressionORM,
     CameraInventoryORM,
     CameraSourceInventoryORM,
     CustodyLogORM,
     DataLayerORM,
+    DiscoveryArtifactORM,
+    DiscoveryCampaignORM,
+    DiscoveryDomainPolicyORM,
+    DiscoveryFrontierEntryORM,
+    DiscoveryGraphEdgeORM,
+    DiscoveryRunORM,
     EntityObservationLinkORM,
     EntityORM,
     EventObservationLinkORM,
@@ -20,21 +29,33 @@ from src.models import (
     GeofenceORM,
     LocalImportRunORM,
     ObservationORM,
+    RobotsObservationORM,
     ScheduledTaskORM,
     ScheduledTaskRunORM,
     SituationProductORM,
     StorageObjectORM,
     SourceDefinitionORM,
+    SourceCandidateORM,
+    SourceCandidateRevisionORM,
     SourceRunORM,
     SourceTrustProfileORM,
 )
 from src.schemas import (
     AlertRead,
+    CandidateHealthCheckRead,
+    CandidatePromotionDecisionRead,
+    CandidateSuppressionRead,
     CameraInventoryRead,
     CameraSourceInventoryRead,
     CustodyLogRead,
     DataLayerRead,
     DatabaseTableCountRead,
+    DiscoveryArtifactRead,
+    DiscoveryCampaignRead,
+    DiscoveryDomainPolicyRead,
+    DiscoveryFrontierEntryRead,
+    DiscoveryGraphEdgeRead,
+    DiscoveryRunRead,
     EntityObservationLinkRead,
     EntityRead,
     EventObservationLinkRead,
@@ -42,6 +63,7 @@ from src.schemas import (
     GeofenceRead,
     LocalImportRunSummaryRead,
     ObservationRead,
+    RobotsObservationRead,
     RuntimeRestoreResultRead,
     RuntimeSnapshotRead,
     ScheduledTaskRead,
@@ -49,6 +71,8 @@ from src.schemas import (
     SituationProductRead,
     StorageObjectRead,
     SourceDefinitionRead,
+    SourceCandidateRead,
+    SourceCandidateRevisionRead,
     SourceRunRead,
     SourceTrustProfileRead,
 )
@@ -67,8 +91,74 @@ SNAPSHOT_SECTIONS: tuple[tuple[str, object, type[BaseModel], object], ...] = (
         SourceTrustProfileRead,
         SourceTrustProfileORM.trust_profile_id,
     ),
+    (
+        "discovery_domain_policies",
+        DiscoveryDomainPolicyORM,
+        DiscoveryDomainPolicyRead,
+        DiscoveryDomainPolicyORM.domain_policy_id,
+    ),
+    (
+        "discovery_campaigns",
+        DiscoveryCampaignORM,
+        DiscoveryCampaignRead,
+        DiscoveryCampaignORM.campaign_id,
+    ),
+    (
+        "discovery_runs",
+        DiscoveryRunORM,
+        DiscoveryRunRead,
+        DiscoveryRunORM.discovery_run_id,
+    ),
     ("geofences", GeofenceORM, GeofenceRead, GeofenceORM.geofence_id),
     ("source_definitions", SourceDefinitionORM, SourceDefinitionRead, SourceDefinitionORM.source_id),
+    (
+        "source_candidates",
+        SourceCandidateORM,
+        SourceCandidateRead,
+        SourceCandidateORM.candidate_id,
+    ),
+    (
+        "discovery_frontier_entries",
+        DiscoveryFrontierEntryORM,
+        DiscoveryFrontierEntryRead,
+        DiscoveryFrontierEntryORM.frontier_entry_id,
+    ),
+    (
+        "source_candidate_revisions",
+        SourceCandidateRevisionORM,
+        SourceCandidateRevisionRead,
+        SourceCandidateRevisionORM.candidate_revision_id,
+    ),
+    (
+        "discovery_graph_edges",
+        DiscoveryGraphEdgeORM,
+        DiscoveryGraphEdgeRead,
+        DiscoveryGraphEdgeORM.graph_edge_id,
+    ),
+    (
+        "candidate_health_checks",
+        CandidateHealthCheckORM,
+        CandidateHealthCheckRead,
+        CandidateHealthCheckORM.health_check_id,
+    ),
+    (
+        "candidate_suppressions",
+        CandidateSuppressionORM,
+        CandidateSuppressionRead,
+        CandidateSuppressionORM.suppression_id,
+    ),
+    (
+        "candidate_promotion_decisions",
+        CandidatePromotionDecisionORM,
+        CandidatePromotionDecisionRead,
+        CandidatePromotionDecisionORM.promotion_decision_id,
+    ),
+    (
+        "robots_observations",
+        RobotsObservationORM,
+        RobotsObservationRead,
+        RobotsObservationORM.robots_observation_id,
+    ),
     ("local_import_runs", LocalImportRunORM, LocalImportRunSummaryRead, LocalImportRunORM.import_run_id),
     ("events", EventORM, EventRead, EventORM.event_id),
     ("entities", EntityORM, EntityRead, EntityORM.entity_id),
@@ -81,6 +171,12 @@ SNAPSHOT_SECTIONS: tuple[tuple[str, object, type[BaseModel], object], ...] = (
         CameraSourceInventoryORM.camera_source_inventory_id,
     ),
     ("storage_objects", StorageObjectORM, StorageObjectRead, StorageObjectORM.storage_object_id),
+    (
+        "discovery_artifacts",
+        DiscoveryArtifactORM,
+        DiscoveryArtifactRead,
+        DiscoveryArtifactORM.discovery_artifact_id,
+    ),
     (
         "event_observation_links",
         EventObservationLinkORM,
@@ -104,8 +200,19 @@ SNAPSHOT_SECTIONS: tuple[tuple[str, object, type[BaseModel], object], ...] = (
 RESTORE_ORDER: tuple[tuple[str, object], ...] = (
     ("data_layers", DataLayerORM),
     ("source_trust_profiles", SourceTrustProfileORM),
+    ("discovery_domain_policies", DiscoveryDomainPolicyORM),
     ("geofences", GeofenceORM),
     ("source_definitions", SourceDefinitionORM),
+    ("discovery_campaigns", DiscoveryCampaignORM),
+    ("discovery_runs", DiscoveryRunORM),
+    ("source_candidates", SourceCandidateORM),
+    ("discovery_frontier_entries", DiscoveryFrontierEntryORM),
+    ("source_candidate_revisions", SourceCandidateRevisionORM),
+    ("discovery_graph_edges", DiscoveryGraphEdgeORM),
+    ("candidate_health_checks", CandidateHealthCheckORM),
+    ("candidate_suppressions", CandidateSuppressionORM),
+    ("candidate_promotion_decisions", CandidatePromotionDecisionORM),
+    ("robots_observations", RobotsObservationORM),
     ("local_import_runs", LocalImportRunORM),
     ("events", EventORM),
     ("entities", EntityORM),
@@ -113,6 +220,7 @@ RESTORE_ORDER: tuple[tuple[str, object], ...] = (
     ("camera_inventory", CameraInventoryORM),
     ("camera_source_inventory", CameraSourceInventoryORM),
     ("storage_objects", StorageObjectORM),
+    ("discovery_artifacts", DiscoveryArtifactORM),
     ("event_observation_links", EventObservationLinkORM),
     ("entity_observation_links", EntityObservationLinkORM),
     ("alerts", AlertORM),
@@ -128,19 +236,28 @@ def build_runtime_snapshot(session: Session) -> dict[str, object]:
     settings = get_settings()
     row_counts_before = collect_table_counts(session)
     export_log = log_runtime_snapshot_export(session, row_counts=row_counts_before)
-    session.commit()
-    snapshot = {
-        "exported_at": snapshot_now(),
-        "app_name": settings.app_name,
-        "app_version": settings.app_version,
-        "database_backend": session.get_bind().dialect.name,
-        "spatial_backend": settings.spatial_backend,
-        "row_counts": collect_table_counts(session),
-    }
-    snapshot.update(serialize_snapshot_sections(session))
-    if not any(log["custody_log_id"] == export_log.custody_log_id for log in snapshot["custody_logs"]):
-        snapshot["custody_logs"].append(serialize_row(export_log, CustodyLogRead))
-    return snapshot
+    try:
+        snapshot = {
+            "snapshot_version": 2,
+            "exported_at": snapshot_now(),
+            "app_name": settings.app_name,
+            "app_version": settings.app_version,
+            "database_backend": session.get_bind().dialect.name,
+            "spatial_backend": settings.spatial_backend,
+            "row_counts": collect_table_counts(session),
+        }
+        snapshot.update(serialize_snapshot_sections(session))
+        if not any(
+            log["custody_log_id"] == export_log.custody_log_id
+            for log in snapshot["custody_logs"]
+        ):
+            snapshot["custody_logs"].append(serialize_row(export_log, CustodyLogRead))
+        TypeAdapter(RuntimeSnapshotRead).validate_python(snapshot)
+        session.commit()
+        return snapshot
+    except Exception:
+        session.rollback()
+        raise
 
 
 def restore_runtime_snapshot(
@@ -163,6 +280,7 @@ def restore_runtime_snapshot(
 
     restored_at = snapshot_now()
     session.flush()
+    reseed_postgresql_sequences(session)
     session.add(
         CustodyLogORM(
             object_type="runtime_snapshot",
@@ -213,6 +331,36 @@ def clear_runtime_tables(session: Session) -> None:
     for _, model in reversed(RESTORE_ORDER):
         session.execute(delete(model))
     session.flush()
+
+
+def reseed_postgresql_sequences(session: Session) -> None:
+    if session.get_bind().dialect.name != "postgresql":
+        return
+    for _, model in RESTORE_ORDER:
+        table = model.__table__
+        primary_key_columns = list(table.primary_key.columns)
+        if len(primary_key_columns) != 1:
+            continue
+        primary_key = primary_key_columns[0]
+        maximum = session.scalar(select(func.max(primary_key)))
+        if maximum is None:
+            continue
+        sequence_name = session.scalar(
+            text("SELECT pg_get_serial_sequence(:table_name, :column_name)"),
+            {
+                "table_name": table.fullname,
+                "column_name": primary_key.name,
+            },
+        )
+        if not sequence_name:
+            continue
+        session.execute(
+            text("SELECT setval(CAST(:sequence_name AS regclass), :maximum, true)"),
+            {
+                "sequence_name": sequence_name,
+                "maximum": int(maximum),
+            },
+        )
 
 
 def log_runtime_snapshot_export(

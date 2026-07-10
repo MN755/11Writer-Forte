@@ -31,6 +31,7 @@ from src.schemas import SourceDefinitionCreate, SourceDefinitionUpdate
 from src.services.import_service import import_local_path
 from src.services.layer_service import ensure_data_layer
 from src.services.storage_service import register_source_run_storage_object
+from src.services.discovery_fetch import FetchPolicy, fetch_url, read_bounded
 
 
 @dataclass(frozen=True)
@@ -51,9 +52,15 @@ def source_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def create_source_definition(session: Session, payload: SourceDefinitionCreate) -> SourceDefinitionORM:
+def create_source_definition(
+    session: Session,
+    payload: SourceDefinitionCreate,
+    *,
+    actor: str = "system",
+    commit: bool = True,
+) -> SourceDefinitionORM:
     ensure_unique_source_name(session, payload.name)
-    ensure_data_layer(session, payload.layer_key, actor="source_registry")
+    ensure_data_layer(session, payload.layer_key, actor=actor)
     record = SourceDefinitionORM(**payload.model_dump())
     session.add(record)
     session.flush()
@@ -62,15 +69,16 @@ def create_source_definition(session: Session, payload: SourceDefinitionCreate) 
             object_type="source_definition",
             object_id=str(record.source_id),
             action="source_created",
-            actor="system",
+            actor=actor,
             details_json={
                 **payload.model_dump(),
                 "source_id": record.source_id,
             },
         )
     )
-    session.commit()
-    session.refresh(record)
+    if commit:
+        session.commit()
+        session.refresh(record)
     return record
 
 
@@ -695,17 +703,80 @@ def materialize_source_payload(source: SourceDefinitionORM) -> MaterializedSourc
             },
         )
 
-    if source.source_kind in {"http_json", "http_text", "http_xml"}:
-        suffix = ".json" if source.source_kind in {"http_json", "http_xml"} else ".txt"
+    http_kinds = {
+        "http_json",
+        "http_jsonl",
+        "http_text",
+        "http_xml",
+        "rss",
+        "web_search",
+        "web_crawl",
+        "web_discovery",
+    }
+    if source.source_kind in http_kinds:
+        source_metadata = source.metadata_json if isinstance(source.metadata_json, dict) else {}
+        discovery_metadata = source_metadata.get("discovery", {})
+        discovered_format = (
+            discovery_metadata.get("format_hint")
+            if isinstance(discovery_metadata, dict)
+            else None
+        )
+        suffix_by_kind = {
+            "http_json": ".json",
+            "http_jsonl": ".jsonl",
+            "http_text": ".csv" if discovered_format == "csv" else ".txt",
+            "http_xml": ".json",
+            "rss": ".json",
+            "web_search": ".json",
+            "web_crawl": ".json",
+            "web_discovery": ".json",
+        }
+        suffix = suffix_by_kind[source.source_kind]
         destination = build_cached_path(source.source_id, suffix)
         fetch_config = parse_fetch_config(source)
         payload, fetch_metadata = fetch_http_source(source, fetch_config)
-        if source.source_kind == "http_xml":
-            records = parse_http_xml_payload(payload, source.target_uri)
+        if source.source_kind in {"http_xml", "rss"}:
+            records = (
+                parse_rss_atom_payload(payload, source.target_uri)
+                if source.source_kind == "rss"
+                else parse_http_xml_payload(payload, source.target_uri)
+            )
             destination.write_text(json.dumps(records), encoding="utf-8")
             fetch_metadata = {
                 **fetch_metadata,
                 "cached_record_count": len(records),
+                "materialized_content_type": "application/json",
+                "original_content_type": fetch_metadata.get("content_type"),
+            }
+        elif source.source_kind in {"web_search", "web_crawl", "web_discovery"}:
+            from src.services.discovery_analysis import analyze_document
+
+            analysis = analyze_document(
+                source.target_uri,
+                payload,
+                content_type=fetch_metadata.get("content_type"),
+                headers={},
+            )
+            destination.write_text(
+                json.dumps(
+                    [
+                        {
+                            "url": source.target_uri,
+                            "title": analysis.title,
+                            "text": analysis.text_excerpt,
+                            "candidate_type": analysis.candidate_type,
+                            "format_hint": analysis.format_hint,
+                            "geo_hints": analysis.geo_hints,
+                            "temporal_hints": analysis.temporal_hints,
+                            "links": [link.url for link in analysis.links],
+                        }
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            fetch_metadata = {
+                **fetch_metadata,
+                "cached_record_count": 1,
                 "materialized_content_type": "application/json",
                 "original_content_type": fetch_metadata.get("content_type"),
             }
@@ -720,6 +791,16 @@ def materialize_source_payload(source: SourceDefinitionORM) -> MaterializedSourc
             },
         )
 
+    if source.source_kind in {
+        "websocket_stream",
+        "sse_stream",
+        "webhook_ingest",
+        "camera_image",
+        "camera_stream",
+    }:
+        raise ValueError(
+            f"Source kind {source.source_kind} is reference-only and cannot be run by the batch source runner."
+        )
     raise ValueError(f"Unsupported source kind: {source.source_kind}")
 
 
@@ -739,11 +820,13 @@ def parse_fetch_config(source: SourceDefinitionORM) -> SourceFetchConfig:
     headers = {
         "User-Agent": str(metadata.get("user_agent", "11Writer-Forte/0.1 (+headless-source-fetch)")),
         "Accept": (
-            "application/json"
-            if source.source_kind == "http_json"
-            else "application/xml, text/xml, */*"
-            if source.source_kind == "http_xml"
-            else "text/plain, */*"
+            "application/json, application/geo+json, application/x-ndjson, */*"
+            if source.source_kind in {"http_json", "http_jsonl"}
+            else "application/rss+xml, application/atom+xml, application/xml, text/xml, */*"
+            if source.source_kind in {"http_xml", "rss"}
+            else "text/html, application/xhtml+xml, */*"
+            if source.source_kind in {"web_search", "web_crawl", "web_discovery"}
+            else "text/plain, text/csv, */*"
         ),
     }
     if isinstance(user_headers, dict):
@@ -791,12 +874,52 @@ def fetch_http_source(
     source: SourceDefinitionORM,
     fetch_config: SourceFetchConfig,
 ) -> tuple[bytes, dict[str, Any]]:
+    metadata = source.metadata_json if isinstance(source.metadata_json, dict) else {}
+    max_response_bytes = max(1024, int(metadata.get("max_response_bytes", 20 * 1024 * 1024)))
+    discovery_managed = isinstance(metadata.get("discovery"), dict)
+    block_private_networks = bool(metadata.get("block_private_networks", False)) or discovery_managed
+    allow_private_networks = bool(metadata.get("allow_private_networks", False)) and bool(
+        get_settings().discovery_allow_private_networks
+    )
+    if block_private_networks:
+        result = fetch_url(
+            source.target_uri,
+            policy=FetchPolicy(
+                timeout_seconds=fetch_config.timeout_seconds,
+                retry_attempts=fetch_config.retry_attempts,
+                retry_backoff_seconds=fetch_config.retry_backoff_seconds,
+                max_response_bytes=max_response_bytes,
+                allow_private_networks=allow_private_networks,
+                user_agent=fetch_config.headers.get("User-Agent", "11Writer-Forte/0.1"),
+            ),
+            request_headers={
+                key: value
+                for key, value in fetch_config.headers.items()
+                if key.lower() != "user-agent"
+            },
+        )
+        return result.payload, {
+            "attempt_count": result.attempt_count,
+            "http_status": result.status_code,
+            "content_type": result.headers.get("content-type"),
+            "byte_count": len(result.payload),
+            "payload_sha256": hashlib.sha256(result.payload).hexdigest(),
+            "request_timeout_seconds": fetch_config.timeout_seconds,
+            "retry_attempts": fetch_config.retry_attempts,
+            "request_headers": redact_request_headers(fetch_config.headers),
+            "host": urlparse(result.final_url).netloc,
+            "final_url": result.final_url,
+            "max_response_bytes": max_response_bytes,
+            "private_network_blocking": not allow_private_networks,
+            "private_network_override_enabled": allow_private_networks,
+        }
+
     last_error: Exception | None = None
     for attempt in range(1, fetch_config.retry_attempts + 1):
         request = Request(source.target_uri, headers=fetch_config.headers)
         try:
             with urlopen(request, timeout=fetch_config.timeout_seconds) as response:
-                payload = response.read()
+                payload = read_bounded(response, max_response_bytes)
                 content_type = response.headers.get("Content-Type")
                 status_code = getattr(response, "status", None) or getattr(response, "code", None) or 200
                 return payload, {
@@ -807,8 +930,9 @@ def fetch_http_source(
                     "payload_sha256": hashlib.sha256(payload).hexdigest(),
                     "request_timeout_seconds": fetch_config.timeout_seconds,
                     "retry_attempts": fetch_config.retry_attempts,
-                    "headers": fetch_config.headers,
+                    "headers": redact_request_headers(fetch_config.headers),
                     "host": urlparse(source.target_uri).netloc,
+                    "max_response_bytes": max_response_bytes,
                 }
         except HTTPError as exc:
             last_error = exc
@@ -853,8 +977,65 @@ def apply_basic_auth_headers(metadata: dict[str, Any], headers: dict[str, str]) 
     headers.setdefault("Authorization", f"Basic {token}")
 
 
+def redact_request_headers(headers: dict[str, str]) -> dict[str, str]:
+    sensitive_markers = ("authorization", "cookie", "token", "secret", "api-key", "apikey")
+    return {
+        key: "<redacted>" if any(marker in key.lower() for marker in sensitive_markers) else value
+        for key, value in headers.items()
+    }
+
+
+def safe_parse_xml_payload(payload: bytes) -> ElementTree.Element:
+    prefix = payload[:100_000].lower()
+    if b"<!doctype" in prefix or b"<!entity" in prefix:
+        raise ValueError("XML DTD and entity declarations are not allowed.")
+    return ElementTree.fromstring(payload)
+
+
+def parse_rss_atom_payload(payload: bytes, source_uri: str) -> list[dict[str, Any]]:
+    root = safe_parse_xml_payload(payload)
+    root_tag = strip_xml_namespace(root.tag).lower()
+    if root_tag == "rss":
+        channel = next(
+            (child for child in root if strip_xml_namespace(child.tag).lower() == "channel"),
+            root,
+        )
+        entries = [
+            child for child in channel if strip_xml_namespace(child.tag).lower() == "item"
+        ]
+    else:
+        entries = [
+            child for child in root if strip_xml_namespace(child.tag).lower() == "entry"
+        ]
+
+    records: list[dict[str, Any]] = []
+    for entry in entries:
+        values: dict[str, Any] = {}
+        for child in entry:
+            key = strip_xml_namespace(child.tag).lower()
+            if key == "link":
+                value = child.attrib.get("href") or (child.text or "").strip()
+            else:
+                value = (child.text or "").strip()
+            if value:
+                values[key] = value
+        link = values.get("link")
+        title = str(values.get("title") or values.get("id") or "Feed item")
+        record = {
+            "source_url": source_uri,
+            "url": link or source_uri,
+            "title": title,
+            "text": str(values.get("description") or values.get("summary") or title),
+            "published_at": values.get("pubdate") or values.get("published") or values.get("updated"),
+            "feed_type": root_tag,
+            "raw_feed": values,
+        }
+        records.append(record)
+    return records
+
+
 def parse_http_xml_payload(payload: bytes, source_uri: str) -> list[dict[str, Any]]:
-    root = ElementTree.fromstring(payload)
+    root = safe_parse_xml_payload(payload)
     root_tag = strip_xml_namespace(root.tag)
     records: list[dict[str, Any]] = []
     for child in root:
