@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+<<<<<<< HEAD
+=======
+from datetime import datetime, timedelta, timezone
+
+>>>>>>> 05aeee6 (chore: initialize repository)
 from fastapi.testclient import TestClient
 
 
@@ -71,3 +76,91 @@ def test_storage_object_lifecycle_api(client: TestClient) -> None:
     assert any(row["action"] == "storage_registered" for row in custody_rows)
     assert any(row["action"] == "storage_promoted" for row in custody_rows)
     assert any(row["action"] == "storage_transitioned" for row in custody_rows)
+<<<<<<< HEAD
+=======
+
+
+def test_storage_report_and_lifecycle_sweep_api(client: TestClient) -> None:
+    now = datetime.now(timezone.utc)
+    expired_response = client.post(
+        "/api/storage/objects",
+        json={
+            "object_key": "manual:expired:1",
+            "object_kind": "raw_payload",
+            "owner_type": "source_run",
+            "owner_id": "501",
+            "object_uri": "file:///tmp/source-run-501.json",
+            "storage_tier": "warm",
+            "retention_class": "operational",
+            "lifecycle_status": "active",
+            "expires_at": (now - timedelta(hours=2)).isoformat(),
+        },
+    )
+    assert expired_response.status_code == 200
+    expired_object_id = expired_response.json()["storage_object_id"]
+
+    future_response = client.post(
+        "/api/storage/objects",
+        json={
+            "object_key": "manual:future:1",
+            "object_kind": "raw_payload",
+            "owner_type": "source_run",
+            "owner_id": "502",
+            "object_uri": "file:///tmp/source-run-502.json",
+            "storage_tier": "warm",
+            "retention_class": "investigative",
+            "lifecycle_status": "active",
+            "expires_at": (now + timedelta(hours=6)).isoformat(),
+        },
+    )
+    assert future_response.status_code == 200
+
+    report_response = client.get("/api/storage/report", params={"limit": 10})
+    assert report_response.status_code == 200
+    report = report_response.json()
+    assert report["total_count"] >= 2
+    assert report["expired_count"] >= 1
+    assert report["active_count"] >= 1
+    assert report["next_expiration_at"] is not None
+    assert any(bucket["key"] == "operational" for bucket in report["retention_class_counts"])
+
+    dry_run_response = client.post(
+        "/api/storage/sweep",
+        params={"retention_class": "operational", "limit": 10, "dry_run": True},
+    )
+    assert dry_run_response.status_code == 200
+    dry_run_payload = dry_run_response.json()
+    assert dry_run_payload["dry_run"] is True
+    assert dry_run_payload["expired_candidate_count"] >= 1
+    assert dry_run_payload["transitioned_count"] == 0
+    assert any(
+        row["storage_object_id"] == expired_object_id and row["lifecycle_status"] == "active"
+        for row in dry_run_payload["candidates"]
+    )
+
+    live_response = client.post(
+        "/api/storage/sweep",
+        params={"retention_class": "operational", "limit": 10},
+    )
+    assert live_response.status_code == 200
+    live_payload = live_response.json()
+    assert live_payload["dry_run"] is False
+    assert live_payload["transitioned_count"] >= 1
+    assert any(
+        row["storage_object_id"] == expired_object_id and row["lifecycle_status"] == "expired"
+        for row in live_payload["candidates"]
+    )
+
+    expired_list_response = client.get(
+        "/api/storage/objects",
+        params={"owner_type": "source_run", "owner_id": "501", "lifecycle_status": "expired"},
+    )
+    assert expired_list_response.status_code == 200
+    expired_rows = expired_list_response.json()
+    assert len(expired_rows) == 1
+    assert expired_rows[0]["storage_object_id"] == expired_object_id
+
+    custody_response = client.get("/api/custody/logs")
+    assert custody_response.status_code == 200
+    assert any(row["action"] == "storage_expired" for row in custody_response.json())
+>>>>>>> 05aeee6 (chore: initialize repository)

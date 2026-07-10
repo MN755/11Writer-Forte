@@ -23,6 +23,20 @@ from src.models import (
     SourceTrustProfileORM,
 )
 from src.schemas import (
+<<<<<<< HEAD
+=======
+    CameraSourceOpsExportSummaryRead,
+    CameraSourceMaterializationResponse,
+    CameraSourceInventoryRead,
+    CameraSourceOpsReportIndexRead,
+    CameraSourceSummaryRead,
+    ClickHouseArchiveResultRead,
+    ClickHouseDiagnosticsRead,
+    ClickHouseProvisionResultRead,
+    ClickHouseR2ConfigRead,
+    ClickHouseRehydrateResultRead,
+    ClickHouseSyncResultRead,
+>>>>>>> 05aeee6 (chore: initialize repository)
     CameraOpsExportSummaryRead,
     CameraOpsReportIndexRead,
     CameraMaterializationResponse,
@@ -34,14 +48,49 @@ from src.schemas import (
     OperationsReportRead,
     RuntimeRestoreResultRead,
     RuntimeSnapshotRead,
+<<<<<<< HEAD
     ScheduledTaskCreate,
     ScheduledTaskUpdate,
+=======
+    SchedulerInventorySummaryRead,
+    SchedulerOpsExportSummaryRead,
+    SchedulerOpsReportIndexRead,
+    ScheduledTaskCreate,
+    ScheduledTaskUpdate,
+    StorageLifecycleSweepResultRead,
+>>>>>>> 05aeee6 (chore: initialize repository)
     StorageObjectCreate,
     StorageObjectPromoteRequest,
     StorageObjectRead,
     StorageObjectTransitionRequest,
+<<<<<<< HEAD
     SourceDefinitionCreate,
     SourceDefinitionUpdate,
+=======
+    StorageReportRead,
+    SourceDefinitionCreate,
+    SourceDefinitionUpdate,
+    SourceInventorySummaryRead,
+    SourceOpsExportSummaryRead,
+    SourceOpsReportIndexRead,
+)
+from src.services.camera_source_service import (
+    build_camera_source_inventory_ops_detail,
+    build_camera_source_ops_export_summary,
+    build_camera_source_ops_report_index,
+    build_camera_source_inventory_summary,
+    list_camera_sources,
+    materialize_camera_source_inventory,
+)
+from src.services.clickhouse_service import (
+    archive_clickhouse_observations_to_r2,
+    build_clickhouse_diagnostics,
+    build_clickhouse_r2_config_preview,
+    default_clickhouse_r2_config_path,
+    provision_clickhouse_backend,
+    rehydrate_clickhouse_observations_from_r2,
+    sync_runtime_to_clickhouse,
+>>>>>>> 05aeee6 (chore: initialize repository)
 )
 from src.services.camera_service import list_cameras
 from src.services.camera_service import materialize_camera_inventory
@@ -51,6 +100,10 @@ from src.services.camera_service import build_camera_inventory_ops_detail
 from src.services.camera_service import build_camera_inventory_summary
 from src.services.database_diagnostics_service import build_database_diagnostics
 from src.services.entity_resolution_service import materialize_entities
+<<<<<<< HEAD
+=======
+from src.services.export_artifact_service import write_json_export_artifact, write_text_export_artifact
+>>>>>>> 05aeee6 (chore: initialize repository)
 from src.services.event_export_service import build_event_export_bundle
 from src.services.event_fusion_service import materialize_fused_events
 from src.services.import_service import import_local_path
@@ -61,9 +114,34 @@ from src.services.redaction_service import enforce_export_redaction
 from src.services.runtime_snapshot_service import build_runtime_snapshot
 from src.services.runtime_snapshot_service import restore_runtime_snapshot
 from src.services.scheduler_runtime_service import run_scheduler_worker
+<<<<<<< HEAD
 from src.services.scheduler_service import create_scheduled_task, run_due_tasks, run_task, update_scheduled_task
 from src.services.storage_service import create_storage_object, list_storage_objects, promote_storage_object, transition_storage_object
 from src.services.source_service import (
+=======
+from src.services.scheduler_service import (
+    build_scheduler_inventory_summary,
+    build_scheduler_ops_export_summary,
+    build_scheduler_ops_report_index,
+    create_scheduled_task,
+    run_due_tasks,
+    run_task,
+    update_scheduled_task,
+)
+from src.services.storage_service import (
+    build_storage_report,
+    create_storage_object,
+    list_storage_objects,
+    promote_storage_object,
+    sweep_expired_storage_objects,
+    transition_storage_object,
+)
+from src.services.source_service import (
+    build_source_inventory_summary,
+    build_source_ops_detail,
+    build_source_ops_export_summary,
+    build_source_ops_report_index,
+>>>>>>> 05aeee6 (chore: initialize repository)
     create_source_definition,
     list_source_definitions,
     list_source_runs,
@@ -99,6 +177,16 @@ def parse_bbox(value: str | None) -> tuple[float | None, float | None, float | N
     return (min_lon, min_lat, max_lon, max_lat)
 
 
+<<<<<<< HEAD
+=======
+def parse_observation_backend(value: str) -> str:
+    normalized = value.strip().lower()
+    if normalized not in {"runtime", "clickhouse", "r2_archive"}:
+        raise typer.BadParameter("backend must be one of: runtime, clickhouse, r2_archive")
+    return normalized
+
+
+>>>>>>> 05aeee6 (chore: initialize repository)
 def resolve_report_since(hours: float | None) -> datetime | None:
     if hours is None:
         return None
@@ -206,6 +294,178 @@ def doctor(output_path: Path | None = None) -> None:
         session.close()
 
 
+<<<<<<< HEAD
+=======
+@app.command("show-clickhouse-status")
+def show_clickhouse_status() -> None:
+    serializable = TypeAdapter(ClickHouseDiagnosticsRead).validate_python(
+        build_clickhouse_diagnostics()
+    ).model_dump(mode="json")
+    print_banner()
+    typer.echo(
+        "status="
+        f"{serializable['status']} enabled={serializable['enabled']} "
+        f"reachable={serializable['reachable']} database={serializable['clickhouse_database']}"
+    )
+    typer.echo(
+        f"url={serializable['clickhouse_url']} observations={serializable['observation_table']} storage={serializable['storage_object_table']}"
+    )
+    typer.echo(
+        "storage_mode="
+        f"{serializable['storage_mode']} storage_policy={serializable['storage_policy']} "
+        f"r2_configured={serializable['r2_configured']}"
+    )
+    typer.echo(
+        f"r2_archive_root={serializable['r2_archive_root']} r2_storage_root={serializable['r2_storage_root']}"
+    )
+    if serializable["warnings"]:
+        typer.echo("warnings:")
+        for warning in serializable["warnings"]:
+            typer.echo(f"  - {warning}")
+    if serializable["notes"]:
+        typer.echo("notes:")
+        for note in serializable["notes"]:
+            typer.echo(f"  - {note}")
+
+
+@app.command("provision-clickhouse")
+def provision_clickhouse_command() -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        result = provision_clickhouse_backend(session, actor="cli_clickhouse")
+        serializable = TypeAdapter(ClickHouseProvisionResultRead).validate_python(result).model_dump(mode="json")
+        print_banner()
+        typer.echo(
+            f"provisioned_at={serializable['provisioned_at']} database={serializable['clickhouse_database']} observations={serializable['observation_table']} storage={serializable['storage_object_table']}"
+        )
+    except (RuntimeError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.command("sync-clickhouse")
+def sync_clickhouse_command(
+    layer: str | None = None,
+    source_domain: str | None = None,
+    limit: int = 1000,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        result = sync_runtime_to_clickhouse(
+            session,
+            layer_key=layer,
+            source_domain=source_domain,
+            limit=limit,
+            actor="cli_clickhouse",
+        )
+        serializable = TypeAdapter(ClickHouseSyncResultRead).validate_python(result).model_dump(mode="json")
+        print_banner()
+        typer.echo(
+            f"synced observations={serializable['observation_count']} storage_objects={serializable['storage_object_count']} database={serializable['clickhouse_database']}"
+        )
+    except (RuntimeError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.command("archive-clickhouse-observations")
+def archive_clickhouse_observations_command(
+    layer: str | None = None,
+    source_domain: str | None = None,
+    limit: int | None = None,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        result = archive_clickhouse_observations_to_r2(
+            session,
+            layer_key=layer,
+            source_domain=source_domain,
+            limit=limit,
+            actor="cli_clickhouse",
+        )
+        serializable = TypeAdapter(ClickHouseArchiveResultRead).validate_python(result).model_dump(mode="json")
+        print_banner()
+        typer.echo(
+            f"archived rows={serializable['exported_row_count']} database={serializable['clickhouse_database']} root={serializable['archive_root_url']}"
+        )
+    except (RuntimeError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.command("show-clickhouse-r2-config")
+def show_clickhouse_r2_config() -> None:
+    try:
+        result = build_clickhouse_r2_config_preview()
+        serializable = TypeAdapter(ClickHouseR2ConfigRead).validate_python(result).model_dump(mode="json")
+        print_banner()
+        typer.echo(
+            f"storage_mode={serializable['storage_mode']} storage_policy={serializable['storage_policy']}"
+        )
+        typer.echo(f"archive_root: {serializable['archive_root_url']}")
+        typer.echo(f"storage_root: {serializable['storage_root_url']}")
+        typer.echo(f"docker_output_path: {serializable['docker_output_path']}")
+        typer.echo("storage_xml:")
+        typer.echo(serializable["storage_xml"])
+        typer.echo("create_table_sql:")
+        typer.echo(serializable["create_table_sql"])
+        typer.echo("archive_example_sql:")
+        typer.echo(serializable["archive_example_sql"])
+        typer.echo("rehydrate_example_sql:")
+        typer.echo(serializable["rehydrate_example_sql"])
+        typer.echo("direct_query_example_sql:")
+        typer.echo(serializable["direct_query_example_sql"])
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+
+@app.command("write-clickhouse-r2-config")
+def write_clickhouse_r2_config(
+    output_path: Path | None = None,
+) -> None:
+    try:
+        result = build_clickhouse_r2_config_preview()
+        serializable = TypeAdapter(ClickHouseR2ConfigRead).validate_python(result).model_dump(mode="json")
+        target_path = output_path or default_clickhouse_r2_config_path()
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        target_path.write_text(serializable["storage_xml"] + "\n", encoding="utf-8")
+        print_banner()
+        typer.echo(f"wrote {target_path}")
+        typer.echo(
+            f"storage_mode={serializable['storage_mode']} storage_policy={serializable['storage_policy']}"
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+
+@app.command("rehydrate-clickhouse-observations")
+def rehydrate_clickhouse_observations_command(archive_glob_url: str) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        result = rehydrate_clickhouse_observations_from_r2(
+            session,
+            archive_glob_url=archive_glob_url,
+            actor="cli_clickhouse",
+        )
+        serializable = TypeAdapter(ClickHouseRehydrateResultRead).validate_python(result).model_dump(mode="json")
+        print_banner()
+        typer.echo(
+            f"rehydrated rows={serializable['imported_row_count']} database={serializable['clickhouse_database']} source={serializable['archive_glob_url']}"
+        )
+    except (RuntimeError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
+>>>>>>> 05aeee6 (chore: initialize repository)
 @app.command("init-db")
 def init_database() -> None:
     init_db()
@@ -565,6 +825,153 @@ def list_source_runs_command() -> None:
         session.close()
 
 
+<<<<<<< HEAD
+=======
+@app.command("show-source-ops")
+def show_source_ops_command(source_id: int) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        detail = build_source_ops_detail(session, source_id)
+        source = detail["source"]
+        print_banner()
+        typer.echo(
+            f"source={source.source_id} name={source.name} kind={source.source_kind} enabled={source.enabled} layer={source.layer_key}"
+        )
+        typer.echo(f"target_uri={source.target_uri}")
+        typer.echo("recent_runs:")
+        for row in detail["recent_runs"][:10]:
+            typer.echo(
+                f"  {row.source_run_id} | {row.status} | import_run={row.import_run_id} | records={row.records_imported} | started={row.started_at}"
+            )
+        typer.echo("storage_objects:")
+        for row in detail["storage_objects"][:10]:
+            typer.echo(
+                f"  {row.storage_object_id} | {row.object_kind} | tier={row.storage_tier} | retention={row.retention_class} | {row.object_uri}"
+            )
+        typer.echo("custody_logs:")
+        for row in detail["custody_logs"][:10]:
+            typer.echo(f"  {row.custody_log_id} | {row.object_type} | {row.action} | {row.actor}")
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.command("show-source-summary")
+def show_source_summary_command(stale_after_hours: float = 24.0) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        summary = build_source_inventory_summary(session, stale_after_hours=stale_after_hours)
+        serializable = TypeAdapter(SourceInventorySummaryRead).validate_python(summary).model_dump(mode="json")
+        print_banner()
+        typer.echo(
+            "totals="
+            f"{serializable['total_count']} enabled={serializable['enabled_count']} disabled={serializable['disabled_count']} "
+            f"stale={serializable['stale_count']} failing={serializable['failing_count']} "
+            f"scheduled={serializable['scheduled_count']} unscheduled={serializable['unscheduled_count']}"
+        )
+        typer.echo(f"stale_before={serializable['stale_before']}")
+        for group_name in ("source_kind_counts", "layer_counts", "latest_status_counts"):
+            typer.echo(f"{group_name}:")
+            for item in serializable[group_name]:
+                typer.echo(
+                    f"  {item['key']} | total={item['total_count']} | enabled={item['enabled_count']} | disabled={item['disabled_count']} | stale={item['stale_count']} | failing={item['failing_count']}"
+                )
+    finally:
+        session.close()
+
+
+@app.command("show-source-report-index")
+def show_source_report_index_command(
+    stale_after_hours: float = 24.0,
+    limit: int = 25,
+    stale_source_limit: int = 25,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        report = build_source_ops_report_index(
+            session,
+            stale_after_hours=stale_after_hours,
+            limit=limit,
+            stale_source_limit=stale_source_limit,
+        )
+        serializable = TypeAdapter(SourceOpsReportIndexRead).validate_python(report).model_dump(mode="json")
+        print_banner()
+        typer.echo(
+            f"sync_tasks={serializable['sync_task_count']} sync_runs={serializable['sync_run_count']} sync_failures={serializable['sync_failure_count']}"
+        )
+        typer.echo(
+            f"latest_run_at={serializable['latest_run_at']} stale_after_hours={serializable['stale_after_hours']}"
+        )
+        inventory = serializable["inventory_summary"]
+        typer.echo(
+            f"inventory total={inventory['total_count']} stale={inventory['stale_count']} failing={inventory['failing_count']} unscheduled={inventory['unscheduled_count']}"
+        )
+        typer.echo("recent_runs:")
+        for row in serializable["recent_runs"]:
+            typer.echo(
+                f"  {row['source_run_id']} | source={row['source_id']} | {row['status']} | records={row['records_imported']} | started={row['started_at']}"
+            )
+        typer.echo("stale_sources:")
+        for row in serializable["stale_sources"]:
+            typer.echo(
+                f"  {row['source']['source_id']} | {row['source']['name']} | stale={row['is_stale']} | next_run_at={row['next_run_at']} | latest_success_at={row['latest_success_at']}"
+            )
+        typer.echo("failing_sources:")
+        for row in serializable["failing_sources"]:
+            typer.echo(
+                f"  {row['source']['source_id']} | {row['source']['name']} | latest_run={row['latest_run']['status'] if row['latest_run'] else 'none'}"
+            )
+        typer.echo("unscheduled_sources:")
+        for row in serializable["unscheduled_sources"]:
+            typer.echo(
+                f"  {row['source']['source_id']} | {row['source']['name']} | enabled={row['source']['enabled']}"
+            )
+    finally:
+        session.close()
+
+
+@app.command("export-source-summary")
+def export_source_summary_command(
+    output_path: Path,
+    stale_after_hours: float = 24.0,
+    source_limit: int = 500,
+    report_limit: int = 25,
+    stale_source_limit: int = 25,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        report = build_source_ops_export_summary(
+            session,
+            stale_after_hours=stale_after_hours,
+            source_limit=source_limit,
+            report_limit=report_limit,
+            stale_source_limit=stale_source_limit,
+        )
+        serializable = TypeAdapter(SourceOpsExportSummaryRead).validate_python(report).model_dump(mode="json")
+        write_json_export_artifact(
+            session,
+            payload=serializable,
+            object_kind="source_summary_export",
+            owner_type="source_export",
+            owner_id="scoped",
+            output_path=output_path,
+            source_uri="/api/sources/export/summary",
+            observed_at=report["generated_at"],
+            metadata_json=serializable["filters_json"],
+            actor="cli_export",
+        )
+        print_banner()
+        typer.echo(f"exported source summary to {output_path}")
+    finally:
+        session.close()
+
+
+>>>>>>> 05aeee6 (chore: initialize repository)
 @app.command("materialize-cameras")
 def materialize_cameras_command(
     layer: str | None = None,
@@ -581,11 +988,30 @@ def materialize_cameras_command(
             limit=limit,
             actor="cli_camera_registry",
         )
+<<<<<<< HEAD
+=======
+        source_result = materialize_camera_source_inventory(
+            session,
+            layer_key=layer,
+            source_domain=source_domain,
+            limit=limit,
+            actor="cli_camera_source_registry",
+        )
+        result["source_created_count"] = int(source_result["created_count"])
+        result["source_updated_count"] = int(source_result["updated_count"])
+        result["source_scanned_endpoint_count"] = int(source_result["scanned_endpoint_count"])
+>>>>>>> 05aeee6 (chore: initialize repository)
         serializable = TypeAdapter(CameraMaterializationResponse).validate_python(result).model_dump(mode="json")
         print_banner()
         typer.echo(
             f"scanned={serializable['scanned_count']} created={serializable['created_count']} updated={serializable['updated_count']}"
         )
+<<<<<<< HEAD
+=======
+        typer.echo(
+            f"source_candidates created={serializable['source_created_count']} updated={serializable['source_updated_count']} scanned_endpoints={serializable['source_scanned_endpoint_count']}"
+        )
+>>>>>>> 05aeee6 (chore: initialize repository)
         for camera in serializable["cameras"]:
             typer.echo(
                 f"{camera['camera_inventory_id']} | {camera['name']} | {camera['status']} | active={camera['active']} | layer={camera['layer_key']}"
@@ -594,6 +1020,40 @@ def materialize_cameras_command(
         session.close()
 
 
+<<<<<<< HEAD
+=======
+@app.command("materialize-camera-sources")
+def materialize_camera_sources_command(
+    layer: str | None = None,
+    source_domain: str | None = None,
+    active: bool | None = typer.Option(default=None),
+    limit: int = 500,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        result = materialize_camera_source_inventory(
+            session,
+            layer_key=layer,
+            source_domain=source_domain,
+            active=active,
+            limit=limit,
+            actor="cli_camera_source_registry",
+        )
+        serializable = TypeAdapter(CameraSourceMaterializationResponse).validate_python(result).model_dump(mode="json")
+        print_banner()
+        typer.echo(
+            f"scanned_cameras={serializable['scanned_camera_count']} scanned_endpoints={serializable['scanned_endpoint_count']} created={serializable['created_count']} updated={serializable['updated_count']}"
+        )
+        for source in serializable["sources"]:
+            typer.echo(
+                f"{source['camera_source_inventory_id']} | {source['endpoint_kind']} | {source['status']} | score={source['graduation_score']} | {source['endpoint_url']}"
+            )
+    finally:
+        session.close()
+
+
+>>>>>>> 05aeee6 (chore: initialize repository)
 @app.command("list-cameras")
 def list_cameras_command(
     layer: str | None = None,
@@ -628,6 +1088,41 @@ def list_cameras_command(
         session.close()
 
 
+<<<<<<< HEAD
+=======
+@app.command("list-camera-sources")
+def list_camera_sources_command(
+    layer: str | None = None,
+    source_domain: str | None = None,
+    endpoint_kind: str | None = None,
+    status: str | None = None,
+    verification_state: str | None = None,
+    active: bool | None = typer.Option(default=None),
+    limit: int = 200,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        rows = list_camera_sources(
+            session,
+            layer_key=layer,
+            source_domain=source_domain,
+            endpoint_kind=endpoint_kind,
+            status=status,
+            verification_state=verification_state,
+            active=active,
+            limit=limit,
+        )
+        print_banner()
+        for row in rows:
+            typer.echo(
+                f"{row.camera_source_inventory_id} | {row.endpoint_kind} | {row.status} | verify={row.verification_state} | score={row.graduation_score:.3f} | {row.endpoint_url}"
+            )
+    finally:
+        session.close()
+
+
+>>>>>>> 05aeee6 (chore: initialize repository)
 @app.command("show-camera-summary")
 def show_camera_summary_command(
     layer: str | None = None,
@@ -669,6 +1164,47 @@ def show_camera_summary_command(
         session.close()
 
 
+<<<<<<< HEAD
+=======
+@app.command("show-camera-source-summary")
+def show_camera_source_summary_command(
+    layer: str | None = None,
+    source_domain: str | None = None,
+    endpoint_kind: str | None = None,
+    status: str | None = None,
+    verification_state: str | None = None,
+    active: bool | None = typer.Option(default=None),
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        summary = build_camera_source_inventory_summary(
+            session,
+            layer_key=layer,
+            source_domain=source_domain,
+            endpoint_kind=endpoint_kind,
+            status=status,
+            verification_state=verification_state,
+            active=active,
+        )
+        serializable = TypeAdapter(CameraSourceSummaryRead).validate_python(summary).model_dump(mode="json")
+        print_banner()
+        typer.echo(
+            "totals="
+            f"{serializable['total_count']} active={serializable['active_count']} ready={serializable['ready_count']} "
+            f"review={serializable['review_count']} candidate={serializable['candidate_count']} graduated={serializable['graduated_count']}"
+        )
+        for group_name in ("source_domain_counts", "endpoint_kind_counts", "status_counts"):
+            typer.echo(f"{group_name}:")
+            for item in serializable[group_name]:
+                typer.echo(
+                    f"  {item['key']} | total={item['total_count']} | active={item['active_count']} | ready={item['ready_count']} | review={item['review_count']}"
+                )
+    finally:
+        session.close()
+
+
+>>>>>>> 05aeee6 (chore: initialize repository)
 @app.command("show-camera-ops")
 def show_camera_ops_command(camera_inventory_id: int) -> None:
     init_db()
@@ -707,6 +1243,97 @@ def show_camera_ops_command(camera_inventory_id: int) -> None:
         session.close()
 
 
+<<<<<<< HEAD
+=======
+@app.command("show-camera-source-ops")
+def show_camera_source_ops_command(camera_source_inventory_id: int) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        detail = build_camera_source_inventory_ops_detail(session, camera_source_inventory_id)
+        source = detail["source"]
+        print_banner()
+        typer.echo(
+            f"camera_source={source.camera_source_inventory_id} kind={source.endpoint_kind} status={source.status} verify={source.verification_state} score={source.graduation_score:.3f}"
+        )
+        typer.echo(
+            f"layer={source.layer_key} source_domain={source.source_domain} endpoint={source.endpoint_url}"
+        )
+        camera = detail["camera"]
+        if camera is not None:
+            typer.echo(
+                f"camera={camera.camera_inventory_id} key={camera.camera_key} name={camera.name} active={camera.active}"
+            )
+        latest_observation = detail["latest_observation"]
+        if latest_observation is not None:
+            typer.echo(
+                f"latest_observation={latest_observation.observation_id} import_run={latest_observation.import_run_id} source_domain={latest_observation.source_domain}"
+            )
+        typer.echo("custody_logs:")
+        for log in detail["custody_logs"]:
+            typer.echo(f"  {log.custody_log_id} | {log.action} | {log.actor} | {log.created_at}")
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.command("show-camera-source-report-index")
+def show_camera_source_report_index_command(
+    layer: str | None = None,
+    source_domain: str | None = None,
+    endpoint_kind: str | None = None,
+    status: str | None = None,
+    verification_state: str | None = None,
+    active: bool | None = typer.Option(default=None),
+    stale_after_hours: float = 24.0,
+    limit: int = 25,
+    stale_source_limit: int = 25,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        report = build_camera_source_ops_report_index(
+            session,
+            layer_key=layer,
+            source_domain=source_domain,
+            endpoint_kind=endpoint_kind,
+            status=status,
+            verification_state=verification_state,
+            active=active,
+            stale_after_hours=stale_after_hours,
+            limit=limit,
+            stale_source_limit=stale_source_limit,
+        )
+        serializable = TypeAdapter(CameraSourceOpsReportIndexRead).validate_python(report).model_dump(mode="json")
+        print_banner()
+        typer.echo(
+            f"refresh_tasks={serializable['refresh_task_count']} refresh_runs={serializable['refresh_run_count']} failures={serializable['refresh_failure_count']}"
+        )
+        typer.echo(
+            f"latest_materialization_at={serializable['latest_materialization_at']} stale_after_hours={serializable['stale_after_hours']}"
+        )
+        inventory = serializable["inventory_summary"]
+        typer.echo(
+            "inventory "
+            f"total={inventory['total_count']} active={inventory['active_count']} ready={inventory['ready_count']} "
+            f"review={inventory['review_count']} candidate={inventory['candidate_count']} graduated={inventory['graduated_count']}"
+        )
+        typer.echo("recent_refresh_runs:")
+        for row in serializable["recent_refresh_runs"]:
+            typer.echo(
+                f"  {row['task_run_id']} | task={row['task_name']} | status={row['status']} | records={row['records_affected']} | started={row['started_at']}"
+            )
+        typer.echo("stale_sources:")
+        for row in serializable["stale_sources"]:
+            typer.echo(
+                f"  {row['camera_source_inventory_id']} | {row['endpoint_kind']} | {row['status']} | source={row['source_domain']} | last_observed_at={row['last_observed_at']}"
+            )
+    finally:
+        session.close()
+
+
+>>>>>>> 05aeee6 (chore: initialize repository)
 @app.command("show-camera-report-index")
 def show_camera_report_index_command(
     layer: str | None = None,
@@ -762,6 +1389,58 @@ def show_camera_report_index_command(
         session.close()
 
 
+<<<<<<< HEAD
+=======
+@app.command("export-camera-source-summary")
+def export_camera_source_summary_command(
+    output_path: Path,
+    layer: str | None = None,
+    source_domain: str | None = None,
+    endpoint_kind: str | None = None,
+    status: str | None = None,
+    verification_state: str | None = None,
+    active: bool | None = typer.Option(default=None),
+    stale_after_hours: float = 24.0,
+    source_limit: int = 500,
+    report_limit: int = 25,
+    stale_source_limit: int = 25,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        report = build_camera_source_ops_export_summary(
+            session,
+            layer_key=layer,
+            source_domain=source_domain,
+            endpoint_kind=endpoint_kind,
+            status=status,
+            verification_state=verification_state,
+            active=active,
+            stale_after_hours=stale_after_hours,
+            source_limit=source_limit,
+            report_limit=report_limit,
+            stale_source_limit=stale_source_limit,
+        )
+        serializable = TypeAdapter(CameraSourceOpsExportSummaryRead).validate_python(report).model_dump(mode="json")
+        write_json_export_artifact(
+            session,
+            payload=serializable,
+            object_kind="camera_source_summary_export",
+            owner_type="camera_source_export",
+            owner_id=layer or source_domain or "scoped",
+            output_path=output_path,
+            source_uri="/api/camera-sources/export/summary",
+            observed_at=report["generated_at"],
+            metadata_json=serializable["filters_json"],
+            actor="cli_export",
+        )
+        print_banner()
+        typer.echo(f"exported camera source summary to {output_path}")
+    finally:
+        session.close()
+
+
+>>>>>>> 05aeee6 (chore: initialize repository)
 @app.command("export-camera-summary")
 def export_camera_summary_command(
     output_path: Path,
@@ -795,8 +1474,23 @@ def export_camera_summary_command(
             stale_camera_limit=stale_camera_limit,
         )
         serializable = TypeAdapter(CameraOpsExportSummaryRead).validate_python(report).model_dump(mode="json")
+<<<<<<< HEAD
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(json.dumps(serializable, indent=2), encoding="utf-8")
+=======
+        write_json_export_artifact(
+            session,
+            payload=serializable,
+            object_kind="camera_summary_export",
+            owner_type="camera_export",
+            owner_id=layer or source_domain or "scoped",
+            output_path=output_path,
+            source_uri="/api/cameras/export/summary",
+            observed_at=report["generated_at"],
+            metadata_json=serializable["filters_json"],
+            actor="cli_export",
+        )
+>>>>>>> 05aeee6 (chore: initialize repository)
         print_banner()
         typer.echo(f"exported camera summary to {output_path}")
     finally:
@@ -974,8 +1668,28 @@ def export_event_product(
             enforce_export_redaction(product, max_redaction_level)
         except ValueError as exc:
             raise typer.BadParameter(str(exc)) from exc
+<<<<<<< HEAD
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(product.body_text, encoding="utf-8")
+=======
+        write_text_export_artifact(
+            session,
+            body_text=product.body_text,
+            object_kind="situation_product_export",
+            owner_type="situation_product",
+            owner_id=str(product.product_id),
+            output_path=output_path,
+            source_uri=f"/api/events/{event_id}/products",
+            observed_at=product.updated_at,
+            metadata_json={
+                "event_id": event_id,
+                "product_type": product.product_type,
+                "redaction_level": product.redaction_level,
+                "requested_redaction_level": max_redaction_level,
+            },
+            actor="cli_export",
+        )
+>>>>>>> 05aeee6 (chore: initialize repository)
         print_banner()
         typer.echo(f"exported {product.product_type} to {output_path}")
     finally:
@@ -996,8 +1710,28 @@ def export_event_bundle(
         except ValueError as exc:
             raise typer.BadParameter(str(exc)) from exc
         serializable = TypeAdapter(EventExportBundleRead).validate_python(bundle).model_dump(mode="json")
+<<<<<<< HEAD
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(json.dumps(serializable, indent=2), encoding="utf-8")
+=======
+        write_json_export_artifact(
+            session,
+            payload=serializable,
+            object_kind="event_bundle_export",
+            owner_type="event",
+            owner_id=str(event_id),
+            output_path=output_path,
+            source_uri=f"/api/events/{event_id}/export",
+            observed_at=bundle["exported_at"],
+            metadata_json={
+                "requested_redaction_level": max_redaction_level,
+                "observation_count": len(serializable["observations"]),
+                "entity_count": len(serializable["entities"]),
+                "product_count": len(serializable["products"]),
+            },
+            actor="cli_export",
+        )
+>>>>>>> 05aeee6 (chore: initialize repository)
         print_banner()
         typer.echo(f"exported event bundle to {output_path}")
     finally:
@@ -1011,10 +1745,19 @@ def query_observations_command(
     source_domain: str | None = None,
     trust_level: str | None = None,
     limit: int = 50,
+<<<<<<< HEAD
+=======
+    backend: str = "runtime",
+    archive_glob_url: str | None = None,
+>>>>>>> 05aeee6 (chore: initialize repository)
 ) -> None:
     init_db()
     session = get_session_factory()()
     try:
+<<<<<<< HEAD
+=======
+        query_backend = parse_observation_backend(backend)
+>>>>>>> 05aeee6 (chore: initialize repository)
         min_lon, min_lat, max_lon, max_lat = parse_bbox(bbox)
         rows = query_observations(
             session,
@@ -1026,6 +1769,11 @@ def query_observations_command(
             max_lon=max_lon,
             max_lat=max_lat,
             limit=limit,
+<<<<<<< HEAD
+=======
+            backend=query_backend,
+            archive_glob_url=archive_glob_url,
+>>>>>>> 05aeee6 (chore: initialize repository)
         )
         print_banner()
         for row in rows:
@@ -1040,22 +1788,46 @@ def query_observations_command(
 def cross_verify_command(
     bbox: str | None = None,
     layer: str | None = None,
+<<<<<<< HEAD
     limit: int = 200,
     time_window_minutes: int = 60,
     distance_km: float = 25.0,
+=======
+    source_domain: str | None = None,
+    trust_level: str | None = None,
+    limit: int = 200,
+    time_window_minutes: int = 60,
+    distance_km: float = 25.0,
+    backend: str = "runtime",
+    archive_glob_url: str | None = None,
+>>>>>>> 05aeee6 (chore: initialize repository)
 ) -> None:
     init_db()
     session = get_session_factory()()
     try:
+<<<<<<< HEAD
+=======
+        query_backend = parse_observation_backend(backend)
+>>>>>>> 05aeee6 (chore: initialize repository)
         min_lon, min_lat, max_lon, max_lat = parse_bbox(bbox)
         rows = query_observations(
             session,
             layer_key=layer,
+<<<<<<< HEAD
+=======
+            source_domain=source_domain,
+            trust_level=trust_level,
+>>>>>>> 05aeee6 (chore: initialize repository)
             min_lon=min_lon,
             min_lat=min_lat,
             max_lon=max_lon,
             max_lat=max_lat,
             limit=limit,
+<<<<<<< HEAD
+=======
+            backend=query_backend,
+            archive_glob_url=archive_glob_url,
+>>>>>>> 05aeee6 (chore: initialize repository)
         )
         summaries = build_cross_verification_summaries(
             session,
@@ -1173,6 +1945,36 @@ def list_storage_objects_command(
         session.close()
 
 
+<<<<<<< HEAD
+=======
+@app.command("show-storage-report")
+def show_storage_report_command(limit: int = 25) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        report = build_storage_report(session, limit=limit)
+        serializable = TypeAdapter(StorageReportRead).validate_python(report).model_dump(mode="json")
+        print_banner()
+        typer.echo(
+            "storage "
+            f"total={serializable['total_count']} active={serializable['active_count']} "
+            f"expired={serializable['expired_count']} promoted={serializable['promoted_count']} "
+            f"archived={serializable['archived_count']}"
+        )
+        typer.echo(
+            f"next_expiration_at={serializable['next_expiration_at']} oldest_expired_at={serializable['oldest_expired_at']}"
+        )
+        if serializable["expiring_objects"]:
+            typer.echo("expiring_objects:")
+            for row in serializable["expiring_objects"]:
+                typer.echo(
+                    f"  {row['storage_object_id']} | {row['object_kind']} | status={row['lifecycle_status']} | expires_at={row['expires_at']}"
+                )
+    finally:
+        session.close()
+
+
+>>>>>>> 05aeee6 (chore: initialize repository)
 @app.command("add-storage-object")
 def add_storage_object_command(
     object_key: str,
@@ -1221,6 +2023,38 @@ def add_storage_object_command(
         session.close()
 
 
+<<<<<<< HEAD
+=======
+@app.command("run-storage-lifecycle")
+def run_storage_lifecycle_command(
+    retention_class: str | None = None,
+    limit: int = 100,
+    dry_run: bool = False,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        result = sweep_expired_storage_objects(
+            session,
+            retention_class=retention_class,
+            limit=limit,
+            dry_run=dry_run,
+            actor="cli_storage",
+        )
+        serializable = TypeAdapter(StorageLifecycleSweepResultRead).validate_python(result).model_dump(mode="json")
+        print_banner()
+        typer.echo(
+            f"swept_at={serializable['swept_at']} dry_run={serializable['dry_run']} candidates={serializable['expired_candidate_count']} transitioned={serializable['transitioned_count']}"
+        )
+        for row in serializable["candidates"]:
+            typer.echo(
+                f"  {row['storage_object_id']} | {row['object_kind']} | retention={row['retention_class']} | status={row['lifecycle_status']} | expires_at={row['expires_at']}"
+            )
+    finally:
+        session.close()
+
+
+>>>>>>> 05aeee6 (chore: initialize repository)
 @app.command("promote-storage-object")
 def promote_storage_object_command(
     storage_object_id: int,
@@ -1313,6 +2147,40 @@ def show_operations_report(hours: float | None = 24.0, limit: int = 10) -> None:
         typer.echo(
             f"events={summary['event_count']} entities={summary['entity_count']} observations={summary['observation_count']}"
         )
+<<<<<<< HEAD
+=======
+        storage_report = report["storage_report"]
+        typer.echo(
+            "storage="
+            f"{storage_report['total_count']} active={storage_report['active_count']} "
+            f"expired={storage_report['expired_count']} archived={storage_report['archived_count']}"
+        )
+        clickhouse_diagnostics = report["clickhouse_diagnostics"]
+        typer.echo(
+            "clickhouse="
+            f"{clickhouse_diagnostics['status']} enabled={clickhouse_diagnostics['enabled']} "
+            f"reachable={clickhouse_diagnostics['reachable']} mode={clickhouse_diagnostics['storage_mode']}"
+        )
+        scheduler_summary = report["scheduler_inventory_summary"]
+        typer.echo(
+            "scheduler="
+            f"{scheduler_summary['total_count']} due={scheduler_summary['due_count']} "
+            f"overdue={scheduler_summary['overdue_count']} failing={scheduler_summary['failing_count']}"
+        )
+        scheduler_report = report["scheduler_report_index"]
+        typer.echo(
+            f"scheduler_runs={scheduler_report['task_run_count']} scheduler_failures={scheduler_report['task_run_failure_count']} "
+            f"maintenance_runs={scheduler_report['maintenance_run_count']} maintenance_failures={scheduler_report['maintenance_failure_count']}"
+        )
+        source_summary = report["source_inventory_summary"]
+        typer.echo(
+            f"sources={source_summary['total_count']} scheduled={source_summary['scheduled_count']} unscheduled={source_summary['unscheduled_count']} stale={source_summary['stale_count']} failing={source_summary['failing_count']}"
+        )
+        source_report = report["source_report_index"]
+        typer.echo(
+            f"source_sync_tasks={source_report['sync_task_count']} source_sync_runs={source_report['sync_run_count']} source_sync_failures={source_report['sync_failure_count']}"
+        )
+>>>>>>> 05aeee6 (chore: initialize repository)
         camera_summary = report["camera_inventory_summary"]
         typer.echo(
             f"cameras={camera_summary['total_count']} active={camera_summary['active_count']} inactive={camera_summary['inactive_count']} stale={camera_summary['stale_count']}"
@@ -1321,6 +2189,17 @@ def show_operations_report(hours: float | None = 24.0, limit: int = 10) -> None:
         typer.echo(
             f"camera_refresh_tasks={camera_report['refresh_task_count']} refresh_runs={camera_report['refresh_run_count']} refresh_failures={camera_report['refresh_failure_count']}"
         )
+<<<<<<< HEAD
+=======
+        camera_source_summary = report["camera_source_inventory_summary"]
+        typer.echo(
+            f"camera_sources={camera_source_summary['total_count']} active={camera_source_summary['active_count']} ready={camera_source_summary['ready_count']} review={camera_source_summary['review_count']} candidate={camera_source_summary['candidate_count']} graduated={camera_source_summary['graduated_count']}"
+        )
+        camera_source_report = report["camera_source_report_index"]
+        typer.echo(
+            f"camera_source_refresh_tasks={camera_source_report['refresh_task_count']} refresh_runs={camera_source_report['refresh_run_count']} refresh_failures={camera_source_report['refresh_failure_count']}"
+        )
+>>>>>>> 05aeee6 (chore: initialize repository)
     finally:
         session.close()
 
@@ -1333,8 +2212,28 @@ def export_operations_report(output_path: Path, hours: float | None = 24.0, limi
         since = resolve_report_since(hours)
         report = build_operations_report(session, since=since, limit=limit)
         serializable = TypeAdapter(OperationsReportRead).validate_python(report).model_dump(mode="json")
+<<<<<<< HEAD
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(json.dumps(serializable, indent=2), encoding="utf-8")
+=======
+        write_json_export_artifact(
+            session,
+            payload=serializable,
+            object_kind="operations_report_export",
+            owner_type="operations_report",
+            owner_id="scoped",
+            output_path=output_path,
+            source_uri="/api/operations/report",
+            observed_at=report["generated_at"],
+            metadata_json={
+                "scope_since": serializable["scope_since"],
+                "scope_until": serializable["scope_until"],
+                "limit": limit,
+                "hours": hours,
+            },
+            actor="cli_export",
+        )
+>>>>>>> 05aeee6 (chore: initialize repository)
         print_banner()
         typer.echo(f"exported operations report to {output_path}")
     finally:
@@ -1348,8 +2247,26 @@ def export_runtime_snapshot_command(output_path: Path) -> None:
     try:
         snapshot = build_runtime_snapshot(session)
         serializable = TypeAdapter(RuntimeSnapshotRead).validate_python(snapshot).model_dump(mode="json")
+<<<<<<< HEAD
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(json.dumps(serializable, indent=2), encoding="utf-8")
+=======
+        write_json_export_artifact(
+            session,
+            payload=serializable,
+            object_kind="runtime_snapshot_export",
+            owner_type="runtime_snapshot",
+            owner_id=serializable["exported_at"],
+            output_path=output_path,
+            source_uri="/api/operations/runtime/export",
+            observed_at=snapshot["exported_at"],
+            metadata_json={
+                "database_backend": serializable["database_backend"],
+                "spatial_backend": serializable["spatial_backend"],
+            },
+            actor="cli_export",
+        )
+>>>>>>> 05aeee6 (chore: initialize repository)
         print_banner()
         typer.echo(f"exported runtime snapshot to {output_path}")
     finally:
@@ -1478,6 +2395,117 @@ def add_source_sync_schedule(
         session.close()
 
 
+<<<<<<< HEAD
+=======
+@app.command("add-storage-lifecycle-schedule")
+def add_storage_lifecycle_schedule(
+    name: str,
+    interval_seconds: int,
+    retention_class: str | None = None,
+    limit: int = 100,
+    notes: str = "",
+    retry_attempts: int = 1,
+    retry_backoff_seconds: float = 0.0,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        payload_json: dict[str, object] = {"limit": limit}
+        if retention_class:
+            payload_json["retention_class"] = retention_class
+        task = create_scheduled_task(
+            session,
+            ScheduledTaskCreate(
+                name=name,
+                task_type="storage_lifecycle",
+                interval_seconds=interval_seconds,
+                retry_attempts=retry_attempts,
+                retry_backoff_seconds=retry_backoff_seconds,
+                notes=notes,
+                payload_json=payload_json,
+            ),
+        )
+        print_banner()
+        typer.echo(f"scheduled task {task.task_id} created for storage lifecycle sweep")
+    finally:
+        session.close()
+
+
+@app.command("add-clickhouse-sync-schedule")
+def add_clickhouse_sync_schedule(
+    name: str,
+    interval_seconds: int,
+    layer: str | None = None,
+    source_domain: str | None = None,
+    limit: int = 1000,
+    notes: str = "",
+    retry_attempts: int = 1,
+    retry_backoff_seconds: float = 0.0,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        payload_json: dict[str, object] = {"limit": limit}
+        if source_domain:
+            payload_json["source_domain"] = source_domain
+        task = create_scheduled_task(
+            session,
+            ScheduledTaskCreate(
+                name=name,
+                task_type="clickhouse_sync",
+                interval_seconds=interval_seconds,
+                retry_attempts=retry_attempts,
+                retry_backoff_seconds=retry_backoff_seconds,
+                layer_key=layer,
+                notes=notes,
+                payload_json=payload_json,
+            ),
+        )
+        print_banner()
+        typer.echo(f"scheduled task {task.task_id} created for ClickHouse sync")
+    finally:
+        session.close()
+
+
+@app.command("add-clickhouse-archive-schedule")
+def add_clickhouse_archive_schedule(
+    name: str,
+    interval_seconds: int,
+    layer: str | None = None,
+    source_domain: str | None = None,
+    limit: int | None = None,
+    notes: str = "",
+    retry_attempts: int = 1,
+    retry_backoff_seconds: float = 0.0,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        payload_json: dict[str, object] = {}
+        if source_domain:
+            payload_json["source_domain"] = source_domain
+        if limit is not None:
+            payload_json["limit"] = limit
+        task = create_scheduled_task(
+            session,
+            ScheduledTaskCreate(
+                name=name,
+                task_type="clickhouse_archive",
+                interval_seconds=interval_seconds,
+                retry_attempts=retry_attempts,
+                retry_backoff_seconds=retry_backoff_seconds,
+                layer_key=layer,
+                notes=notes,
+                payload_json=payload_json,
+            ),
+        )
+        print_banner()
+        typer.echo(f"scheduled task {task.task_id} created for ClickHouse archive")
+    finally:
+        session.close()
+
+
+>>>>>>> 05aeee6 (chore: initialize repository)
 @app.command("add-camera-refresh-schedule")
 def add_camera_refresh_schedule(
     name: str,
@@ -1628,6 +2656,114 @@ def add_event_fusion_schedule(
         session.close()
 
 
+<<<<<<< HEAD
+=======
+@app.command("show-scheduler-summary")
+def show_scheduler_summary_command() -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        summary = build_scheduler_inventory_summary(session)
+        serializable = TypeAdapter(SchedulerInventorySummaryRead).validate_python(summary).model_dump(mode="json")
+        print_banner()
+        typer.echo(
+            f"{serializable['total_count']} enabled={serializable['enabled_count']} disabled={serializable['disabled_count']} "
+            f"due={serializable['due_count']} overdue={serializable['overdue_count']} failing={serializable['failing_count']} "
+            f"maintenance={serializable['maintenance_task_count']}"
+        )
+        for group_name in ("task_type_counts", "latest_status_counts"):
+            typer.echo(f"{group_name}:")
+            for item in serializable[group_name]:
+                typer.echo(
+                    f"  {item['key']}: total={item['total_count']} enabled={item['enabled_count']} "
+                    f"disabled={item['disabled_count']} due={item['due_count']} failing={item['failing_count']}"
+                )
+    finally:
+        session.close()
+
+
+@app.command("show-scheduler-report-index")
+def show_scheduler_report_index_command(limit: int = 25, overdue_task_limit: int = 25) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        report = build_scheduler_ops_report_index(
+            session,
+            limit=limit,
+            overdue_task_limit=overdue_task_limit,
+        )
+        serializable = TypeAdapter(SchedulerOpsReportIndexRead).validate_python(report).model_dump(mode="json")
+        print_banner()
+        typer.echo(
+            f"task_runs={serializable['task_run_count']} failures={serializable['task_run_failure_count']} "
+            f"maintenance_runs={serializable['maintenance_run_count']} maintenance_failures={serializable['maintenance_failure_count']}"
+        )
+        inventory = serializable["inventory_summary"]
+        typer.echo(
+            f"tasks={inventory['total_count']} due={inventory['due_count']} overdue={inventory['overdue_count']} "
+            f"failing={inventory['failing_count']}"
+        )
+        typer.echo("task_type_run_counts:")
+        for item in serializable["task_type_run_counts"]:
+            typer.echo(
+                f"  {item['key']}: total={item['total_count']} completed={item['completed_count']} failures={item['failure_count']}"
+            )
+        typer.echo("overdue_tasks:")
+        for item in serializable["overdue_tasks"]:
+            typer.echo(
+                f"  {item['task']['task_id']} | {item['task']['task_type']} | next={item['task']['next_run_at']} | failing={item['is_failing']}"
+            )
+        typer.echo("failing_tasks:")
+        for item in serializable["failing_tasks"]:
+            latest_status = item["latest_run"]["status"] if item["latest_run"] else "never_run"
+            typer.echo(
+                f"  {item['task']['task_id']} | {item['task']['task_type']} | latest={latest_status} | next={item['task']['next_run_at']}"
+            )
+        typer.echo("maintenance_tasks:")
+        for item in serializable["maintenance_tasks"]:
+            typer.echo(
+                f"  {item['task']['task_id']} | {item['task']['task_type']} | enabled={item['task']['enabled']} | next={item['task']['next_run_at']}"
+            )
+    finally:
+        session.close()
+
+
+@app.command("export-scheduler-summary")
+def export_scheduler_summary_command(
+    output_path: Path,
+    task_limit: int = 500,
+    report_limit: int = 25,
+    overdue_task_limit: int = 25,
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        report = build_scheduler_ops_export_summary(
+            session,
+            task_limit=task_limit,
+            report_limit=report_limit,
+            overdue_task_limit=overdue_task_limit,
+        )
+        serializable = TypeAdapter(SchedulerOpsExportSummaryRead).validate_python(report).model_dump(mode="json")
+        write_json_export_artifact(
+            session,
+            payload=serializable,
+            object_kind="scheduler_summary_export",
+            owner_type="scheduler_export",
+            owner_id="scoped",
+            output_path=output_path,
+            source_uri="/api/scheduler/export/summary",
+            observed_at=report["generated_at"],
+            metadata_json=serializable["filters_json"],
+            actor="cli_export",
+        )
+        print_banner()
+        typer.echo(f"exported scheduler summary to {output_path}")
+    finally:
+        session.close()
+
+
+>>>>>>> 05aeee6 (chore: initialize repository)
 @app.command("list-schedules")
 def list_schedules() -> None:
     init_db()

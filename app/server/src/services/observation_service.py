@@ -12,6 +12,29 @@ from src.services.geospatial_service import build_bbox_sql_filter, uses_postgis
 
 
 @dataclass
+<<<<<<< HEAD
+=======
+class ObservationQueryRecord:
+    observation_id: int
+    import_run_id: int | None
+    event_id: int | None
+    layer_key: str
+    source_domain: str | None
+    source_type: str
+    record_format: str
+    trust_level: str
+    approval_policy: str
+    confidence_score: float
+    location_geojson: dict[str, object] | None
+    content_text: str
+    content_json: dict[str, object]
+    raw_hash: str
+    created_at: datetime
+    updated_at: datetime
+
+
+@dataclass
+>>>>>>> 05aeee6 (chore: initialize repository)
 class CrossVerificationCluster:
     observation_ids: list[int] = field(default_factory=list)
     layer_keys: set[str] = field(default_factory=set)
@@ -63,7 +86,31 @@ def query_observations(
     since: datetime | None = None,
     until: datetime | None = None,
     limit: int = 200,
+<<<<<<< HEAD
 ) -> list[ObservationORM]:
+=======
+    backend: str = "runtime",
+    archive_glob_url: str | None = None,
+) -> list[ObservationORM | ObservationQueryRecord]:
+    if backend != "runtime":
+        from src.services.clickhouse_service import query_clickhouse_observations
+
+        return query_clickhouse_observations(
+            layer_key=layer_key,
+            source_domain=source_domain,
+            trust_level=trust_level,
+            min_lon=min_lon,
+            min_lat=min_lat,
+            max_lon=max_lon,
+            max_lat=max_lat,
+            since=since,
+            until=until,
+            limit=limit,
+            backend=backend,
+            archive_glob_url=archive_glob_url,
+        )
+
+>>>>>>> 05aeee6 (chore: initialize repository)
     statement = select(ObservationORM).order_by(ObservationORM.created_at.desc())
     if layer_key:
         statement = statement.where(ObservationORM.layer_key == layer_key)

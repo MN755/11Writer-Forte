@@ -3,15 +3,28 @@ from __future__ import annotations
 import json
 import threading
 from contextlib import contextmanager
+<<<<<<< HEAD
+=======
+from datetime import datetime, timedelta, timezone
+>>>>>>> 05aeee6 (chore: initialize repository)
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+<<<<<<< HEAD
 from src.db import get_session_factory
 from src.models import ScheduledTaskORM
 from src.services.scheduler_runtime_service import run_scheduler_worker
 from src.services.scheduler_service import scheduler_now
+=======
+from src.config import reset_settings_cache
+from src.db import get_session_factory
+from src.models import ScheduledTaskORM
+from src.services import clickhouse_service
+from src.services.scheduler_runtime_service import run_scheduler_worker
+from src.services.scheduler_service import run_task, scheduler_now
+>>>>>>> 05aeee6 (chore: initialize repository)
 
 
 @contextmanager
@@ -46,6 +59,62 @@ def flaky_scheduler_json_server(payload: list[dict[str, object]]):
         thread.join(timeout=5)
 
 
+<<<<<<< HEAD
+=======
+class FakeClickHouseResponse:
+    def __init__(self, payload: str) -> None:
+        self.payload = payload
+
+    def read(self) -> bytes:
+        return self.payload.encode("utf-8")
+
+    def __enter__(self) -> "FakeClickHouseResponse":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        return None
+
+
+def configure_fake_clickhouse(monkeypatch, *, row_count: int = 1) -> list[dict[str, object]]:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv("ELEVENWRITER_CLICKHOUSE_ENABLED", "true")
+    monkeypatch.setenv("ELEVENWRITER_CLICKHOUSE_URL", "http://clickhouse.test:8123")
+    monkeypatch.setenv("ELEVENWRITER_CLICKHOUSE_DATABASE", "elevenwriter")
+    monkeypatch.setenv("ELEVENWRITER_CLICKHOUSE_USER", "forte")
+    monkeypatch.setenv("ELEVENWRITER_CLICKHOUSE_PASSWORD", "secret")
+    monkeypatch.setenv(
+        "ELEVENWRITER_CLICKHOUSE_R2_ENDPOINT",
+        "https://acct.r2.cloudflarestorage.com",
+    )
+    monkeypatch.setenv("ELEVENWRITER_CLICKHOUSE_R2_BUCKET", "11writer-archive")
+    monkeypatch.setenv("ELEVENWRITER_CLICKHOUSE_R2_ACCESS_KEY_ID", "r2-key")
+    monkeypatch.setenv("ELEVENWRITER_CLICKHOUSE_R2_SECRET_ACCESS_KEY", "r2-secret")
+    monkeypatch.setenv("ELEVENWRITER_CLICKHOUSE_R2_ARCHIVE_PREFIX", "forte-archive")
+    reset_settings_cache()
+
+    requests: list[dict[str, object]] = []
+
+    def fake_urlopen(request, timeout=0):  # type: ignore[no-untyped-def]
+        body = request.data.decode("utf-8") if request.data else ""
+        requests.append(
+            {
+                "url": request.full_url,
+                "method": request.get_method(),
+                "body": body,
+            }
+        )
+        if request.full_url.endswith("/ping"):
+            return FakeClickHouseResponse("Ok.\n")
+        if "SELECT version()" in body:
+            return FakeClickHouseResponse('{"version":"26.6.1","current_database":"elevenwriter"}\n')
+        if "SELECT count(*) AS row_count" in body:
+            return FakeClickHouseResponse(f'{{"row_count":{row_count}}}\n')
+        return FakeClickHouseResponse("")
+
+    monkeypatch.setattr(clickhouse_service, "urlopen", fake_urlopen)
+    return requests
+
+
+>>>>>>> 05aeee6 (chore: initialize repository)
 def test_geofence_schedule_creates_alert_and_custody_log(
     client: TestClient,
     tmp_path: Path,
@@ -205,6 +274,203 @@ def test_local_import_schedule_runs_manually(client: TestClient, tmp_path: Path)
     )
 
 
+<<<<<<< HEAD
+=======
+def test_storage_lifecycle_schedule_expires_due_objects(client: TestClient) -> None:
+    expired_at = datetime.now(timezone.utc) - timedelta(hours=3)
+    create_response = client.post(
+        "/api/storage/objects",
+        json={
+            "object_key": "scheduled:expired:1",
+            "object_kind": "raw_payload",
+            "owner_type": "source_run",
+            "owner_id": "811",
+            "object_uri": "file:///tmp/source-run-811.json",
+            "storage_tier": "warm",
+            "retention_class": "operational",
+            "lifecycle_status": "active",
+            "expires_at": expired_at.isoformat(),
+        },
+    )
+    assert create_response.status_code == 200
+    storage_object_id = create_response.json()["storage_object_id"]
+
+    schedule_response = client.post(
+        "/api/scheduler/tasks",
+        json={
+            "name": "storage-lifecycle-schedule",
+            "task_type": "storage_lifecycle",
+            "interval_seconds": 300,
+            "payload_json": {"retention_class": "operational", "limit": 25},
+        },
+    )
+    assert schedule_response.status_code == 200
+    task_id = schedule_response.json()["task_id"]
+
+    run_response = client.post(f"/api/scheduler/tasks/{task_id}/run")
+    assert run_response.status_code == 200
+    run_payload = run_response.json()
+    assert run_payload["status"] == "completed"
+    assert run_payload["records_affected"] >= 1
+    assert run_payload["output_json"]["transitioned_count"] >= 1
+    assert storage_object_id in run_payload["output_json"]["storage_object_ids"]
+
+    storage_response = client.get(
+        "/api/storage/objects",
+        params={"owner_type": "source_run", "owner_id": "811", "lifecycle_status": "expired"},
+    )
+    assert storage_response.status_code == 200
+    storage_rows = storage_response.json()
+    assert len(storage_rows) == 1
+    assert storage_rows[0]["storage_object_id"] == storage_object_id
+
+    custody_response = client.get("/api/custody/logs")
+    assert custody_response.status_code == 200
+    custody_rows = custody_response.json()
+    assert any(
+        row["object_type"] == "storage_object"
+        and row["object_id"] == str(storage_object_id)
+        and row["action"] == "storage_expired"
+        for row in custody_rows
+    )
+    assert any(
+        row["object_type"] == "scheduled_task_run"
+        and row["action"] == "task_run_completed"
+        and row["details_json"]["task_id"] == task_id
+        for row in custody_rows
+    )
+
+
+def test_clickhouse_sync_schedule_mirrors_runtime_facts(
+    client: TestClient,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    fixture = tmp_path / "scheduled-clickhouse-sync.json"
+    fixture.write_text(
+        json.dumps(
+            [
+                {
+                    "title": "Scheduled ClickHouse sync",
+                    "url": "https://clickhouse-sync.example.com/1",
+                    "lat": 29.76,
+                    "lon": -95.36,
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    import_response = client.post(
+        "/api/imports/local",
+        json={"source_path": str(fixture), "layer_key": "marine-track"},
+    )
+    assert import_response.status_code == 200
+
+    requests = configure_fake_clickhouse(monkeypatch)
+
+    schedule_response = client.post(
+        "/api/scheduler/tasks",
+        json={
+            "name": "scheduled-clickhouse-sync",
+            "task_type": "clickhouse_sync",
+            "interval_seconds": 300,
+            "layer_key": "marine-track",
+            "payload_json": {"limit": 10},
+        },
+    )
+    assert schedule_response.status_code == 200
+    task_id = schedule_response.json()["task_id"]
+
+    run_response = client.post(f"/api/scheduler/tasks/{task_id}/run")
+    assert run_response.status_code == 200
+    payload = run_response.json()
+    assert payload["status"] == "completed"
+    assert payload["records_affected"] == 2
+    assert payload["output_json"]["observation_count"] == 1
+    assert payload["output_json"]["storage_object_count"] == 1
+    assert payload["output_json"]["clickhouse_database"] == "elevenwriter"
+
+    custody_response = client.get("/api/custody/logs")
+    assert custody_response.status_code == 200
+    custody_rows = custody_response.json()
+    assert any(row["action"] == "clickhouse_synced" for row in custody_rows)
+    assert any(
+        row["object_type"] == "scheduled_task_run"
+        and row["action"] == "task_run_completed"
+        and row["details_json"]["task_id"] == task_id
+        for row in custody_rows
+    )
+
+    assert any("INSERT INTO elevenwriter.observation_facts FORMAT JSONEachRow" in str(item["body"]) for item in requests)
+    assert any("INSERT INTO elevenwriter.storage_object_facts FORMAT JSONEachRow" in str(item["body"]) for item in requests)
+    reset_settings_cache()
+
+
+def test_clickhouse_archive_schedule_exports_r2(
+    client: TestClient,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    fixture = tmp_path / "scheduled-clickhouse-archive.json"
+    fixture.write_text(
+        json.dumps(
+            [
+                {
+                    "title": "Scheduled ClickHouse archive",
+                    "url": "https://archive.example.com/1",
+                    "lat": 29.8,
+                    "lon": -95.3,
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    import_response = client.post(
+        "/api/imports/local",
+        json={"source_path": str(fixture), "layer_key": "marine-track"},
+    )
+    assert import_response.status_code == 200
+
+    requests = configure_fake_clickhouse(monkeypatch, row_count=1)
+
+    schedule_response = client.post(
+        "/api/scheduler/tasks",
+        json={
+            "name": "scheduled-clickhouse-archive",
+            "task_type": "clickhouse_archive",
+            "interval_seconds": 300,
+            "layer_key": "marine-track",
+            "payload_json": {"limit": 25, "source_domain": "archive.example.com"},
+        },
+    )
+    assert schedule_response.status_code == 200
+    task_id = schedule_response.json()["task_id"]
+
+    run_response = client.post(f"/api/scheduler/tasks/{task_id}/run")
+    assert run_response.status_code == 200
+    payload = run_response.json()
+    assert payload["status"] == "completed"
+    assert payload["records_affected"] == 1
+    assert payload["output_json"]["exported_row_count"] == 1
+    assert payload["output_json"]["archive_root_url"].endswith("/11writer-archive/forte-archive")
+    assert payload["output_json"]["partition_strategy"] == "wildcard"
+
+    custody_response = client.get("/api/custody/logs")
+    assert custody_response.status_code == 200
+    custody_rows = custody_response.json()
+    assert any(row["action"] == "clickhouse_archived_to_r2" for row in custody_rows)
+    assert any(
+        row["object_type"] == "scheduled_task_run"
+        and row["action"] == "task_run_completed"
+        and row["details_json"]["task_id"] == task_id
+        for row in custody_rows
+    )
+
+    assert any("INSERT INTO FUNCTION s3(" in str(item["body"]) for item in requests)
+    reset_settings_cache()
+
+
+>>>>>>> 05aeee6 (chore: initialize repository)
 def test_camera_inventory_refresh_schedule_materializes_camera_inventory(
     client: TestClient,
     tmp_path: Path,
@@ -255,6 +521,12 @@ def test_camera_inventory_refresh_schedule_materializes_camera_inventory(
     assert payload["output_json"]["created_count"] == 1
     assert payload["output_json"]["updated_count"] == 0
     assert payload["output_json"]["scanned_count"] == 1
+<<<<<<< HEAD
+=======
+    assert payload["output_json"]["source_created_count"] == 2
+    assert payload["output_json"]["source_updated_count"] == 0
+    assert payload["output_json"]["source_scanned_endpoint_count"] == 2
+>>>>>>> 05aeee6 (chore: initialize repository)
     assert len(payload["output_json"]["camera_inventory_ids"]) == 1
 
     cameras_response = client.get("/api/cameras", params={"layer_key": "traffic-camera-feed"})
@@ -264,6 +536,18 @@ def test_camera_inventory_refresh_schedule_materializes_camera_inventory(
     assert cameras[0]["external_id"] == "mndot-i35w-001"
     assert cameras[0]["source_domain"] == "images.511mn.org"
 
+<<<<<<< HEAD
+=======
+    camera_sources_response = client.get(
+        "/api/camera-sources",
+        params={"layer_key": "traffic-camera-feed", "limit": 10},
+    )
+    assert camera_sources_response.status_code == 200
+    camera_sources = camera_sources_response.json()
+    assert len(camera_sources) == 2
+    assert {row["endpoint_kind"] for row in camera_sources} == {"image", "page"}
+
+>>>>>>> 05aeee6 (chore: initialize repository)
     custody_response = client.get("/api/custody/logs")
     assert custody_response.status_code == 200
     assert any(
@@ -825,3 +1109,162 @@ def test_schedule_update_can_disable_then_reenable_task(client: TestClient, tmp_
         and row["action"] == "task_updated"
         for row in custody_response.json()
     )
+<<<<<<< HEAD
+=======
+
+
+def test_scheduler_summary_and_report_index_capture_overdue_failing_and_maintenance_tasks(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    healthy_fixture = tmp_path / "scheduler-summary-healthy.json"
+    healthy_fixture.write_text(
+        json.dumps(
+            [
+                {
+                    "title": "Healthy scheduled import",
+                    "url": "https://scheduler-healthy.example.com/1",
+                    "lat": 30.1,
+                    "lon": -95.1,
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    failing_source = client.post(
+        "/api/sources",
+        json={
+            "name": "scheduler-summary-failing-source",
+            "source_kind": "http_json",
+            "layer_key": "disabled-feed",
+            "target_uri": "http://127.0.0.1:1/failing.json",
+            "metadata_json": {
+                "retry_attempts": 1,
+                "request_timeout_seconds": 1,
+            },
+        },
+    )
+    assert failing_source.status_code == 200
+    failing_source_id = failing_source.json()["source_id"]
+
+    disabled_task = client.post(
+        "/api/scheduler/tasks",
+        json={
+            "name": "scheduler-summary-disabled-task",
+            "task_type": "integrity_seed",
+            "interval_seconds": 300,
+            "enabled": False,
+        },
+    )
+    assert disabled_task.status_code == 200
+
+    disabled_fixture = tmp_path / "scheduler-summary-disabled-source.json"
+    disabled_fixture.write_text(
+        json.dumps(
+            [
+                {
+                    "title": "Disabled sync source",
+                    "url": "https://scheduler-disabled.example.com/1",
+                    "lat": 30.2,
+                    "lon": -95.2,
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    healthy_task = client.post(
+        "/api/scheduler/tasks",
+        json={
+            "name": "scheduler-summary-healthy-task",
+            "task_type": "local_import",
+            "interval_seconds": 300,
+            "target_path": str(healthy_fixture),
+            "layer_key": "ops-feed",
+        },
+    )
+    assert healthy_task.status_code == 200
+    healthy_task_id = healthy_task.json()["task_id"]
+    healthy_run = client.post(f"/api/scheduler/tasks/{healthy_task_id}/run")
+    assert healthy_run.status_code == 200
+
+    failing_task = client.post(
+        "/api/scheduler/tasks",
+        json={
+            "name": "scheduler-summary-failing-task",
+            "task_type": "source_sync",
+            "interval_seconds": 300,
+            "source_id": failing_source_id,
+        },
+    )
+    assert failing_task.status_code == 200
+    failing_task_id = failing_task.json()["task_id"]
+    session = get_session_factory()()
+    try:
+        try:
+            run_task(session, failing_task_id, actor="test_scheduler")
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError("Expected scheduled source sync task to fail.")
+    finally:
+        session.close()
+
+    maintenance_task = client.post(
+        "/api/scheduler/tasks",
+        json={
+            "name": "scheduler-summary-maintenance-task",
+            "task_type": "storage_lifecycle",
+            "interval_seconds": 300,
+            "payload_json": {"limit": 25},
+        },
+    )
+    assert maintenance_task.status_code == 200
+    maintenance_task_id = maintenance_task.json()["task_id"]
+
+    session = get_session_factory()()
+    try:
+        maintenance_record = session.get(ScheduledTaskORM, maintenance_task_id)
+        assert maintenance_record is not None
+        maintenance_record.next_run_at = scheduler_now() - timedelta(minutes=10)
+        session.commit()
+    finally:
+        session.close()
+
+    summary_response = client.get("/api/scheduler/summary")
+    assert summary_response.status_code == 200
+    summary = summary_response.json()
+    assert summary["total_count"] == 4
+    assert summary["enabled_count"] == 3
+    assert summary["disabled_count"] == 1
+    assert summary["due_count"] >= 1
+    assert summary["overdue_count"] >= 1
+    assert summary["failing_count"] == 1
+    assert summary["maintenance_task_count"] == 1
+    assert any(bucket["key"] == "storage_lifecycle" for bucket in summary["task_type_counts"])
+    assert any(bucket["key"] == "failed" for bucket in summary["latest_status_counts"])
+
+    report_response = client.get("/api/scheduler/report-index", params={"limit": 10, "overdue_task_limit": 10})
+    assert report_response.status_code == 200
+    report = report_response.json()
+    assert report["task_run_count"] == 2
+    assert report["task_run_failure_count"] == 1
+    assert report["maintenance_run_count"] == 0
+    assert report["maintenance_failure_count"] == 0
+    assert report["inventory_summary"]["total_count"] == 4
+    assert any(row["task"]["task_id"] == maintenance_task_id for row in report["overdue_tasks"])
+    assert any(row["task"]["task_id"] == failing_task_id for row in report["failing_tasks"])
+    assert any(row["task"]["task_id"] == maintenance_task_id for row in report["maintenance_tasks"])
+    assert any(bucket["key"] == "source_sync" and bucket["failure_count"] == 1 for bucket in report["task_type_run_counts"])
+
+    export_response = client.get(
+        "/api/scheduler/export/summary",
+        params={"task_limit": 10, "report_limit": 10, "overdue_task_limit": 10},
+    )
+    assert export_response.status_code == 200
+    export_payload = export_response.json()
+    assert export_payload["filters_json"]["task_limit"] == 10
+    assert export_payload["report_index"]["inventory_summary"]["total_count"] == 4
+    assert len(export_payload["tasks"]) == 4
+    assert any(row["task_type"] == "storage_lifecycle" for row in export_payload["tasks"])
+>>>>>>> 05aeee6 (chore: initialize repository)

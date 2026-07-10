@@ -5,13 +5,31 @@ from sqlalchemy.orm import Session
 from src.db import get_db
 from src.models import ScheduledTaskORM, ScheduledTaskRunORM
 from src.schemas import (
+<<<<<<< HEAD
+=======
+    SchedulerOpsExportSummaryRead,
+    SchedulerInventorySummaryRead,
+    SchedulerOpsReportIndexRead,
+>>>>>>> 05aeee6 (chore: initialize repository)
     SchedulerKickResponse,
     ScheduledTaskCreate,
     ScheduledTaskRead,
     ScheduledTaskRunRead,
     ScheduledTaskUpdate,
 )
+<<<<<<< HEAD
 from src.services.scheduler_service import create_scheduled_task, run_due_tasks, run_task, update_scheduled_task
+=======
+from src.services.scheduler_service import (
+    build_scheduler_inventory_summary,
+    build_scheduler_ops_export_summary,
+    build_scheduler_ops_report_index,
+    create_scheduled_task,
+    run_due_tasks,
+    run_task,
+    update_scheduled_task,
+)
+>>>>>>> 05aeee6 (chore: initialize repository)
 
 router = APIRouter(prefix="/scheduler", tags=["scheduler"])
 
@@ -22,6 +40,42 @@ def list_tasks(session: Session = Depends(get_db)) -> list[ScheduledTaskORM]:
     return list(session.scalars(statement))
 
 
+<<<<<<< HEAD
+=======
+@router.get("/summary", response_model=SchedulerInventorySummaryRead)
+def scheduler_summary(session: Session = Depends(get_db)) -> dict[str, object]:
+    return build_scheduler_inventory_summary(session)
+
+
+@router.get("/report-index", response_model=SchedulerOpsReportIndexRead)
+def scheduler_report_index(
+    limit: int = 25,
+    overdue_task_limit: int = 25,
+    session: Session = Depends(get_db),
+) -> dict[str, object]:
+    return build_scheduler_ops_report_index(
+        session,
+        limit=limit,
+        overdue_task_limit=overdue_task_limit,
+    )
+
+
+@router.get("/export/summary", response_model=SchedulerOpsExportSummaryRead)
+def scheduler_export_summary(
+    task_limit: int = 500,
+    report_limit: int = 25,
+    overdue_task_limit: int = 25,
+    session: Session = Depends(get_db),
+) -> dict[str, object]:
+    return build_scheduler_ops_export_summary(
+        session,
+        task_limit=task_limit,
+        report_limit=report_limit,
+        overdue_task_limit=overdue_task_limit,
+    )
+
+
+>>>>>>> 05aeee6 (chore: initialize repository)
 @router.post("/tasks", response_model=ScheduledTaskRead)
 def create_task(payload: ScheduledTaskCreate, session: Session = Depends(get_db)) -> ScheduledTaskORM:
     try:

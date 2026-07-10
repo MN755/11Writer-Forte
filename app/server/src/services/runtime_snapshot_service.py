@@ -10,6 +10,10 @@ from src.config import get_settings
 from src.models import (
     AlertORM,
     CameraInventoryORM,
+<<<<<<< HEAD
+=======
+    CameraSourceInventoryORM,
+>>>>>>> 05aeee6 (chore: initialize repository)
     CustodyLogORM,
     DataLayerORM,
     EntityObservationLinkORM,
@@ -30,6 +34,10 @@ from src.models import (
 from src.schemas import (
     AlertRead,
     CameraInventoryRead,
+<<<<<<< HEAD
+=======
+    CameraSourceInventoryRead,
+>>>>>>> 05aeee6 (chore: initialize repository)
     CustodyLogRead,
     DataLayerRead,
     DatabaseTableCountRead,
@@ -72,6 +80,15 @@ SNAPSHOT_SECTIONS: tuple[tuple[str, object, type[BaseModel], object], ...] = (
     ("entities", EntityORM, EntityRead, EntityORM.entity_id),
     ("observations", ObservationORM, ObservationRead, ObservationORM.observation_id),
     ("camera_inventory", CameraInventoryORM, CameraInventoryRead, CameraInventoryORM.camera_inventory_id),
+<<<<<<< HEAD
+=======
+    (
+        "camera_source_inventory",
+        CameraSourceInventoryORM,
+        CameraSourceInventoryRead,
+        CameraSourceInventoryORM.camera_source_inventory_id,
+    ),
+>>>>>>> 05aeee6 (chore: initialize repository)
     ("storage_objects", StorageObjectORM, StorageObjectRead, StorageObjectORM.storage_object_id),
     (
         "event_observation_links",
@@ -103,6 +120,10 @@ RESTORE_ORDER: tuple[tuple[str, object], ...] = (
     ("entities", EntityORM),
     ("observations", ObservationORM),
     ("camera_inventory", CameraInventoryORM),
+<<<<<<< HEAD
+=======
+    ("camera_source_inventory", CameraSourceInventoryORM),
+>>>>>>> 05aeee6 (chore: initialize repository)
     ("storage_objects", StorageObjectORM),
     ("event_observation_links", EventObservationLinkORM),
     ("entity_observation_links", EntityObservationLinkORM),
