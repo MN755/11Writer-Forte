@@ -477,6 +477,18 @@ def execute_task(
                 "import_run_id": source_run.import_run_id,
             },
         )
+    if task.task_type == "watch_evaluate":
+        from src.services.watch_service import evaluate_watch
+
+        payload = task.payload_json or {}
+        watch_id = payload.get("watch_id") if isinstance(payload, dict) else None
+        if not isinstance(watch_id, int):
+            raise ValueError("Watch evaluate task requires an integer watch_id payload value.")
+        watch_run = evaluate_watch(session, watch_id, actor=actor)
+        return (
+            1 if watch_run.change_detected else 0,
+            {"watch_id": watch_id, "watch_run_id": watch_run.watch_run_id, "outcome": watch_run.outcome},
+        )
     if task.task_type == "discovery_campaign":
         from src.schemas import DiscoveryRunRequest
         from src.services.discovery_service import run_discovery_campaign
@@ -822,6 +834,12 @@ def validate_task_configuration(
         raise ValueError("Local import task requires target_path.")
     if task_type == "source_sync" and source_id is None:
         raise ValueError("Source sync task requires source_id.")
+    if task_type == "watch_evaluate":
+        if any(value is not None for value in (source_id, target_path, geofence_id, layer_key)):
+            raise ValueError("Watch evaluate task only accepts payload_json.")
+        payload = payload_json or {}
+        if not isinstance(payload.get("watch_id"), int):
+            raise ValueError("Watch evaluate task requires an integer watch_id payload value.")
     if task_type == "discovery_campaign":
         if any(value is not None for value in (source_id, target_path, geofence_id, layer_key)):
             raise ValueError(
