@@ -20,17 +20,12 @@ Avoid OneDrive-synced or other cloud-synced folders for the primary checkout. Gi
 - Rule-based entity resolution that links observations into reusable entity records
 - Event fusion materialization plus exportable cited summaries and rule-based reports
 - Managed source definitions with persisted source-run history and scheduler-driven sync hooks
-- Managed source adapters now cover local files plus HTTP JSON, JSONL, text, XML, CSV, RSS/Atom, ArcGIS feature payloads, and CKAN package search catalogs
+- Bounded, geospatial-first source discovery with persisted campaigns, checkpointed frontier runs, globally deduplicated candidates, revisions, lineage, scoring, health, suppression, and managed-source promotion
 - Camera inventory materialization that turns imported/public traffic camera observations into persisted geospatial camera records with provenance
-<<<<<<< HEAD
-- Storage-object ledger that tracks retained artifacts, retention class, lifecycle state, and provenance for imports and camera-derived references
-- SQLAlchemy storage foundation that runs on SQLite for local development and Postgres/PostGIS-oriented URLs for deployment
-=======
 - Camera source inventory lifecycle that graduates observed camera endpoints into a backend-native candidate registry with rule-based readiness scoring
 - Storage-object ledger that tracks retained artifacts, retention class, lifecycle state, and provenance for imports and camera-derived references
 - SQLAlchemy storage foundation that runs on SQLite for local development and Postgres/PostGIS-oriented URLs for deployment
 - Optional ClickHouse analytics/archive backend that can mirror runtime facts and archive observation data to Cloudflare R2 over the S3-compatible API
->>>>>>> 05aeee6 (chore: initialize repository)
 - PostGIS-aware spatial query path that persists WKT alongside GeoJSON and automatically provisions spatial indexes on PostgreSQL
 - Local import pipeline for JSON, JSONL, TXT, and SQLite inputs with row-level dedupe inside each layer
 - Rule-based domain trust and integrity source seeding
@@ -65,6 +60,8 @@ MnDOT live-feed notes and source-ingestion examples live in [MNDOT_FEEDS.md](MND
 
 Upstream camera/webcam inventory and local parity notes live in [UPSTREAM_CAMERA_INVENTORY.md](UPSTREAM_CAMERA_INVENTORY.md).
 
+Source discovery architecture, safety defaults, scoring, promotion, and operator workflows live in [docs/source-discovery.md](docs/source-discovery.md).
+
 ## CLI
 
 ```bash
@@ -78,19 +75,20 @@ elevenwriter import-local path/to/file.json --layer incident-feed
 elevenwriter list-imports
 elevenwriter add-source-file harbor-source ./feeds/harbor.json marine-track --skip-unchanged true
 elevenwriter add-source-http-json remote-feed https://example.com/feed.json remote-track --retry-attempts 3 --skip-unchanged true --header "Authorization: Bearer token"
-elevenwriter add-source-http-jsonl remote-jsonl https://example.com/feed.jsonl remote-track
-elevenwriter add-source-http-csv remote-csv https://example.com/feed.csv traffic-camera-feed
-elevenwriter add-source-rss port-alerts https://example.com/alerts.xml alert-feed
-elevenwriter add-source-arcgis-feature-json city-arcgis "https://example.com/arcgis/rest/services/Cameras/FeatureServer/0/query?where=1%3D1&outFields=*&f=json" traffic-camera-feed
-elevenwriter add-source-ckan-package-search state-catalog "https://data.example.gov/api/3/action/package_search?q=traffic" catalog-feed
 elevenwriter list-sources
 elevenwriter update-source 1 --enabled false --notes "Disabled for review"
 elevenwriter run-source 1
 elevenwriter list-source-runs
-<<<<<<< HEAD
-elevenwriter materialize-cameras --layer traffic-camera-feed
-elevenwriter list-cameras --layer traffic-camera-feed --active true
-=======
+elevenwriter create-discovery-campaign mn-transport --mode multi --discovery-mode seed_url --discovery-mode sitemap --discovery-mode neighborhood --seed https://511mn.org/ --max-depth 2 --max-pages 100
+elevenwriter run-discovery 1 --max-pages 25
+elevenwriter list-discovery-candidates --campaign-id 1 --min-score 50
+elevenwriter explain-discovery-candidate 1
+elevenwriter show-discovery-lineage 1
+elevenwriter promote-discovery-candidate 1 "Verified official endpoint" --source-kind http_json --layer road-events --schedule-interval-seconds 1800
+elevenwriter revisit-discovery --candidate-id 1 --force
+elevenwriter show-discovery-ops --stale-after-hours 24
+elevenwriter export-discovery-summary ./exports/discovery-summary.json
+elevenwriter add-discovery-schedule mn-discovery 1 3600 --max-pages 50
 elevenwriter show-source-ops 1
 elevenwriter show-source-summary --stale-after-hours 24
 elevenwriter show-source-report-index --stale-after-hours 24
@@ -103,7 +101,6 @@ elevenwriter show-camera-source-summary --layer traffic-camera-feed
 elevenwriter show-camera-source-ops 1
 elevenwriter show-camera-source-report-index --layer traffic-camera-feed --source-domain cams.example.com
 elevenwriter export-camera-source-summary ./exports/camera-source-summary.json --layer traffic-camera-feed
->>>>>>> 05aeee6 (chore: initialize repository)
 elevenwriter show-camera-summary --layer traffic-camera-feed --stale-after-hours 24
 elevenwriter show-camera-ops 1
 elevenwriter show-camera-report-index --layer traffic-camera-feed --source-domain cams.example.com
@@ -113,8 +110,6 @@ elevenwriter list-storage-objects --owner-type camera_inventory --retention-clas
 elevenwriter add-storage-object manual:casefile:1 report_export event 42 file:///tmp/casefile-42.json --storage-tier hot --retention-class investigative
 elevenwriter promote-storage-object 1 event 42 --storage-tier archive --retention-class permanent
 elevenwriter transition-storage-object 1 archived --storage-tier archive
-<<<<<<< HEAD
-=======
 elevenwriter show-clickhouse-status
 elevenwriter provision-clickhouse
 elevenwriter sync-clickhouse --layer marine-track --limit 5000
@@ -126,7 +121,6 @@ elevenwriter query-observations --backend clickhouse --layer marine-track --limi
 elevenwriter cross-verify --backend r2_archive --bbox "-96,29,-94,31" --time-window-minutes 120 --distance-km 10
 elevenwriter add-clickhouse-sync-schedule clickhouse-sync 900 --layer marine-track --limit 5000
 elevenwriter add-clickhouse-archive-schedule clickhouse-archive 3600 --layer marine-track --limit 50000
->>>>>>> 05aeee6 (chore: initialize repository)
 elevenwriter add-entity-resolution-schedule nightly-entities 600 --bbox "-96,29,-94,31" --min-observations 2
 elevenwriter add-event-fusion-schedule nightly-fusion 600 --bbox "-96,29,-94,31" --distance-km 10 --time-window-minutes 120
 elevenwriter query-observations --bbox "-96,29,-94,31"
@@ -149,27 +143,19 @@ elevenwriter list-schedule-runs
 elevenwriter update-alert 1 acknowledged --disposition-note "Reviewed by operator"
 elevenwriter run-due-schedules
 elevenwriter list-custody
-<<<<<<< HEAD
-=======
 elevenwriter show-scheduler-summary
 elevenwriter show-scheduler-report-index --limit 25
 elevenwriter export-scheduler-summary ./exports/scheduler-summary.json --task-limit 500 --report-limit 25
->>>>>>> 05aeee6 (chore: initialize repository)
 ```
 
 ## Docker
 
 ```bash
 docker compose up --build
-<<<<<<< HEAD
-```
-
-By default the compose stack starts the API, a scheduler worker, and PostGIS-ready Postgres.
-=======
 docker compose --profile clickhouse up --build
 ```
 
-By default the compose stack starts the API, a scheduler worker, and PostGIS-ready Postgres. The optional `clickhouse` profile starts a self-hosted ClickHouse server on `8123`/`9000`; Forte will only use it if you also set the ClickHouse env vars below. The compose file also mounts [`app/server/11writer-r2-storage.xml`](app/server/11writer-r2-storage.xml), and `elevenwriter write-clickhouse-r2-config` now targets that mounted file automatically when you run it from the repo root, so the generated R2 disk policy lands where Docker actually reads it.
+By default the compose stack starts the API on `127.0.0.1:8000`, a scheduler worker, and PostGIS-ready Postgres. The backend does not provide a multi-user authentication boundary; only override `ELEVENWRITER_API_BIND` behind an authenticated reverse proxy or on an otherwise trusted network. The optional `clickhouse` profile starts a self-hosted ClickHouse server on `8123`/`9000`; Forte will only use it if you also set the ClickHouse env vars below. The compose file also mounts [`app/server/11writer-r2-storage.xml`](app/server/11writer-r2-storage.xml), and `elevenwriter write-clickhouse-r2-config` now targets that mounted file automatically when you run it from the repo root, so the generated R2 disk policy lands where Docker actually reads it.
 
 ### Optional ClickHouse + R2 env
 
@@ -197,7 +183,6 @@ ELEVENWRITER_CLICKHOUSE_R2_CACHE_SIZE=10Gi
 - `archive_only`: keep ClickHouse local and use R2 for Parquet archive export only.
 - `hybrid`: keep hot tables local, archive to R2, and rehydrate/query R2 Parquet when needed.
 - `r2_disk`: provision ClickHouse tables with the configured R2 storage policy. Use this only after you generate the mounted config with `elevenwriter write-clickhouse-r2-config` and restart the ClickHouse container.
->>>>>>> 05aeee6 (chore: initialize repository)
 
 ## Design notes
 
@@ -210,16 +195,8 @@ ELEVENWRITER_CLICKHOUSE_R2_CACHE_SIZE=10Gi
 - Postgres runtime now auto-enables `postgis` plus GiST expression indexes for observation points and geofence geometries, while SQLite keeps the Python fallback path for local runs and tests.
 - The headless CLI now includes a `doctor` command and the API exposes `/api/operations/database`, so operators can audit connectivity, additive schema drift, table counts, and PostGIS readiness without freestyling SQL in production.
 - Runtime backup and recovery now have a first-class path too: `/api/operations/runtime/export`, `/api/operations/runtime/restore`, and matching CLI commands serialize the core backend state in dependency-safe order and log custody records for both export and restore.
-<<<<<<< HEAD
-- The storage-core slice is real now, not a manifesto: `/api/storage/objects` plus the `list-storage-objects`, `add-storage-object`, `promote-storage-object`, and `transition-storage-object` CLI commands expose a first-class artifact ledger with retention classes, tiering, and lifecycle controls.
-- Imports and camera materialization now auto-register storage manifests, so raw local files plus camera image/stream/page references get tracked as storage objects with expiration windows and custody events instead of disappearing into the void.
-- Camera/webcam work is no longer just notes: `/api/cameras` and `/api/cameras/materialize` now persist camera inventory from imported observations, including MnDOT-style feeds that expose image or stream endpoints plus geospatial coordinates.
-- Camera ops now have a proper backend reporting surface too: `/api/cameras/summary` rolls up fleet health by layer, domain, provider, and status, while `/api/cameras/{id}/ops` exposes per-camera custody, latest observation/import context, and matching refresh schedules.
-- Camera reporting is exportable now too: `/api/cameras/report-index` summarizes refresh task coverage, recent materializations, stale inventory, and recent refresh runs, while `/api/cameras/export/summary` emits a JSON-ready artifact for downstream systems and archival.
-- Camera inventory upkeep is scheduler-native now too, so the registry can be refreshed headlessly with `camera_inventory_refresh` tasks instead of waiting for an operator to remember the manual materialization command.
-- The platform-wide operations report now carries camera inventory and camera refresh sections too, so one headless report can show both event/alert activity and the current health of the camera subsystem.
-=======
 - Runtime snapshot coverage now extends across newer operational subsystems too, including scheduler task/run state, source-run history, camera/source registries, storage objects, and maintenance-task lineage, so recovery testing is following the real backend instead of freezing at an older shape.
+- Source discovery is durable infrastructure now: campaigns, bounded/checkpointed frontier entries, canonical candidates, revisions, graph lineage, robots observations, health, suppressions, promotion decisions, and fetched-artifact metadata all persist and round-trip through runtime snapshots. See [docs/source-discovery.md](docs/source-discovery.md) for the operator contract and its honest limitations.
 - The storage-core slice is real now, not a manifesto: `/api/storage/objects` plus the `list-storage-objects`, `add-storage-object`, `promote-storage-object`, and `transition-storage-object` CLI commands expose a first-class artifact ledger with retention classes, tiering, and lifecycle controls.
 - Imports and camera materialization now auto-register storage manifests, so raw local files plus camera image/stream/page references get tracked as storage objects with expiration windows and custody events instead of disappearing into the void.
 - Managed sources now participate in that same storage/provenance model too: each source run materialization is tracked as a storage object, and `/api/sources/{id}/ops` plus `show-source-ops` expose recent runs, stored payload artifacts, and related custody logs in one place.
@@ -242,7 +219,6 @@ ELEVENWRITER_CLICKHOUSE_R2_CACHE_SIZE=10Gi
 - The platform-wide operations report now also carries storage lifecycle inventory plus ClickHouse backend diagnostics, so one headless report can expose artifact retention state and optional analytics-backend health instead of making operators hop across multiple commands.
 - The scheduler finally has a fleet-level ops surface too: `/api/scheduler/summary`, `/api/scheduler/report-index`, `show-scheduler-summary`, and `show-scheduler-report-index` expose overdue tasks, failing latest runs, maintenance coverage, and task-type run/failure buckets instead of forcing operators to reverse-engineer health from raw run rows.
 - Scheduler reporting is exportable now too: `/api/scheduler/export/summary` and `export-scheduler-summary` package the scheduler fleet report plus task inventory into a JSON artifact that registers in the storage/provenance ledger like the rest of the backend exports.
->>>>>>> 05aeee6 (chore: initialize repository)
 - Entity resolution and event fusion are scheduler-native too, so the backend can keep promoting raw observations into reusable entities, linked events, and generated products without a human sitting there pressing the button like it's 2009.
 - Geofence scans create persisted alerts with dedupe keys so the same observation-hit pair does not spam duplicates.
 - Scheduler runs and import operations both write custody records so unattended execution still leaves an audit trail.

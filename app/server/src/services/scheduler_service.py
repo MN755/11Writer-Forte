@@ -16,22 +16,15 @@ from src.models import (
     ScheduledTaskRunORM,
 )
 from src.schemas import EntityResolutionRequest, EventFusionRequest, ScheduledTaskCreate, ScheduledTaskUpdate
-<<<<<<< HEAD
-from src.services.camera_service import materialize_camera_inventory
-=======
 from src.services.camera_source_service import materialize_camera_source_inventory
 from src.services.camera_service import materialize_camera_inventory
 from src.services.clickhouse_service import archive_clickhouse_observations_to_r2, sync_runtime_to_clickhouse
->>>>>>> 05aeee6 (chore: initialize repository)
 from src.services.entity_resolution_service import materialize_entities
 from src.services.event_fusion_service import materialize_fused_events
 from src.services.geospatial_service import build_contains_geometry_sql_filter, point_in_geometry, uses_postgis
 from src.services.import_service import import_local_path
 from src.services.layer_service import ensure_data_layer
-<<<<<<< HEAD
-=======
 from src.services.storage_service import sweep_expired_storage_objects
->>>>>>> 05aeee6 (chore: initialize repository)
 from src.services.source_service import run_source_definition
 from src.services.trust_service import seed_default_integrity_sources
 
@@ -44,17 +37,22 @@ def compute_next_run(interval_seconds: int, reference: datetime | None = None) -
     return (reference or scheduler_now()) + timedelta(seconds=interval_seconds)
 
 
-<<<<<<< HEAD
-=======
 MAINTENANCE_TASK_TYPES = {
     "storage_lifecycle",
     "clickhouse_sync",
     "clickhouse_archive",
+    "discovery_health_scan",
+    "discovery_revisit",
 }
 
 
->>>>>>> 05aeee6 (chore: initialize repository)
-def create_scheduled_task(session: Session, payload: ScheduledTaskCreate) -> ScheduledTaskORM:
+def create_scheduled_task(
+    session: Session,
+    payload: ScheduledTaskCreate,
+    *,
+    actor: str = "system",
+    commit: bool = True,
+) -> ScheduledTaskORM:
     ensure_unique_task_name(session, payload.name)
     validate_task_configuration(
         payload.task_type,
@@ -65,7 +63,7 @@ def create_scheduled_task(session: Session, payload: ScheduledTaskCreate) -> Sch
         payload_json=payload.payload_json,
     )
     if payload.layer_key:
-        ensure_data_layer(session, payload.layer_key, actor="scheduler_registry")
+        ensure_data_layer(session, payload.layer_key, actor=actor)
     record = ScheduledTaskORM(
         **payload.model_dump(),
         next_run_at=compute_next_run(payload.interval_seconds) if payload.enabled else None,
@@ -77,20 +75,19 @@ def create_scheduled_task(session: Session, payload: ScheduledTaskCreate) -> Sch
             object_type="scheduled_task",
             object_id=str(record.task_id),
             action="task_created",
-            actor="system",
+            actor=actor,
             details_json={
                 **payload.model_dump(),
                 "task_id": record.task_id,
             },
         )
     )
-    session.commit()
-    session.refresh(record)
+    if commit:
+        session.commit()
+        session.refresh(record)
     return record
 
 
-<<<<<<< HEAD
-=======
 def build_scheduler_inventory_summary(
     session: Session,
     *,
@@ -195,7 +192,6 @@ def build_scheduler_ops_export_summary(
     }
 
 
->>>>>>> 05aeee6 (chore: initialize repository)
 def update_scheduled_task(
     session: Session,
     task_id: int,
@@ -481,8 +477,76 @@ def execute_task(
                 "import_run_id": source_run.import_run_id,
             },
         )
-<<<<<<< HEAD
-=======
+    if task.task_type == "discovery_campaign":
+        from src.schemas import DiscoveryRunRequest
+        from src.services.discovery_service import run_discovery_campaign
+
+        campaign_id, run_request = resolve_discovery_campaign_payload(task.payload_json)
+        result = run_discovery_campaign(
+            session,
+            campaign_id,
+            DiscoveryRunRequest(**run_request),
+            actor=actor,
+        )
+        discovery_run = result["run"]
+        records_affected = int(discovery_run.candidates_discovered) + int(
+            discovery_run.candidates_updated
+        )
+        return (
+            records_affected,
+            {
+                "campaign_id": campaign_id,
+                "discovery_run_id": discovery_run.discovery_run_id,
+                "status": discovery_run.status,
+                "pages_fetched": discovery_run.pages_fetched,
+                "candidates_discovered": discovery_run.candidates_discovered,
+                "candidates_updated": discovery_run.candidates_updated,
+                "error_count": discovery_run.error_count,
+                "frontier_queued_count": result["frontier_queued_count"],
+                "frontier_completed_count": result["frontier_completed_count"],
+                "frontier_dead_letter_count": result["frontier_dead_letter_count"],
+                "candidate_ids": result["candidate_ids"],
+            },
+        )
+    if task.task_type == "discovery_health_scan":
+        from src.schemas import CandidateHealthScanRequest
+        from src.services.discovery_service import scan_candidate_health
+
+        request = build_discovery_health_scan_request(task.payload_json)
+        result = scan_candidate_health(
+            session,
+            CandidateHealthScanRequest(**request),
+            actor=actor,
+        )
+        return (
+            int(result["checked_count"]),
+            {
+                "checked_count": result["checked_count"],
+                "reachable_count": result["reachable_count"],
+                "failing_count": result["failing_count"],
+                "changed_count": result["changed_count"],
+                "health_check_ids": [check.health_check_id for check in result["checks"]],
+            },
+        )
+    if task.task_type == "discovery_revisit":
+        from src.schemas import DiscoveryRevisitRequest
+        from src.services.discovery_service import revisit_discovery
+
+        request = build_discovery_revisit_request(task.payload_json)
+        result = revisit_discovery(
+            session,
+            DiscoveryRevisitRequest(**request),
+            actor=actor,
+        )
+        return (
+            int(result["queued_count"]),
+            {
+                "queued_count": result["queued_count"],
+                "candidate_ids": result["candidate_ids"],
+                "frontier_entry_ids": result["frontier_entry_ids"],
+                "skipped_candidate_ids": result["skipped_candidate_ids"],
+            },
+        )
     if task.task_type == "storage_lifecycle":
         retention_class, limit = resolve_storage_lifecycle_payload(task.payload_json)
         result = sweep_expired_storage_objects(
@@ -546,7 +610,6 @@ def execute_task(
                 "partition_strategy": result["partition_strategy"],
             },
         )
->>>>>>> 05aeee6 (chore: initialize repository)
     if task.task_type == "camera_inventory_refresh":
         source_domain, limit = resolve_camera_inventory_refresh_payload(task.payload_json)
         result = materialize_camera_inventory(
@@ -556,8 +619,6 @@ def execute_task(
             limit=limit,
             actor=actor,
         )
-<<<<<<< HEAD
-=======
         source_result = materialize_camera_source_inventory(
             session,
             layer_key=task.layer_key,
@@ -565,7 +626,6 @@ def execute_task(
             limit=limit,
             actor=actor,
         )
->>>>>>> 05aeee6 (chore: initialize repository)
         cameras = result["cameras"]
         return (
             int(result["created_count"]) + int(result["updated_count"]),
@@ -576,12 +636,9 @@ def execute_task(
                 "scanned_count": int(result["scanned_count"]),
                 "created_count": int(result["created_count"]),
                 "updated_count": int(result["updated_count"]),
-<<<<<<< HEAD
-=======
                 "source_created_count": int(source_result["created_count"]),
                 "source_updated_count": int(source_result["updated_count"]),
                 "source_scanned_endpoint_count": int(source_result["scanned_endpoint_count"]),
->>>>>>> 05aeee6 (chore: initialize repository)
                 "camera_inventory_ids": [camera.camera_inventory_id for camera in cameras],
                 "camera_keys": [camera.camera_key for camera in cameras],
             },
@@ -765,10 +822,23 @@ def validate_task_configuration(
         raise ValueError("Local import task requires target_path.")
     if task_type == "source_sync" and source_id is None:
         raise ValueError("Source sync task requires source_id.")
+    if task_type == "discovery_campaign":
+        if any(value is not None for value in (source_id, target_path, geofence_id, layer_key)):
+            raise ValueError(
+                "Discovery campaign task does not accept source_id, target_path, geofence_id, or layer_key."
+            )
+        resolve_discovery_campaign_payload(payload_json)
+    if task_type in {"discovery_health_scan", "discovery_revisit"}:
+        if any(value is not None for value in (source_id, target_path, geofence_id, layer_key)):
+            raise ValueError(
+                f"{task_type} task does not accept source_id, target_path, geofence_id, or layer_key."
+            )
+        if task_type == "discovery_health_scan":
+            build_discovery_health_scan_request(payload_json)
+        else:
+            build_discovery_revisit_request(payload_json)
     if task_type == "integrity_seed" and any(value is not None for value in (source_id, target_path, geofence_id)):
         raise ValueError("Integrity seed task does not accept source_id, target_path, or geofence_id.")
-<<<<<<< HEAD
-=======
     if task_type == "storage_lifecycle":
         if any(value is not None for value in (source_id, target_path, geofence_id)):
             raise ValueError("Storage lifecycle task does not accept source_id, target_path, or geofence_id.")
@@ -781,7 +851,6 @@ def validate_task_configuration(
         if any(value is not None for value in (source_id, target_path, geofence_id)):
             raise ValueError("ClickHouse archive task does not accept source_id, target_path, or geofence_id.")
         resolve_clickhouse_archive_payload(payload_json)
->>>>>>> 05aeee6 (chore: initialize repository)
     if task_type == "camera_inventory_refresh":
         if any(value is not None for value in (source_id, target_path, geofence_id)):
             raise ValueError(
@@ -868,8 +937,71 @@ def resolve_camera_inventory_refresh_payload(
     return source_domain, limit_value
 
 
-<<<<<<< HEAD
-=======
+def resolve_discovery_campaign_payload(
+    payload_json: dict[str, object] | None,
+) -> tuple[int, dict[str, object]]:
+    payload = resolve_scheduler_payload_json("Discovery campaign", payload_json)
+    campaign_id = payload.get("campaign_id")
+    if isinstance(campaign_id, bool) or not isinstance(campaign_id, int) or campaign_id < 1:
+        raise ValueError("Discovery campaign payload campaign_id must be a positive integer.")
+    request: dict[str, object] = {
+        "campaign_id": campaign_id,
+        "actor": "scheduler",
+        "resume": bool(payload.get("resume", True)),
+        "dry_run": bool(payload.get("dry_run", False)),
+    }
+    optional_integer_bounds = {
+        "resume_run_id": (1, 2_147_483_647),
+        "max_pages": (1, 10_000),
+        "max_candidates": (1, 100_000),
+    }
+    for key, (minimum, maximum) in optional_integer_bounds.items():
+        value = payload.get(key)
+        if value is None:
+            continue
+        if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
+            raise ValueError(
+                f"Discovery campaign payload {key} must be an integer between {minimum} and {maximum}."
+            )
+        request[key] = value
+    max_seconds = payload.get("max_seconds")
+    if max_seconds is not None:
+        if isinstance(max_seconds, bool) or not isinstance(max_seconds, (int, float)):
+            raise ValueError("Discovery campaign payload max_seconds must be numeric.")
+        if not 0 < float(max_seconds) <= 86_400:
+            raise ValueError(
+                "Discovery campaign payload max_seconds must be greater than 0 and at most 86400."
+            )
+        request["max_seconds"] = float(max_seconds)
+    return campaign_id, request
+
+
+def build_discovery_health_scan_request(
+    payload_json: dict[str, object] | None,
+) -> dict[str, object]:
+    from src.schemas import CandidateHealthScanRequest
+
+    payload = resolve_scheduler_payload_json("Discovery health scan", payload_json)
+    try:
+        request = CandidateHealthScanRequest(**payload)
+    except ValidationError as exc:
+        raise ValueError(format_validation_error("Discovery health scan", exc)) from exc
+    return request.model_dump(mode="python")
+
+
+def build_discovery_revisit_request(
+    payload_json: dict[str, object] | None,
+) -> dict[str, object]:
+    from src.schemas import DiscoveryRevisitRequest
+
+    payload = resolve_scheduler_payload_json("Discovery revisit", payload_json)
+    try:
+        request = DiscoveryRevisitRequest(**payload)
+    except ValidationError as exc:
+        raise ValueError(format_validation_error("Discovery revisit", exc)) from exc
+    return request.model_dump(mode="python")
+
+
 def resolve_storage_lifecycle_payload(
     payload_json: dict[str, object] | None,
 ) -> tuple[str | None, int]:
@@ -942,7 +1074,6 @@ def resolve_clickhouse_archive_payload(
     return source_domain, limit_value
 
 
->>>>>>> 05aeee6 (chore: initialize repository)
 def build_entity_resolution_request(
     *,
     layer_key: str | None,
@@ -990,8 +1121,6 @@ def format_validation_error(task_label: str, exc: ValidationError) -> str:
     if location:
         return f"{task_label} payload {location}: {detail}."
     return f"{task_label} payload invalid: {detail}."
-<<<<<<< HEAD
-=======
 
 
 def collect_scheduled_task_statuses(
@@ -1109,4 +1238,3 @@ def normalize_scheduler_timestamp(value: datetime | None) -> datetime | None:
     if value.tzinfo is not None:
         return value
     return value.replace(tzinfo=timezone.utc)
->>>>>>> 05aeee6 (chore: initialize repository)

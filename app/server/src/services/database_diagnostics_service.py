@@ -9,6 +9,9 @@ from src.config import get_settings
 from src.db import REQUIRED_ADDITIVE_COLUMNS, REQUIRED_POSTGIS_INDEX_DDLS
 from src.models import (
     AlertORM,
+    CandidateHealthCheckORM,
+    CandidatePromotionDecisionORM,
+    CandidateSuppressionORM,
     CameraInventoryORM,
 <<<<<<< HEAD
 =======
@@ -16,6 +19,12 @@ from src.models import (
 >>>>>>> 05aeee6 (chore: initialize repository)
     CustodyLogORM,
     DataLayerORM,
+    DiscoveryArtifactORM,
+    DiscoveryCampaignORM,
+    DiscoveryDomainPolicyORM,
+    DiscoveryFrontierEntryORM,
+    DiscoveryGraphEdgeORM,
+    DiscoveryRunORM,
     EntityObservationLinkORM,
     EntityORM,
     EventObservationLinkORM,
@@ -23,11 +32,14 @@ from src.models import (
     GeofenceORM,
     LocalImportRunORM,
     ObservationORM,
+    RobotsObservationORM,
     ScheduledTaskORM,
     ScheduledTaskRunORM,
     SituationProductORM,
     StorageObjectORM,
     SourceDefinitionORM,
+    SourceCandidateORM,
+    SourceCandidateRevisionORM,
     SourceRunORM,
     SourceTrustProfileORM,
 )
@@ -35,7 +47,19 @@ from src.models import (
 TABLE_COUNT_MODELS: tuple[tuple[str, object], ...] = (
     ("data_layers", DataLayerORM),
     ("source_trust_profiles", SourceTrustProfileORM),
+    ("discovery_domain_policies", DiscoveryDomainPolicyORM),
+    ("discovery_campaigns", DiscoveryCampaignORM),
+    ("discovery_runs", DiscoveryRunORM),
     ("source_definitions", SourceDefinitionORM),
+    ("source_candidates", SourceCandidateORM),
+    ("discovery_frontier_entries", DiscoveryFrontierEntryORM),
+    ("source_candidate_revisions", SourceCandidateRevisionORM),
+    ("discovery_graph_edges", DiscoveryGraphEdgeORM),
+    ("candidate_health_checks", CandidateHealthCheckORM),
+    ("candidate_suppressions", CandidateSuppressionORM),
+    ("candidate_promotion_decisions", CandidatePromotionDecisionORM),
+    ("robots_observations", RobotsObservationORM),
+    ("discovery_artifacts", DiscoveryArtifactORM),
     ("local_import_runs", LocalImportRunORM),
     ("observations", ObservationORM),
     ("camera_inventory", CameraInventoryORM),

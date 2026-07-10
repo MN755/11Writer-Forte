@@ -15,19 +15,16 @@ from src.models import (
     ScheduledTaskRunORM,
     SourceRunORM,
 )
-<<<<<<< HEAD
-from src.services.camera_service import build_camera_inventory_summary, build_camera_ops_report_index
-=======
 from src.services.clickhouse_service import build_clickhouse_diagnostics
 from src.services.camera_source_service import (
     build_camera_source_inventory_summary,
     build_camera_source_ops_report_index,
 )
 from src.services.camera_service import build_camera_inventory_summary, build_camera_ops_report_index
+from src.services.discovery_service import build_discovery_ops_summary
 from src.services.scheduler_service import build_scheduler_inventory_summary, build_scheduler_ops_report_index
 from src.services.source_service import build_source_inventory_summary, build_source_ops_report_index
 from src.services.storage_service import build_storage_report
->>>>>>> 05aeee6 (chore: initialize repository)
 
 
 def report_now() -> datetime:
@@ -93,8 +90,6 @@ def build_operations_report(
     )
     camera_inventory_summary = build_camera_inventory_summary(session)
     camera_report_index = build_camera_ops_report_index(session, limit=limit)
-<<<<<<< HEAD
-=======
     camera_source_inventory_summary = build_camera_source_inventory_summary(session)
     camera_source_report_index = build_camera_source_ops_report_index(session, limit=limit)
     storage_report = build_storage_report(session, limit=limit)
@@ -103,7 +98,7 @@ def build_operations_report(
     scheduler_report_index = build_scheduler_ops_report_index(session, limit=limit)
     source_inventory_summary = build_source_inventory_summary(session)
     source_report_index = build_source_ops_report_index(session, limit=limit)
->>>>>>> 05aeee6 (chore: initialize repository)
+    discovery_ops_summary = build_discovery_ops_summary(session, limit=limit)
 
     return {
         "generated_at": report_now(),
@@ -185,21 +180,17 @@ def build_operations_report(
             "entity_count": count_records(session, EntityORM, EntityORM.created_at, since, until),
             "observation_count": count_records(session, ObservationORM, ObservationORM.created_at, since, until),
         },
-<<<<<<< HEAD
-        "camera_inventory_summary": camera_inventory_summary,
-        "camera_report_index": camera_report_index,
-=======
         "storage_report": storage_report,
         "clickhouse_diagnostics": clickhouse_diagnostics,
         "scheduler_inventory_summary": scheduler_inventory_summary,
         "scheduler_report_index": scheduler_report_index,
         "source_inventory_summary": source_inventory_summary,
         "source_report_index": source_report_index,
+        "discovery_ops_summary": discovery_ops_summary,
         "camera_inventory_summary": camera_inventory_summary,
         "camera_report_index": camera_report_index,
         "camera_source_inventory_summary": camera_source_inventory_summary,
         "camera_source_report_index": camera_source_report_index,
->>>>>>> 05aeee6 (chore: initialize repository)
         "import_runs": import_runs,
         "source_runs": source_runs,
         "scheduled_task_runs": scheduled_task_runs,
