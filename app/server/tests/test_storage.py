@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-<<<<<<< HEAD
-=======
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from urllib.parse import urlsplit
+from urllib.request import url2pathname
 
->>>>>>> 05aeee6 (chore: initialize repository)
 from fastapi.testclient import TestClient
+
+from src.config import get_settings
 
 
 def test_storage_object_lifecycle_api(client: TestClient) -> None:
@@ -76,8 +78,6 @@ def test_storage_object_lifecycle_api(client: TestClient) -> None:
     assert any(row["action"] == "storage_registered" for row in custody_rows)
     assert any(row["action"] == "storage_promoted" for row in custody_rows)
     assert any(row["action"] == "storage_transitioned" for row in custody_rows)
-<<<<<<< HEAD
-=======
 
 
 def test_storage_report_and_lifecycle_sweep_api(client: TestClient) -> None:
@@ -163,4 +163,64 @@ def test_storage_report_and_lifecycle_sweep_api(client: TestClient) -> None:
     custody_response = client.get("/api/custody/logs")
     assert custody_response.status_code == 200
     assert any(row["action"] == "storage_expired" for row in custody_response.json())
->>>>>>> 05aeee6 (chore: initialize repository)
+
+
+def test_managed_storage_lifecycle_moves_and_deletes_owned_files(
+    client: TestClient,
+) -> None:
+    managed_root = get_settings().data_dir / "managed"
+    managed_root.mkdir(parents=True, exist_ok=True)
+    original_path = managed_root / "report.json"
+    original_path.write_text('{"status":"active"}', encoding="utf-8")
+
+    create_response = client.post(
+        "/api/storage/objects",
+        json={
+            "object_key": "managed:file:1",
+            "object_kind": "managed_payload",
+            "owner_type": "event",
+            "owner_id": "managed-1",
+            "object_uri": original_path.resolve().as_uri(),
+            "storage_tier": "warm",
+            "retention_class": "investigative",
+            "lifecycle_status": "active",
+        },
+    )
+    assert create_response.status_code == 200
+    created = create_response.json()
+
+    archive_response = client.patch(
+        f"/api/storage/objects/{created['storage_object_id']}/transition",
+        json={"lifecycle_status": "archived"},
+    )
+    assert archive_response.status_code == 200
+    archived = archive_response.json()
+    archived_path = Path(url2pathname(urlsplit(archived["object_uri"]).path))
+    assert archived["storage_tier"] == "archive"
+    assert archived["lifecycle_status"] == "archived"
+    assert not original_path.exists()
+    assert archived_path.exists()
+    assert archived_path.read_text(encoding="utf-8") == '{"status":"active"}'
+    managed_metadata = archived["metadata_json"]["managed_file"]
+    assert managed_metadata["action"] == "moved_to_archive"
+
+    expire_response = client.patch(
+        f"/api/storage/objects/{created['storage_object_id']}/transition",
+        json={"lifecycle_status": "expired"},
+    )
+    assert expire_response.status_code == 200
+    expired = expire_response.json()
+    assert expired["lifecycle_status"] == "expired"
+    assert not archived_path.exists()
+    assert expired["metadata_json"]["managed_file"]["action"] == "deleted"
+
+    custody_rows = client.get("/api/custody/logs").json()
+    transition_logs = [row for row in custody_rows if row["action"] == "storage_transitioned"]
+    assert any(
+        row["details_json"]["managed_file"]["action"] == "moved_to_archive"
+        for row in transition_logs
+    )
+    assert any(
+        row["details_json"]["managed_file"]["action"] == "deleted"
+        for row in transition_logs
+    )

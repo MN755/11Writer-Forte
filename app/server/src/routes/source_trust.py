@@ -1,11 +1,20 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from src.db import get_db
 from src.models import SourceTrustProfileORM
-from src.schemas import IntegritySeedResponse, SourceTrustProfileCreate, SourceTrustProfileRead
-from src.services.trust_service import normalize_domain, seed_default_integrity_sources
+from src.schemas import (
+    IntegritySeedResponse,
+    SourceTrustProfileCreate,
+    SourceTrustProfileRead,
+    SourceTrustProfileUpdate,
+)
+from src.services.trust_service import (
+    create_source_trust_profile,
+    seed_default_integrity_sources,
+    update_source_trust_profile,
+)
 
 router = APIRouter(prefix="/source-trust", tags=["source-trust"])
 
@@ -20,18 +29,32 @@ def create_profile(
     payload: SourceTrustProfileCreate,
     session: Session = Depends(get_db),
 ) -> SourceTrustProfileORM:
-    record = SourceTrustProfileORM(
-        **payload.model_dump(exclude={"domain"}),
-        domain=normalize_domain(payload.domain) or payload.domain.lower(),
-    )
-    session.add(record)
-    session.commit()
-    session.refresh(record)
-    return record
+    try:
+        return create_source_trust_profile(session, payload, actor="api_source_trust")
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.patch("/profiles/{trust_profile_id}", response_model=SourceTrustProfileRead)
+def patch_profile(
+    trust_profile_id: int,
+    payload: SourceTrustProfileUpdate,
+    session: Session = Depends(get_db),
+) -> SourceTrustProfileORM:
+    try:
+        return update_source_trust_profile(
+            session,
+            trust_profile_id,
+            payload,
+            actor="api_source_trust",
+        )
+    except ValueError as exc:
+        detail = str(exc)
+        status_code = 404 if "does not exist" in detail else 409
+        raise HTTPException(status_code=status_code, detail=detail) from exc
 
 
 @router.post("/seed-defaults", response_model=IntegritySeedResponse)
 def seed_profiles(session: Session = Depends(get_db)) -> IntegritySeedResponse:
-    created = seed_default_integrity_sources(session)
+    created = seed_default_integrity_sources(session, actor="api_source_trust")
     return IntegritySeedResponse(created=len(created), domains=created)
-

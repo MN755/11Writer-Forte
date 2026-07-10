@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import threading
+import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -17,8 +18,10 @@ from src.config import get_settings, reset_settings_cache
 from src.db import get_session_factory
 from src.models import (
     CandidateSuppressionORM,
+    DiscoveryCampaignORM,
     DiscoveryFrontierEntryORM,
     DiscoveryRunORM,
+    ScheduledTaskORM,
     SourceCandidateORM,
     SourceDefinitionORM,
 )
@@ -40,6 +43,7 @@ def discovery_site(
         "robots_mode": robots_mode,
         "large_bytes": large_bytes,
         "requests": [],
+        "slow_starts": [],
     }
 
     class Handler(BaseHTTPRequestHandler):
@@ -195,6 +199,30 @@ def discovery_site(
                     200,
                     "application/xml",
                     b"<notices><notice><title>Transit notice</title></notice></notices>",
+                )
+                return
+            if path == "/parallel-seed":
+                body = """
+                <html><head><title>Parallel seed</title></head><body>
+                  <a href="/slow-a.json">Slow A</a>
+                  <a href="/slow-b.json">Slow B</a>
+                </body></html>
+                """.encode()
+                self._send(200, "text/html; charset=utf-8", body)
+                return
+            if path in {"/slow-a.json", "/slow-b.json"}:
+                state["slow_starts"].append((path, time.monotonic()))
+                time.sleep(0.5)
+                self._send(
+                    200,
+                    "application/json",
+                    json.dumps(
+                        {
+                            "name": path.strip("/"),
+                            "latitude": 44.98,
+                            "longitude": -93.27,
+                        }
+                    ).encode(),
                 )
                 return
             if path == "/blocked":
@@ -579,6 +607,121 @@ def test_frontier_checkpoint_resumes_the_same_run(client: TestClient) -> None:
         assert resumed["run"]["status"] == "completed"
         assert resumed["frontier_queued_count"] == 0
         assert len(client.get("/api/discovery/runs").json()) == 1
+
+
+def test_campaign_run_lease_blocks_overlap_and_recovers_stale_holder(
+    client: TestClient,
+) -> None:
+    with discovery_site() as (base_url, _state):
+        campaign = create_campaign(
+            client,
+            name="lease-recovery",
+            seeds=[f"{base_url}/seed"],
+            modes=["seed_url", "neighborhood", "format_targeted"],
+            max_pages=30,
+        )
+        first = run_campaign(client, campaign["campaign_id"], max_pages=1)
+        run_id = first["run"]["discovery_run_id"]
+        session = get_session_factory()()
+        try:
+            campaign_row = session.get(DiscoveryCampaignORM, campaign["campaign_id"])
+            run_row = session.get(DiscoveryRunORM, run_id)
+            assert campaign_row is not None
+            assert run_row is not None
+            now = datetime.now(timezone.utc)
+            lease = {
+                "campaign_id": campaign["campaign_id"],
+                "run_id": run_id,
+                "actor": "other-worker",
+                "lease_token": "lease-token",
+                "acquired_at": now.isoformat(),
+                "heartbeat_at": now.isoformat(),
+                "expires_at": (now + timedelta(minutes=10)).isoformat(),
+                "lease_timeout_seconds": 600.0,
+                "stale_takeover_count": 0,
+            }
+            campaign_row.status = "running"
+            campaign_row.metadata_json = {
+                **(campaign_row.metadata_json or {}),
+                "active_run_lease": lease,
+            }
+            run_row.metadata_json = {
+                **(run_row.metadata_json or {}),
+                "active_lease": lease,
+            }
+            session.commit()
+        finally:
+            session.close()
+
+        blocked = client.post(
+            f"/api/discovery/campaigns/{campaign['campaign_id']}/run",
+            json={"resume": True, "resume_run_id": run_id, "max_pages": 30},
+        )
+        assert blocked.status_code == 409, blocked.text
+        assert "already leased" in blocked.json()["detail"]
+
+        session = get_session_factory()()
+        try:
+            campaign_row = session.get(DiscoveryCampaignORM, campaign["campaign_id"])
+            run_row = session.get(DiscoveryRunORM, run_id)
+            assert campaign_row is not None
+            assert run_row is not None
+            stale_at = datetime.now(timezone.utc) - timedelta(hours=1)
+            stale_lease = dict((campaign_row.metadata_json or {}).get("active_run_lease") or {})
+            stale_lease["heartbeat_at"] = stale_at.isoformat()
+            stale_lease["expires_at"] = (stale_at + timedelta(minutes=5)).isoformat()
+            campaign_row.metadata_json = {
+                **(campaign_row.metadata_json or {}),
+                "active_run_lease": stale_lease,
+            }
+            run_row.metadata_json = {
+                **(run_row.metadata_json or {}),
+                "active_lease": stale_lease,
+            }
+            session.commit()
+        finally:
+            session.close()
+
+        resumed = client.post(
+            f"/api/discovery/campaigns/{campaign['campaign_id']}/run",
+            json={"resume": True, "resume_run_id": run_id, "max_pages": 30},
+        )
+        assert resumed.status_code == 200, resumed.text
+        payload = resumed.json()
+        assert payload["run"]["status"] == "completed"
+        assert "active_lease" not in payload["run"]["metadata_json"]
+        assert payload["run"]["metadata_json"]["last_released_lease"]["release_reason"] == "run_finished"
+
+        campaign_detail = client.get(f"/api/discovery/campaigns/{campaign['campaign_id']}")
+        assert campaign_detail.status_code == 200
+        assert "active_run_lease" not in campaign_detail.json()["campaign"]["metadata_json"]
+
+        custody_rows = client.get("/api/custody/logs").json()
+        assert any(row["action"] == "discovery_run_lease_recovered" for row in custody_rows)
+
+
+def test_campaign_honors_bounded_fetch_concurrency(client: TestClient) -> None:
+    with discovery_site() as (base_url, state):
+        campaign = create_campaign(
+            client,
+            name="bounded-fetch-concurrency",
+            seeds=[f"{base_url}/parallel-seed"],
+            modes=["seed_url", "neighborhood", "format_targeted"],
+            robots_aware=False,
+            max_pages=10,
+            store_artifacts=False,
+        )
+        patch_response = client.patch(
+            f"/api/discovery/campaigns/{campaign['campaign_id']}",
+            json={"crawl_policy_json": {"robots_aware": False, "crawl_delay_seconds": 0, "max_concurrency": 2, "store_artifacts": False}},
+        )
+        assert patch_response.status_code == 200, patch_response.text
+
+        result = run_campaign(client, campaign["campaign_id"], max_pages=10)
+        assert result["run"]["status"] == "completed"
+        slow_starts = sorted(state["slow_starts"], key=lambda item: item[1])
+        assert len(slow_starts) == 2
+        assert abs(slow_starts[0][1] - slow_starts[1][1]) < 0.35
 
 
 def test_resume_preserves_run_page_and_domain_budgets(client: TestClient) -> None:
@@ -1347,6 +1490,97 @@ def test_scheduler_runs_discovery_campaign_and_persists_output(client: TestClien
         )
 
 
+def test_scheduler_runs_discovery_health_scan_and_persists_output(
+    client: TestClient,
+) -> None:
+    with discovery_site() as (base_url, state):
+        campaign = create_campaign(
+            client,
+            name="scheduled-discovery-health",
+            seeds=[f"{base_url}/data.json"],
+            robots_aware=False,
+            max_depth=0,
+            store_artifacts=False,
+        )
+        run_campaign(client, campaign["campaign_id"], max_pages=1)
+        candidate = candidates_by_path(client)["/data.json"]
+        state["json_version"] = 2
+
+        task = client.post(
+            "/api/scheduler/tasks",
+            json={
+                "name": "scheduled-discovery-health-task",
+                "task_type": "discovery_health_scan",
+                "interval_seconds": 300,
+                "retry_attempts": 1,
+                "payload_json": {
+                    "campaign_id": campaign["campaign_id"],
+                    "limit": 10,
+                },
+            },
+        )
+        assert task.status_code == 200, task.text
+        task_run = client.post(f"/api/scheduler/tasks/{task.json()['task_id']}/run")
+        assert task_run.status_code == 200, task_run.text
+        output = task_run.json()["output_json"]
+        assert task_run.json()["status"] == "completed"
+        assert task_run.json()["records_affected"] == 1
+        assert output["checked_count"] == 1
+        assert output["reachable_count"] == 1
+        assert output["changed_count"] == 1
+        assert len(output["health_check_ids"]) == 1
+
+        detail = client.get(f"/api/discovery/candidates/{candidate['candidate_id']}")
+        assert detail.status_code == 200, detail.text
+        assert len(detail.json()["health_checks"]) == 2
+
+
+def test_scheduler_runs_discovery_revisit_and_persists_output(client: TestClient) -> None:
+    with discovery_site() as (base_url, _state):
+        campaign = create_campaign(
+            client,
+            name="scheduled-discovery-revisit",
+            seeds=[f"{base_url}/data.json"],
+            robots_aware=False,
+            max_depth=0,
+            store_artifacts=False,
+        )
+        run_campaign(client, campaign["campaign_id"], max_pages=1)
+        candidate = candidates_by_path(client)["/data.json"]
+
+        task = client.post(
+            "/api/scheduler/tasks",
+            json={
+                "name": "scheduled-discovery-revisit-task",
+                "task_type": "discovery_revisit",
+                "interval_seconds": 300,
+                "retry_attempts": 1,
+                "payload_json": {
+                    "campaign_id": campaign["campaign_id"],
+                    "force": True,
+                    "priority": 88.0,
+                },
+            },
+        )
+        assert task.status_code == 200, task.text
+        task_run = client.post(f"/api/scheduler/tasks/{task.json()['task_id']}/run")
+        assert task_run.status_code == 200, task_run.text
+        output = task_run.json()["output_json"]
+        assert task_run.json()["status"] == "completed"
+        assert task_run.json()["records_affected"] == 1
+        assert output["queued_count"] == 1
+        assert output["candidate_ids"] == [candidate["candidate_id"]]
+        assert len(output["frontier_entry_ids"]) == 1
+
+        custody = client.get("/api/custody/logs")
+        assert custody.status_code == 200
+        assert any(
+            row["object_type"] == "discovery_revisit"
+            and row["action"] == "discovery_revisit_queued"
+            for row in custody.json()
+        )
+
+
 def test_health_check_and_forced_revisit_persist_history(client: TestClient) -> None:
     with discovery_site() as (base_url, state):
         campaign = create_campaign(
@@ -1519,3 +1753,261 @@ def test_real_typer_discovery_campaign_dry_run(client: TestClient) -> None:
     assert listed.exit_code == 0, listed.output
     assert "cli-discovery" in listed.output
     assert f"{campaign_id} |" in listed.output
+
+
+def test_real_typer_update_discovery_campaign(client: TestClient) -> None:
+    runner = CliRunner()
+    create = runner.invoke(
+        cli_app,
+        [
+            "create-discovery-campaign",
+            "cli-discovery-update",
+            "--mode",
+            "seed_url",
+            "--discovery-mode",
+            "seed_url",
+            "--seed",
+            "https://example.com/feed.json",
+            "--max-depth",
+            "1",
+            "--max-pages",
+            "5",
+            "--policy-json",
+            "{\"allow_private_networks\": true, \"robots_aware\": false, \"max_concurrency\": 1}",
+        ],
+    )
+    assert create.exit_code == 0, create.output
+    match = re.search(r"campaign=(\d+)", create.output)
+    assert match is not None
+    campaign_id = int(match.group(1))
+
+    update = runner.invoke(
+        cli_app,
+        [
+            "update-discovery-campaign",
+            str(campaign_id),
+            "--status",
+            "paused",
+            "--enabled",
+            "false",
+            "--seed-urls-json",
+            "[\"https://example.com/updated.json\"]",
+            "--crawl-policy-json",
+            "{\"max_concurrency\": 4, \"crawl_delay_seconds\": 0}",
+            "--metadata-json",
+            "{\"owner\": \"cli\"}",
+        ],
+    )
+    assert update.exit_code == 0, update.output
+    assert "\"status\": \"paused\"" in update.output
+    assert "\"enabled\": false" in update.output
+
+    detail = client.get(f"/api/discovery/campaigns/{campaign_id}")
+    assert detail.status_code == 200, detail.text
+    campaign = detail.json()["campaign"]
+    assert campaign["status"] == "paused"
+    assert campaign["enabled"] is False
+    assert campaign["seed_urls_json"] == ["https://example.com/updated.json"]
+    assert campaign["crawl_policy_json"]["max_concurrency"] == 4
+    assert campaign["crawl_policy_json"]["crawl_delay_seconds"] == 0
+    assert campaign["crawl_policy_json"]["allow_private_networks"] is True
+    assert campaign["metadata_json"]["owner"] == "cli"
+
+
+def test_real_typer_discovery_maintenance_schedules(client: TestClient) -> None:
+    runner = CliRunner()
+    create = runner.invoke(
+        cli_app,
+        [
+            "create-discovery-campaign",
+            "cli-discovery-maintenance",
+            "--mode",
+            "seed_url",
+            "--discovery-mode",
+            "seed_url",
+            "--seed",
+            "https://example.com/feed.json",
+            "--max-depth",
+            "0",
+            "--max-pages",
+            "1",
+        ],
+    )
+    assert create.exit_code == 0, create.output
+    match = re.search(r"campaign=(\d+)", create.output)
+    assert match is not None
+    campaign_id = int(match.group(1))
+
+    health_schedule = runner.invoke(
+        cli_app,
+        [
+            "add-discovery-health-scan-schedule",
+            "cli-discovery-health",
+            "3600",
+            "--campaign-id",
+            str(campaign_id),
+            "--limit",
+            "25",
+        ],
+    )
+    assert health_schedule.exit_code == 0, health_schedule.output
+    assert "created for discovery health scans" in health_schedule.output
+
+    revisit_schedule = runner.invoke(
+        cli_app,
+        [
+            "add-discovery-revisit-schedule",
+            "cli-discovery-revisit",
+            "7200",
+            "--campaign-id",
+            str(campaign_id),
+            "--force",
+            "--priority",
+            "42",
+        ],
+    )
+    assert revisit_schedule.exit_code == 0, revisit_schedule.output
+    assert "created for discovery revisits" in revisit_schedule.output
+
+    session = get_session_factory()()
+    try:
+        tasks = list(
+            session.query(ScheduledTaskORM)
+            .filter(ScheduledTaskORM.name.in_(["cli-discovery-health", "cli-discovery-revisit"]))
+            .order_by(ScheduledTaskORM.name.asc())
+        )
+        assert [task.task_type for task in tasks] == [
+            "discovery_health_scan",
+            "discovery_revisit",
+        ]
+        assert tasks[0].payload_json["campaign_id"] == campaign_id
+        assert tasks[0].payload_json["limit"] == 25
+        assert tasks[1].payload_json["campaign_id"] == campaign_id
+        assert tasks[1].payload_json["force"] is True
+        assert tasks[1].payload_json["priority"] == 42.0
+    finally:
+        session.close()
+
+
+def test_discovery_domain_policy_patch_updates_fields_and_custody(
+    client: TestClient,
+) -> None:
+    created = client.put(
+        "/api/discovery/domain-policies",
+        json={
+            "normalized_domain": "policy.example.org",
+            "robots_mode": "respect",
+            "policy": "allow",
+        },
+    )
+    assert created.status_code == 200, created.text
+
+    patched = client.patch(
+        "/api/discovery/domain-policies/policy.example.org",
+        json={
+            "policy": "deny",
+            "robots_mode": "ignore",
+            "enabled": False,
+            "allow_subdomains": False,
+            "max_concurrency": 3,
+            "allowed_content_types_json": ["application/json"],
+            "notes": "Escalated domain restriction",
+        },
+    )
+    assert patched.status_code == 200, patched.text
+    payload = patched.json()
+    assert payload["policy"] == "deny"
+    assert payload["robots_mode"] == "ignore"
+    assert payload["enabled"] is False
+    assert payload["allow_subdomains"] is False
+    assert payload["max_concurrency"] == 3
+    assert payload["allowed_content_types_json"] == ["application/json"]
+    assert payload["notes"] == "Escalated domain restriction"
+
+    listed = client.get(
+        "/api/discovery/domain-policies",
+        params={"domain": "policy.example.org", "limit": 5},
+    )
+    assert listed.status_code == 200
+    rows = listed.json()
+    assert len(rows) == 1
+    assert rows[0]["normalized_domain"] == "policy.example.org"
+
+    custody = client.get("/api/custody/logs")
+    assert custody.status_code == 200
+    assert any(
+        row["object_type"] == "discovery_domain_policy"
+        and row["action"] == "discovery_domain_policy_updated"
+        and row["details_json"]["changes"]["policy"]["new"] == "deny"
+        for row in custody.json()
+    )
+
+
+def test_real_typer_discovery_domain_policy_commands(client: TestClient) -> None:
+    runner = CliRunner()
+    upsert = runner.invoke(
+        cli_app,
+        [
+            "upsert-discovery-domain-policy",
+            "cli-policy.example.org",
+            "--policy",
+            "allow",
+            "--robots-mode",
+            "respect",
+            "--max-concurrency",
+            "2",
+            "--allowed-content-types-json",
+            "[\"application/json\"]",
+            "--notes",
+            "cli-created",
+        ],
+    )
+    assert upsert.exit_code == 0, upsert.output
+    assert "cli-policy.example.org" in upsert.output
+
+    update = runner.invoke(
+        cli_app,
+        [
+            "update-discovery-domain-policy",
+            "cli-policy.example.org",
+            "--policy",
+            "deny",
+            "--robots-mode",
+            "ignore",
+            "--enabled",
+            "false",
+            "--allow-subdomains",
+            "false",
+            "--notes",
+            "cli-updated",
+        ],
+    )
+    assert update.exit_code == 0, update.output
+    assert "\"policy\": \"deny\"" in update.output
+    assert "\"robots_mode\": \"ignore\"" in update.output
+
+    listed = runner.invoke(
+        cli_app,
+        [
+            "list-discovery-domain-policies",
+            "--domain",
+            "cli-policy.example.org",
+            "--limit",
+            "5",
+        ],
+    )
+    assert listed.exit_code == 0, listed.output
+    assert "cli-policy.example.org" in listed.output
+    assert "deny" in listed.output
+
+    verify = client.get(
+        "/api/discovery/domain-policies",
+        params={"domain": "cli-policy.example.org"},
+    )
+    assert verify.status_code == 200
+    rows = verify.json()
+    assert len(rows) == 1
+    assert rows[0]["policy"] == "deny"
+    assert rows[0]["robots_mode"] == "ignore"
+    assert rows[0]["enabled"] is False
+    assert rows[0]["allow_subdomains"] is False

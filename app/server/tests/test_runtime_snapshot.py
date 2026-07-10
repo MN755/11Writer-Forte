@@ -1,19 +1,16 @@
 from __future__ import annotations
 
+import io
 import json
-<<<<<<< HEAD
-=======
 from datetime import datetime, timedelta, timezone
->>>>>>> 05aeee6 (chore: initialize repository)
 from pathlib import Path
+from zipfile import ZipFile
 
 from fastapi.testclient import TestClient
+from typer.testing import CliRunner
 
-<<<<<<< HEAD
-
-def seed_runtime_state(client: TestClient, tmp_path: Path) -> None:
-=======
-from src.config import reset_settings_cache
+from src.cli import app as cli_app
+from src.config import get_settings, reset_settings_cache
 from src.services import clickhouse_service
 
 
@@ -62,7 +59,6 @@ def restore_default_clickhouse_settings() -> None:
 
 
 def seed_runtime_state(client: TestClient, tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
->>>>>>> 05aeee6 (chore: initialize repository)
     fixture = tmp_path / "snapshot-source.json"
     fixture.write_text(
         json.dumps(
@@ -130,8 +126,6 @@ def seed_runtime_state(client: TestClient, tmp_path: Path, monkeypatch) -> None:
     )
     assert direct_import.status_code == 200
 
-<<<<<<< HEAD
-=======
     camera_fixture = tmp_path / "snapshot-cameras.json"
     camera_fixture.write_text(
         json.dumps(
@@ -163,7 +157,6 @@ def seed_runtime_state(client: TestClient, tmp_path: Path, monkeypatch) -> None:
     )
     assert camera_materialization.status_code == 200
 
->>>>>>> 05aeee6 (chore: initialize repository)
     geofence_response = client.post(
         "/api/geofences",
         json={
@@ -192,8 +185,6 @@ def seed_runtime_state(client: TestClient, tmp_path: Path, monkeypatch) -> None:
     task_run = client.post(f"/api/scheduler/tasks/{task_id}/run")
     assert task_run.status_code == 200
 
-<<<<<<< HEAD
-=======
     source_sync_schedule = client.post(
         "/api/scheduler/tasks",
         json={
@@ -317,7 +308,6 @@ def seed_runtime_state(client: TestClient, tmp_path: Path, monkeypatch) -> None:
     )
     assert event_schedule.status_code == 200
 
->>>>>>> 05aeee6 (chore: initialize repository)
     entity_resolution = client.post(
         "/api/entities/resolve",
         json={
@@ -344,13 +334,8 @@ def seed_runtime_state(client: TestClient, tmp_path: Path, monkeypatch) -> None:
     assert fused.status_code == 200
 
 
-<<<<<<< HEAD
-def test_runtime_snapshot_export_and_restore_round_trip(client: TestClient, tmp_path: Path) -> None:
-    seed_runtime_state(client, tmp_path)
-=======
 def test_runtime_snapshot_export_and_restore_round_trip(client: TestClient, tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     seed_runtime_state(client, tmp_path, monkeypatch)
->>>>>>> 05aeee6 (chore: initialize repository)
 
     export_response = client.get("/api/operations/runtime/export")
     assert export_response.status_code == 200
@@ -361,19 +346,13 @@ def test_runtime_snapshot_export_and_restore_round_trip(client: TestClient, tmp_
     assert snapshot["observations"]
     assert snapshot["events"]
     assert snapshot["entities"]
-<<<<<<< HEAD
-=======
     assert snapshot["camera_inventory"]
     assert snapshot["camera_source_inventory"]
->>>>>>> 05aeee6 (chore: initialize repository)
     assert snapshot["storage_objects"]
     assert snapshot["scheduled_tasks"]
     assert snapshot["scheduled_task_runs"]
     assert snapshot["source_runs"]
     assert snapshot["situation_products"]
-<<<<<<< HEAD
-    assert any(log["action"] == "runtime_exported" for log in snapshot["custody_logs"])
-=======
     task_types = {row["task_type"] for row in snapshot["scheduled_tasks"]}
     assert {"geofence_scan", "source_sync", "storage_lifecycle", "camera_inventory_refresh"}.issubset(task_types)
     assert {"clickhouse_sync", "clickhouse_archive", "entity_resolution_refresh", "event_fusion_refresh"}.issubset(
@@ -383,7 +362,6 @@ def test_runtime_snapshot_export_and_restore_round_trip(client: TestClient, tmp_
     assert any(log["action"] == "runtime_exported" for log in snapshot["custody_logs"])
     assert any(log["action"] == "clickhouse_synced" for log in snapshot["custody_logs"])
     assert any(log["action"] == "clickhouse_archived_to_r2" for log in snapshot["custody_logs"])
->>>>>>> 05aeee6 (chore: initialize repository)
 
     conflict_response = client.post("/api/operations/runtime/restore", json=snapshot)
     assert conflict_response.status_code == 409
@@ -401,15 +379,10 @@ def test_runtime_snapshot_export_and_restore_round_trip(client: TestClient, tmp_
     assert row_counts["observations"] >= 2
     assert row_counts["events"] >= 1
     assert row_counts["entities"] >= 1
-<<<<<<< HEAD
-    assert row_counts["storage_objects"] >= 1
-    assert row_counts["scheduled_tasks"] >= 1
-=======
     assert row_counts["camera_inventory"] >= 1
     assert row_counts["camera_source_inventory"] >= 1
     assert row_counts["storage_objects"] >= 1
     assert row_counts["scheduled_tasks"] >= 7
->>>>>>> 05aeee6 (chore: initialize repository)
     assert row_counts["source_definitions"] >= 1
     assert row_counts["source_runs"] >= 1
     assert row_counts["custody_logs"] >= len(snapshot["custody_logs"])
@@ -420,10 +393,6 @@ def test_runtime_snapshot_export_and_restore_round_trip(client: TestClient, tmp_
     assert len(restored_snapshot["observations"]) >= len(snapshot["observations"])
     assert len(restored_snapshot["events"]) >= len(snapshot["events"])
     assert len(restored_snapshot["entities"]) >= len(snapshot["entities"])
-<<<<<<< HEAD
-    assert len(restored_snapshot["storage_objects"]) >= len(snapshot["storage_objects"])
-    assert any(log["action"] == "runtime_restored" for log in restored_snapshot["custody_logs"])
-=======
     assert len(restored_snapshot["camera_inventory"]) >= len(snapshot["camera_inventory"])
     assert len(restored_snapshot["camera_source_inventory"]) >= len(snapshot["camera_source_inventory"])
     assert len(restored_snapshot["storage_objects"]) >= len(snapshot["storage_objects"])
@@ -437,4 +406,166 @@ def test_runtime_snapshot_export_and_restore_round_trip(client: TestClient, tmp_
     assert any(row["task"]["task_type"] == "clickhouse_archive" for row in report_payload["maintenance_tasks"])
     assert any(log["action"] == "runtime_restored" for log in restored_snapshot["custody_logs"])
     restore_default_clickhouse_settings()
->>>>>>> 05aeee6 (chore: initialize repository)
+
+
+def test_runtime_bundle_export_and_restore_round_trip(
+    client: TestClient, tmp_path: Path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    seed_runtime_state(client, tmp_path, monkeypatch)
+    settings = get_settings()
+    managed_root = settings.data_dir / "managed"
+    managed_root.mkdir(parents=True, exist_ok=True)
+    managed_file = managed_root / "bundle-evidence.txt"
+    managed_bytes = b"runtime bundle evidence\nline two\n"
+    managed_file.write_bytes(managed_bytes)
+
+    storage_response = client.post(
+        "/api/storage/objects",
+        json={
+            "object_key": "runtime-bundle:test:1",
+            "object_kind": "managed_payload",
+            "owner_type": "runtime_bundle_test",
+            "owner_id": "1",
+            "object_uri": managed_file.resolve().as_uri(),
+            "source_uri": managed_file.resolve().as_uri(),
+            "storage_tier": "warm",
+            "retention_class": "investigative",
+            "lifecycle_status": "active",
+        },
+    )
+    assert storage_response.status_code == 200
+
+    runner = CliRunner()
+    bundle_path = tmp_path / "exports" / "runtime-bundle.zip"
+    export = runner.invoke(cli_app, ["export-runtime-bundle", str(bundle_path)])
+    assert export.exit_code == 0, export.output
+    assert bundle_path.exists()
+
+    with ZipFile(bundle_path, "r") as archive:
+        names = set(archive.namelist())
+        assert "snapshot.json" in names
+        assert "manifest.json" in names
+        assert "data_dir/managed/bundle-evidence.txt" in names
+        manifest = json.loads(archive.read("manifest.json").decode("utf-8"))
+        assert manifest["bundle_format_version"] == 1
+        assert any(
+            row["relative_path"] == "managed/bundle-evidence.txt"
+            for row in manifest["data_dir_files"]
+        )
+
+    managed_file.unlink()
+    junk_file = settings.data_dir / "junk.txt"
+    junk_file.write_text("junk", encoding="utf-8")
+
+    restore = runner.invoke(
+        cli_app,
+        ["restore-runtime-bundle", str(bundle_path), "--replace-existing"],
+    )
+    assert restore.exit_code == 0, restore.output
+    assert managed_file.read_bytes() == managed_bytes
+    assert not junk_file.exists()
+
+    restored_storage = client.get(
+        "/api/storage/objects",
+        params={"owner_type": "runtime_bundle_test", "owner_id": "1"},
+    )
+    assert restored_storage.status_code == 200
+    rows = restored_storage.json()
+    assert len(rows) == 1
+    assert rows[0]["object_uri"] == managed_file.resolve().as_uri()
+    restored_snapshot = client.get("/api/operations/runtime/export")
+    assert restored_snapshot.status_code == 200
+    assert any(log["action"] == "runtime_bundle_restored" for log in restored_snapshot.json()["custody_logs"])
+    restore_default_clickhouse_settings()
+
+
+def test_runtime_bundle_api_export_and_restore_round_trip(
+    client: TestClient, tmp_path: Path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    seed_runtime_state(client, tmp_path, monkeypatch)
+    settings = get_settings()
+    managed_root = settings.data_dir / "managed"
+    managed_root.mkdir(parents=True, exist_ok=True)
+    managed_file = managed_root / "bundle-api-evidence.txt"
+    managed_bytes = b"runtime bundle api evidence\n"
+    managed_file.write_bytes(managed_bytes)
+
+    storage_response = client.post(
+        "/api/storage/objects",
+        json={
+            "object_key": "runtime-bundle-api:test:1",
+            "object_kind": "managed_payload",
+            "owner_type": "runtime_bundle_api_test",
+            "owner_id": "1",
+            "object_uri": managed_file.resolve().as_uri(),
+            "source_uri": managed_file.resolve().as_uri(),
+            "storage_tier": "warm",
+            "retention_class": "investigative",
+            "lifecycle_status": "active",
+        },
+    )
+    assert storage_response.status_code == 200
+
+    export_response = client.get("/api/operations/runtime/bundle/export")
+    assert export_response.status_code == 200
+    assert export_response.headers["content-type"] == "application/zip"
+    assert export_response.headers["x-elevenwriter-storage-object-id"]
+    assert export_response.headers["x-elevenwriter-bundle-sha256"]
+    assert export_response.headers["x-elevenwriter-bundle-format-version"] == "1"
+
+    with ZipFile(io.BytesIO(export_response.content), "r") as archive:
+        names = set(archive.namelist())
+        assert "snapshot.json" in names
+        assert "manifest.json" in names
+        assert "data_dir/managed/bundle-api-evidence.txt" in names
+        manifest = json.loads(archive.read("manifest.json").decode("utf-8"))
+        assert manifest["bundle_format_version"] == 1
+        assert any(
+            row["relative_path"] == "managed/bundle-api-evidence.txt"
+            for row in manifest["data_dir_files"]
+        )
+
+    stored_exports = client.get(
+        "/api/storage/objects",
+        params={"owner_type": "runtime_bundle"},
+    )
+    assert stored_exports.status_code == 200
+    assert any(
+        row["object_kind"] == "runtime_bundle_export"
+        for row in stored_exports.json()
+    )
+
+    managed_file.unlink()
+    junk_file = settings.data_dir / "bundle-api-junk.txt"
+    junk_file.write_text("junk", encoding="utf-8")
+
+    restore_response = client.post(
+        "/api/operations/runtime/bundle/restore",
+        params={"replace_existing": "true"},
+        content=export_response.content,
+        headers={"content-type": "application/zip"},
+    )
+    assert restore_response.status_code == 200, restore_response.text
+    restored = restore_response.json()
+    assert restored["replaced_existing"] is True
+    assert restored["restored_file_count"] >= 1
+    assert restored["bundle_format_version"] == 1
+    assert restored["data_dir"] == str(settings.data_dir.resolve())
+    assert managed_file.read_bytes() == managed_bytes
+    assert not junk_file.exists()
+
+    restored_storage = client.get(
+        "/api/storage/objects",
+        params={"owner_type": "runtime_bundle_api_test", "owner_id": "1"},
+    )
+    assert restored_storage.status_code == 200
+    rows = restored_storage.json()
+    assert len(rows) == 1
+    assert rows[0]["object_uri"] == managed_file.resolve().as_uri()
+
+    restored_snapshot = client.get("/api/operations/runtime/export")
+    assert restored_snapshot.status_code == 200
+    custody_actions = {log["action"] for log in restored_snapshot.json()["custody_logs"]}
+    assert "runtime_bundle_exported" in custody_actions
+    assert "runtime_bundle_restored" in custody_actions
+    restore_default_clickhouse_settings()

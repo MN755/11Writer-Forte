@@ -20,6 +20,7 @@ Avoid OneDrive-synced or other cloud-synced folders for the primary checkout. Gi
 - Rule-based entity resolution that links observations into reusable entity records
 - Event fusion materialization plus exportable cited summaries and rule-based reports
 - Managed source definitions with persisted source-run history and scheduler-driven sync hooks
+- Managed source adapters now cover local files plus HTTP JSON, JSONL, text, XML, CSV, RSS/Atom, ArcGIS feature payloads, and CKAN package search catalogs
 - Bounded, geospatial-first source discovery with persisted campaigns, checkpointed frontier runs, globally deduplicated candidates, revisions, lineage, scoring, health, suppression, and managed-source promotion
 - Camera inventory materialization that turns imported/public traffic camera observations into persisted geospatial camera records with provenance
 - Camera source inventory lifecycle that graduates observed camera endpoints into a backend-native candidate registry with rule-based readiness scoring
@@ -53,6 +54,8 @@ python -m pip install --upgrade pip
 python -m pip install -e .[dev]
 elevenwriter init-db
 elevenwriter seed-integrity
+elevenwriter add-trust-profile example.gov --trust-level trusted --approval-policy auto_approve_stable --integrity-source
+elevenwriter update-trust-profile 1 --trust-level blocked --approval-policy always_review --notes "Escalated for analyst review"
 uvicorn src.main:app --reload --port 8000
 ```
 
@@ -62,19 +65,49 @@ Upstream camera/webcam inventory and local parity notes live in [UPSTREAM_CAMERA
 
 Source discovery architecture, safety defaults, scoring, promotion, and operator workflows live in [docs/source-discovery.md](docs/source-discovery.md).
 
+## Codex Research Agent
+
+Forte now has a local, headless Codex research adapter. Its MCP server exposes only read-only local evidence tools: runtime inventory, sources, alerts, events, recent observations, and custody records. The scheduler, source ingestion, alerting, storage lifecycle, and outbound delivery stay rule/code-driven.
+
+```bash
+cd app/server
+.\.venv\Scripts\Activate.ps1
+$env:PYTHONPATH = (Get-Location).Path
+elevenwriter configure-codex-agent
+elevenwriter research "Summarize the current local evidence for open alerts" --model gpt-5.4-mini --reasoning-effort medium
+```
+
+`research` runs `codex exec` with a read-only sandbox and no approval prompts. It retains a completed briefing under `var/agent_reports`, registers it in the local storage ledger, and writes a custody event. `ELEVENWRITER_CODEX_MODEL` and `ELEVENWRITER_CODEX_REASONING_EFFORT` set defaults; pass the desired Codex model string explicitly to use a different approved model.
+
 ## CLI
 
 ```bash
 elevenwriter status
 elevenwriter doctor
+elevenwriter show-codex-mcp-command
+elevenwriter configure-codex-agent
+elevenwriter research "Summarize the current local evidence for open alerts" --model gpt-5.4-mini --reasoning-effort medium
 elevenwriter init-db
 elevenwriter seed-integrity
+elevenwriter add-trust-profile example.gov --trust-level trusted --approval-policy auto_approve_stable --integrity-source
+elevenwriter update-trust-profile 1 --trust-level blocked --approval-policy always_review --notes "Escalated for analyst review"
+elevenwriter trust-profiles
 elevenwriter add-layer marine-track "Marine Track" --temporal-resolution live --data-latency low
 elevenwriter list-layers
+elevenwriter add-geofence "Port Watch" "{\"type\":\"Polygon\",\"coordinates\":[[[-96.0,29.0],[-94.0,29.0],[-94.0,31.0],[-96.0,31.0],[-96.0,29.0]]]}" --rule-expression "observation enters polygon"
+elevenwriter list-geofences
 elevenwriter import-local path/to/file.json --layer incident-feed
 elevenwriter list-imports
-elevenwriter add-source-file harbor-source ./feeds/harbor.json marine-track --skip-unchanged true
-elevenwriter add-source-http-json remote-feed https://example.com/feed.json remote-track --retry-attempts 3 --skip-unchanged true --header "Authorization: Bearer token"
+elevenwriter add-source-file harbor-source ./feeds/harbor.json marine-track
+elevenwriter add-source-http-json remote-feed https://example.com/feed.json remote-track --retry-attempts 3 --no-skip-unchanged --header "Authorization: Bearer token"
+elevenwriter add-source-http-jsonl remote-jsonl https://example.com/feed.jsonl remote-track
+elevenwriter add-source-http-csv remote-csv https://example.com/feed.csv traffic-camera-feed
+elevenwriter add-source-rss port-alerts https://example.com/alerts.xml alert-feed
+elevenwriter add-source-arcgis-feature-json city-arcgis "https://example.com/arcgis/rest/services/Cameras/FeatureServer/0/query?where=1%3D1&outFields=*&f=json" traffic-camera-feed
+elevenwriter add-source-ckan-package-search state-catalog "https://data.example.gov/api/3/action/package_search?q=traffic" catalog-feed
+elevenwriter add-source-web-search search-seed "https://search.example.net/search?q=port+alerts" alert-feed
+elevenwriter add-source-web-crawl alert-page https://example.com/alerts alert-feed
+elevenwriter add-source-web-discovery api-docs https://example.com/developer/api alert-feed
 elevenwriter list-sources
 elevenwriter update-source 1 --enabled false --notes "Disabled for review"
 elevenwriter run-source 1
@@ -84,11 +117,17 @@ elevenwriter run-discovery 1 --max-pages 25
 elevenwriter list-discovery-candidates --campaign-id 1 --min-score 50
 elevenwriter explain-discovery-candidate 1
 elevenwriter show-discovery-lineage 1
+elevenwriter update-discovery-campaign 1 --status paused --enabled false --crawl-policy-json "{\"max_concurrency\":4}"
+elevenwriter list-discovery-domain-policies --domain 511mn.org
+elevenwriter upsert-discovery-domain-policy 511mn.org --policy allow --robots-mode respect --max-concurrency 2
+elevenwriter update-discovery-domain-policy 511mn.org --policy deny --robots-mode ignore --enabled false --notes "Temporarily blocked"
 elevenwriter promote-discovery-candidate 1 "Verified official endpoint" --source-kind http_json --layer road-events --schedule-interval-seconds 1800
 elevenwriter revisit-discovery --candidate-id 1 --force
 elevenwriter show-discovery-ops --stale-after-hours 24
 elevenwriter export-discovery-summary ./exports/discovery-summary.json
 elevenwriter add-discovery-schedule mn-discovery 1 3600 --max-pages 50
+elevenwriter add-discovery-health-scan-schedule mn-discovery-health 3600 --campaign-id 1 --limit 100
+elevenwriter add-discovery-revisit-schedule mn-discovery-revisit 3600 --campaign-id 1 --force
 elevenwriter show-source-ops 1
 elevenwriter show-source-summary --stale-after-hours 24
 elevenwriter show-source-report-index --stale-after-hours 24
@@ -128,21 +167,29 @@ elevenwriter cross-verify --bbox "-96,29,-94,31" --distance-km 10
 elevenwriter resolve-entities --bbox "-96,29,-94,31" --min-observations 2
 elevenwriter list-entities
 elevenwriter show-entity-observations 1
+elevenwriter create-event analyst-note-1 "Analyst Note Event" --summary "Operator-created event for tracking" --redaction-level restricted --metadata-json "{\"case_id\":\"AN-1\"}"
 elevenwriter fuse-events --bbox "-96,29,-94,31" --distance-km 10
+elevenwriter list-events
 elevenwriter show-event-products 1
 elevenwriter export-event-product 1 cited_summary ./exports/event-1-summary.txt --max-redaction-level public
 elevenwriter export-event-bundle 1 ./exports/event-1-bundle.json --max-redaction-level public
 elevenwriter export-runtime-snapshot ./exports/runtime-snapshot.json
+elevenwriter export-runtime-bundle ./exports/runtime-bundle.zip
 elevenwriter restore-runtime-snapshot ./exports/runtime-snapshot.json --replace-existing
+elevenwriter restore-runtime-bundle ./exports/runtime-bundle.zip --replace-existing
 elevenwriter add-source-sync-schedule nightly-sync 1 300 --retry-attempts 3 --retry-backoff-seconds 5
-elevenwriter add-geofence-scan-schedule nightly-watch 300
+elevenwriter add-integrity-seed-schedule nightly-integrity 86400
+elevenwriter add-geofence-scan-schedule nightly-watch 300 --geofence-id 1
 elevenwriter update-schedule 1 --enabled false --notes "Paused for maintenance"
 elevenwriter scheduler-worker --poll-seconds 5
 elevenwriter list-schedules
 elevenwriter list-schedule-runs
+elevenwriter create-alert "Manual analyst alert" --event-id 1 --severity warning --trigger-basis-json "{\"origin\":\"cli\"}"
+elevenwriter list-alerts --status open --event-id 1
 elevenwriter update-alert 1 acknowledged --disposition-note "Reviewed by operator"
 elevenwriter run-due-schedules
 elevenwriter list-custody
+elevenwriter list-custody --object-type source_trust_profile --action source_trust_profile_updated --limit 20
 elevenwriter show-scheduler-summary
 elevenwriter show-scheduler-report-index --limit 25
 elevenwriter export-scheduler-summary ./exports/scheduler-summary.json --task-limit 500 --report-limit 25
@@ -194,10 +241,12 @@ ELEVENWRITER_CLICKHOUSE_R2_CACHE_SIZE=10Gi
 - SQLite remains supported for local ingestion inputs and lightweight runtime mode, but primary backend storage targets Postgres/PostGIS deployment.
 - Postgres runtime now auto-enables `postgis` plus GiST expression indexes for observation points and geofence geometries, while SQLite keeps the Python fallback path for local runs and tests.
 - The headless CLI now includes a `doctor` command and the API exposes `/api/operations/database`, so operators can audit connectivity, additive schema drift, table counts, and PostGIS readiness without freestyling SQL in production.
-- Runtime backup and recovery now have a first-class path too: `/api/operations/runtime/export`, `/api/operations/runtime/restore`, and matching CLI commands serialize the core backend state in dependency-safe order and log custody records for both export and restore.
+- Runtime backup and recovery now have a first-class path too: `/api/operations/runtime/export`, `/api/operations/runtime/restore`, `/api/operations/runtime/bundle/export`, `/api/operations/runtime/bundle/restore`, and matching CLI commands serialize the core backend state in dependency-safe order, preserve byte-faithful managed `data_dir` bundles when needed, and log custody records for both export and restore.
 - Runtime snapshot coverage now extends across newer operational subsystems too, including scheduler task/run state, source-run history, camera/source registries, storage objects, and maintenance-task lineage, so recovery testing is following the real backend instead of freezing at an older shape.
 - Source discovery is durable infrastructure now: campaigns, bounded/checkpointed frontier entries, canonical candidates, revisions, graph lineage, robots observations, health, suppressions, promotion decisions, and fetched-artifact metadata all persist and round-trip through runtime snapshots. See [docs/source-discovery.md](docs/source-discovery.md) for the operator contract and its honest limitations.
+- Discovery maintenance is scheduler-native now too: campaign runs, candidate health scans, and scoped revisit queues can all be scheduled headlessly, so source inventory does not rot the second an operator stops typing.
 - The storage-core slice is real now, not a manifesto: `/api/storage/objects` plus the `list-storage-objects`, `add-storage-object`, `promote-storage-object`, and `transition-storage-object` CLI commands expose a first-class artifact ledger with retention classes, tiering, and lifecycle controls.
+- Lifecycle changes now act on owned local bytes too: when a managed storage object under the configured `data_dir` is archived, Forte moves it into a durable archive subtree; when it expires, Forte deletes the managed file and preserves that action in custody metadata instead of only flipping a row state.
 - Imports and camera materialization now auto-register storage manifests, so raw local files plus camera image/stream/page references get tracked as storage objects with expiration windows and custody events instead of disappearing into the void.
 - Managed sources now participate in that same storage/provenance model too: each source run materialization is tracked as a storage object, and `/api/sources/{id}/ops` plus `show-source-ops` expose recent runs, stored payload artifacts, and related custody logs in one place.
 - Managed sources now have a fleet-level ops surface too: `/api/sources/summary` and `/api/sources/report-index` expose stale sources, failing runs, schedule coverage, and recent sync activity so operators can see source health across the whole catalog instead of auditing one source at a time.
@@ -236,3 +285,4 @@ ELEVENWRITER_CLICKHOUSE_R2_CACHE_SIZE=10Gi
 - Local imports are dedupe-aware too: exact duplicate records in the same layer are skipped, and each import run reports `records_seen`, `records_imported`, and `records_skipped`.
 - Scheduled tasks now support task-level retry attempts and linear retry backoff, with custody records for failed attempts, retry scheduling, and final completion/failure outcomes.
 - The scheduler worker is a first-class CLI runtime now, and due-task execution is resilient: one failed task run does not stall the rest of the due queue.
+
