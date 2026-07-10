@@ -165,6 +165,41 @@ class CameraInventoryORM(TimestampMixin, Base):
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
 
+<<<<<<< HEAD
+=======
+class CameraSourceInventoryORM(TimestampMixin, Base):
+    __tablename__ = "camera_source_inventory"
+
+    camera_source_inventory_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    candidate_key: Mapped[str] = mapped_column(String(200), unique=True, index=True)
+    camera_inventory_id: Mapped[int | None] = mapped_column(
+        ForeignKey("camera_inventory.camera_inventory_id"),
+        default=None,
+        index=True,
+    )
+    observation_id: Mapped[int | None] = mapped_column(
+        ForeignKey("observations.observation_id"),
+        default=None,
+        index=True,
+    )
+    external_id: Mapped[str | None] = mapped_column(String(120), default=None, index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    source_domain: Mapped[str | None] = mapped_column(String(255), default=None, index=True)
+    layer_key: Mapped[str] = mapped_column(String(80), index=True)
+    provider: Mapped[str] = mapped_column(String(120), default="")
+    endpoint_kind: Mapped[str] = mapped_column(String(40), index=True)
+    endpoint_url: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(40), default="candidate", index=True)
+    verification_state: Mapped[str] = mapped_column(String(40), default="observed", index=True)
+    active: Mapped[bool] = mapped_column(default=True, index=True)
+    last_observed_at: Mapped[datetime | None] = mapped_column(default=None, index=True)
+    last_checked_at: Mapped[datetime | None] = mapped_column(default=None)
+    confidence_score: Mapped[float] = mapped_column(Float, default=0.5)
+    graduation_score: Mapped[float] = mapped_column(Float, default=0.0)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+
+>>>>>>> 05aeee6 (chore: initialize repository)
 class StorageObjectORM(TimestampMixin, Base):
     __tablename__ = "storage_objects"
 

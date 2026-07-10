@@ -111,8 +111,28 @@ def test_operations_report_summarizes_runtime_activity(client: TestClient, tmp_p
     assert len(payload["alerts"]) == 2
     assert payload["alerts"][0]["status"] in {"open", "acknowledged"}
     assert payload["custody_logs"]
+<<<<<<< HEAD
     assert payload["camera_inventory_summary"]["total_count"] == 0
     assert payload["camera_report_index"]["refresh_task_count"] == 0
+=======
+    assert payload["storage_report"]["total_count"] >= 2
+    assert payload["storage_report"]["active_count"] >= 2
+    assert payload["clickhouse_diagnostics"]["status"] == "disabled"
+    assert payload["clickhouse_diagnostics"]["enabled"] is False
+    assert payload["clickhouse_diagnostics"]["storage_mode"] == "archive_only"
+    assert payload["scheduler_inventory_summary"]["total_count"] == 1
+    assert payload["scheduler_inventory_summary"]["enabled_count"] == 1
+    assert payload["scheduler_report_index"]["task_run_count"] == 1
+    assert payload["scheduler_report_index"]["task_run_failure_count"] == 0
+    assert payload["source_inventory_summary"]["total_count"] == 1
+    assert payload["source_inventory_summary"]["scheduled_count"] == 0
+    assert payload["source_report_index"]["sync_task_count"] == 0
+    assert payload["source_report_index"]["recent_runs"][0]["source_id"] == source_id
+    assert payload["camera_inventory_summary"]["total_count"] == 0
+    assert payload["camera_report_index"]["refresh_task_count"] == 0
+    assert payload["camera_source_inventory_summary"]["total_count"] == 0
+    assert payload["camera_source_report_index"]["refresh_task_count"] == 0
+>>>>>>> 05aeee6 (chore: initialize repository)
 
     camera_fixture = tmp_path / "ops-cameras.json"
     camera_fixture.write_text(
@@ -157,7 +177,23 @@ def test_operations_report_summarizes_runtime_activity(client: TestClient, tmp_p
     camera_report_response = client.get("/api/operations/report", params={"limit": 5})
     assert camera_report_response.status_code == 200
     camera_payload = camera_report_response.json()
+<<<<<<< HEAD
+=======
+    assert camera_payload["storage_report"]["total_count"] >= 5
+    assert any(
+        bucket["key"] == "operational" for bucket in camera_payload["storage_report"]["retention_class_counts"]
+    )
+    assert camera_payload["scheduler_inventory_summary"]["total_count"] == 2
+    assert camera_payload["scheduler_report_index"]["task_run_count"] == 1
+    assert camera_payload["source_inventory_summary"]["total_count"] == 1
+>>>>>>> 05aeee6 (chore: initialize repository)
     assert camera_payload["camera_inventory_summary"]["total_count"] == 1
     assert camera_payload["camera_inventory_summary"]["inactive_count"] == 1
     assert camera_payload["camera_report_index"]["refresh_task_count"] == 1
     assert camera_payload["camera_report_index"]["recent_materializations"][0]["action"] == "camera_materialization_completed"
+<<<<<<< HEAD
+=======
+    assert camera_payload["camera_source_inventory_summary"]["total_count"] == 1
+    assert camera_payload["camera_source_report_index"]["refresh_task_count"] == 1
+    assert camera_payload["camera_source_report_index"]["recent_materializations"][0]["action"] == "camera_source_materialization_completed"
+>>>>>>> 05aeee6 (chore: initialize repository)

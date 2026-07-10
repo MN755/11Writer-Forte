@@ -11,6 +11,11 @@ ApprovalPolicy = Literal["auto_approve_stable", "manual_review", "always_review"
 StorageTier = Literal["hot", "warm", "archive"]
 RetentionClass = Literal["ephemeral", "operational", "investigative", "permanent"]
 StorageLifecycleStatus = Literal["active", "promoted", "degraded", "archived", "expired"]
+<<<<<<< HEAD
+=======
+CameraSourceStatus = Literal["candidate", "review", "ready", "graduated", "ignored", "retired"]
+CameraSourceVerificationState = Literal["unknown", "observed", "reachable", "failed"]
+>>>>>>> 05aeee6 (chore: initialize repository)
 
 
 class ForteModel(BaseModel):
@@ -74,11 +79,21 @@ class ClickHouseDiagnosticsRead(ForteModel):
     version: str | None
     current_database: str | None
     storage_policy: str | None
+<<<<<<< HEAD
+=======
+    storage_mode: str
+>>>>>>> 05aeee6 (chore: initialize repository)
     r2_configured: bool
     r2_endpoint: str | None
     r2_bucket: str | None
     r2_region: str | None
     r2_archive_root: str | None
+<<<<<<< HEAD
+=======
+    r2_storage_ready: bool
+    r2_storage_bucket: str | None
+    r2_storage_root: str | None
+>>>>>>> 05aeee6 (chore: initialize repository)
     warnings: list[str]
     notes: list[str]
 
@@ -89,6 +104,10 @@ class ClickHouseProvisionResultRead(ForteModel):
     observation_table: str
     storage_object_table: str
     storage_policy: str | None
+<<<<<<< HEAD
+=======
+    storage_mode: str
+>>>>>>> 05aeee6 (chore: initialize repository)
 
 
 class ClickHouseSyncResultRead(ForteModel):
@@ -114,10 +133,32 @@ class ClickHouseArchiveResultRead(ForteModel):
 
 class ClickHouseR2ConfigRead(ForteModel):
     generated_at: datetime
+<<<<<<< HEAD
     archive_root_url: str
     storage_xml: str
     create_table_sql: str
     archive_example_sql: str
+=======
+    storage_mode: str
+    archive_root_url: str
+    storage_root_url: str
+    storage_policy: str | None
+    storage_xml: str
+    create_table_sql: str
+    archive_example_sql: str
+    rehydrate_example_sql: str
+    direct_query_example_sql: str
+    docker_output_path: str
+
+
+class ClickHouseRehydrateResultRead(ForteModel):
+    rehydrated_at: datetime
+    clickhouse_database: str
+    observation_table: str
+    archive_glob_url: str
+    imported_row_count: int
+    sql: str
+>>>>>>> 05aeee6 (chore: initialize repository)
 
 
 class RuntimeSnapshotRead(ForteModel):
@@ -136,6 +177,10 @@ class RuntimeSnapshotRead(ForteModel):
     entities: list["EntityRead"]
     observations: list["ObservationRead"]
     camera_inventory: list["CameraInventoryRead"]
+<<<<<<< HEAD
+=======
+    camera_source_inventory: list["CameraSourceInventoryRead"]
+>>>>>>> 05aeee6 (chore: initialize repository)
     storage_objects: list["StorageObjectRead"]
     event_observation_links: list["EventObservationLinkRead"]
     entity_observation_links: list["EntityObservationLinkRead"]
@@ -274,6 +319,40 @@ class StorageObjectTransitionRequest(ForteModel):
     metadata_json: dict[str, Any] = Field(default_factory=dict)
 
 
+<<<<<<< HEAD
+=======
+class StorageInventoryBucketRead(ForteModel):
+    key: str
+    total_count: int
+    expired_count: int
+    active_count: int
+
+
+class StorageReportRead(ForteModel):
+    generated_at: datetime
+    total_count: int
+    active_count: int
+    expired_count: int
+    promoted_count: int
+    archived_count: int
+    next_expiration_at: datetime | None
+    oldest_expired_at: datetime | None
+    retention_class_counts: list[StorageInventoryBucketRead]
+    storage_tier_counts: list[StorageInventoryBucketRead]
+    lifecycle_status_counts: list[StorageInventoryBucketRead]
+    expiring_objects: list[StorageObjectRead]
+
+
+class StorageLifecycleSweepResultRead(ForteModel):
+    swept_at: datetime
+    dry_run: bool
+    filters_json: dict[str, Any]
+    expired_candidate_count: int
+    transitioned_count: int
+    candidates: list[StorageObjectRead]
+
+
+>>>>>>> 05aeee6 (chore: initialize repository)
 class CameraMaterializationRequest(ForteModel):
     layer_key: str | None = None
     source_domain: str | None = None
@@ -284,6 +363,12 @@ class CameraMaterializationResponse(ForteModel):
     created_count: int
     updated_count: int
     scanned_count: int
+<<<<<<< HEAD
+=======
+    source_created_count: int = 0
+    source_updated_count: int = 0
+    source_scanned_endpoint_count: int = 0
+>>>>>>> 05aeee6 (chore: initialize repository)
     cameras: list[CameraInventoryRead]
 
 
@@ -316,6 +401,97 @@ class CameraInventoryOpsDetailRead(ForteModel):
     refresh_tasks: list["ScheduledTaskRead"]
 
 
+<<<<<<< HEAD
+=======
+class CameraSourceInventoryRead(ForteModel):
+    camera_source_inventory_id: int
+    candidate_key: str
+    camera_inventory_id: int | None
+    observation_id: int | None
+    external_id: str | None
+    name: str
+    source_domain: str | None
+    layer_key: str
+    provider: str
+    endpoint_kind: str
+    endpoint_url: str
+    status: CameraSourceStatus
+    verification_state: CameraSourceVerificationState
+    active: bool
+    last_observed_at: datetime | None
+    last_checked_at: datetime | None
+    confidence_score: float
+    graduation_score: float
+    metadata_json: dict[str, Any]
+    created_at: datetime
+    updated_at: datetime
+
+
+class CameraSourceMaterializationRequest(ForteModel):
+    layer_key: str | None = None
+    source_domain: str | None = None
+    active: bool | None = None
+    limit: int = Field(default=500, ge=1, le=5000)
+
+
+class CameraSourceMaterializationResponse(ForteModel):
+    created_count: int
+    updated_count: int
+    scanned_camera_count: int
+    scanned_endpoint_count: int
+    sources: list[CameraSourceInventoryRead]
+
+
+class CameraSourceSummaryBucketRead(ForteModel):
+    key: str
+    total_count: int
+    active_count: int
+    ready_count: int
+    review_count: int
+
+
+class CameraSourceSummaryRead(ForteModel):
+    generated_at: datetime
+    total_count: int
+    active_count: int
+    ready_count: int
+    review_count: int
+    candidate_count: int
+    graduated_count: int
+    source_domain_counts: list[CameraSourceSummaryBucketRead]
+    endpoint_kind_counts: list[CameraSourceSummaryBucketRead]
+    status_counts: list[CameraSourceSummaryBucketRead]
+
+
+class CameraSourceOpsDetailRead(ForteModel):
+    source: CameraSourceInventoryRead
+    camera: CameraInventoryRead | None
+    latest_observation: ObservationRead | None
+    custody_logs: list["CustodyLogRead"]
+
+
+class CameraSourceOpsReportIndexRead(ForteModel):
+    generated_at: datetime
+    stale_after_hours: float
+    latest_materialization_at: datetime | None
+    inventory_summary: CameraSourceSummaryRead
+    refresh_task_count: int
+    refresh_run_count: int
+    refresh_failure_count: int
+    refresh_tasks: list["ScheduledTaskRead"]
+    recent_refresh_runs: list["CameraRefreshTaskRunRead"]
+    recent_materializations: list["CustodyLogRead"]
+    stale_sources: list[CameraSourceInventoryRead]
+
+
+class CameraSourceOpsExportSummaryRead(ForteModel):
+    generated_at: datetime
+    filters_json: dict[str, Any]
+    report_index: CameraSourceOpsReportIndexRead
+    sources: list[CameraSourceInventoryRead]
+
+
+>>>>>>> 05aeee6 (chore: initialize repository)
 class EventObservationLinkRead(ForteModel):
     event_observation_link_id: int
     event_id: int
@@ -428,6 +604,74 @@ class SourceRunRead(ForteModel):
     output_json: dict[str, Any]
 
 
+<<<<<<< HEAD
+=======
+class SourceOpsDetailRead(ForteModel):
+    source: SourceDefinitionRead
+    recent_runs: list[SourceRunRead]
+    storage_objects: list[StorageObjectRead]
+    custody_logs: list["CustodyLogRead"]
+
+
+class SourceOpsStatusRead(ForteModel):
+    source: SourceDefinitionRead
+    latest_run: SourceRunRead | None
+    has_schedule: bool
+    next_run_at: datetime | None
+    latest_success_at: datetime | None
+    is_stale: bool
+    is_failing: bool
+    storage_object_count: int
+    last_storage_observed_at: datetime | None
+
+
+class SourceSummaryBucketRead(ForteModel):
+    key: str
+    total_count: int
+    enabled_count: int
+    disabled_count: int
+    stale_count: int
+    failing_count: int
+
+
+class SourceInventorySummaryRead(ForteModel):
+    generated_at: datetime
+    stale_before: datetime
+    total_count: int
+    enabled_count: int
+    disabled_count: int
+    stale_count: int
+    failing_count: int
+    scheduled_count: int
+    unscheduled_count: int
+    source_kind_counts: list[SourceSummaryBucketRead]
+    layer_counts: list[SourceSummaryBucketRead]
+    latest_status_counts: list[SourceSummaryBucketRead]
+
+
+class SourceOpsReportIndexRead(ForteModel):
+    generated_at: datetime
+    stale_after_hours: float
+    latest_run_at: datetime | None
+    inventory_summary: SourceInventorySummaryRead
+    sync_task_count: int
+    sync_run_count: int
+    sync_failure_count: int
+    sync_tasks: list["ScheduledTaskRead"]
+    recent_runs: list[SourceRunRead]
+    stale_sources: list[SourceOpsStatusRead]
+    failing_sources: list[SourceOpsStatusRead]
+    unscheduled_sources: list[SourceOpsStatusRead]
+
+
+class SourceOpsExportSummaryRead(ForteModel):
+    generated_at: datetime
+    filters_json: dict[str, Any]
+    report_index: SourceOpsReportIndexRead
+    sources: list[SourceDefinitionRead]
+
+
+>>>>>>> 05aeee6 (chore: initialize repository)
 class IntegritySeedResponse(ForteModel):
     created: int
     domains: list[str]
@@ -588,6 +832,12 @@ class ScheduledTaskCreate(ForteModel):
         "geofence_scan",
         "integrity_seed",
         "source_sync",
+<<<<<<< HEAD
+=======
+        "storage_lifecycle",
+        "clickhouse_sync",
+        "clickhouse_archive",
+>>>>>>> 05aeee6 (chore: initialize repository)
         "camera_inventory_refresh",
         "entity_resolution_refresh",
         "event_fusion_refresh",
@@ -637,6 +887,69 @@ class ScheduledTaskRunRead(ForteModel):
     output_json: dict[str, Any]
 
 
+<<<<<<< HEAD
+=======
+class ScheduledTaskOpsStatusRead(ForteModel):
+    task: ScheduledTaskRead
+    latest_run: ScheduledTaskRunRead | None
+    is_due: bool
+    is_overdue: bool
+    is_failing: bool
+
+
+class ScheduledTaskSummaryBucketRead(ForteModel):
+    key: str
+    total_count: int
+    enabled_count: int
+    disabled_count: int
+    due_count: int
+    failing_count: int
+
+
+class ScheduledTaskRunSummaryBucketRead(ForteModel):
+    key: str
+    total_count: int
+    completed_count: int
+    failure_count: int
+
+
+class SchedulerInventorySummaryRead(ForteModel):
+    generated_at: datetime
+    reference_time: datetime
+    total_count: int
+    enabled_count: int
+    disabled_count: int
+    due_count: int
+    overdue_count: int
+    failing_count: int
+    maintenance_task_count: int
+    task_type_counts: list[ScheduledTaskSummaryBucketRead]
+    latest_status_counts: list[ScheduledTaskSummaryBucketRead]
+
+
+class SchedulerOpsReportIndexRead(ForteModel):
+    generated_at: datetime
+    latest_run_at: datetime | None
+    inventory_summary: SchedulerInventorySummaryRead
+    task_run_count: int
+    task_run_failure_count: int
+    maintenance_run_count: int
+    maintenance_failure_count: int
+    task_type_run_counts: list[ScheduledTaskRunSummaryBucketRead]
+    recent_runs: list[ScheduledTaskRunRead]
+    overdue_tasks: list[ScheduledTaskOpsStatusRead]
+    failing_tasks: list[ScheduledTaskOpsStatusRead]
+    maintenance_tasks: list[ScheduledTaskOpsStatusRead]
+
+
+class SchedulerOpsExportSummaryRead(ForteModel):
+    generated_at: datetime
+    filters_json: dict[str, Any]
+    report_index: SchedulerOpsReportIndexRead
+    tasks: list[ScheduledTaskRead]
+
+
+>>>>>>> 05aeee6 (chore: initialize repository)
 class CameraRefreshTaskRunRead(ForteModel):
     task_run_id: int
     task_id: int
@@ -699,8 +1012,21 @@ class OperationsReportRead(ForteModel):
     scope_since: datetime | None
     scope_until: datetime | None
     summary: OperationsSummaryRead
+<<<<<<< HEAD
     camera_inventory_summary: CameraInventorySummaryRead
     camera_report_index: CameraOpsReportIndexRead
+=======
+    storage_report: StorageReportRead
+    clickhouse_diagnostics: ClickHouseDiagnosticsRead
+    scheduler_inventory_summary: SchedulerInventorySummaryRead
+    scheduler_report_index: SchedulerOpsReportIndexRead
+    source_inventory_summary: SourceInventorySummaryRead
+    source_report_index: SourceOpsReportIndexRead
+    camera_inventory_summary: CameraInventorySummaryRead
+    camera_report_index: CameraOpsReportIndexRead
+    camera_source_inventory_summary: CameraSourceSummaryRead
+    camera_source_report_index: CameraSourceOpsReportIndexRead
+>>>>>>> 05aeee6 (chore: initialize repository)
     import_runs: list[LocalImportRunSummaryRead]
     source_runs: list[SourceRunRead]
     scheduled_task_runs: list[ScheduledTaskRunRead]

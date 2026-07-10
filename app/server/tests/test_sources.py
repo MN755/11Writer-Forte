@@ -9,6 +9,12 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+<<<<<<< HEAD
+=======
+from src.db import get_session_factory
+from src.services.source_service import run_source_definition
+
+>>>>>>> 05aeee6 (chore: initialize repository)
 
 @contextmanager
 def flaky_json_server(payload: list[dict[str, object]]):
@@ -121,6 +127,19 @@ def test_source_definition_run_creates_import_and_history(client: TestClient, tm
     assert imports_response.status_code == 200
     assert imports_response.json()[0]["records_imported"] == 1
 
+<<<<<<< HEAD
+=======
+    ops_response = client.get(f"/api/sources/{source_id}/ops")
+    assert ops_response.status_code == 200
+    ops_payload = ops_response.json()
+    assert ops_payload["source"]["source_id"] == source_id
+    assert ops_payload["recent_runs"][0]["source_run_id"] == payload["source_run_id"]
+    assert len(ops_payload["storage_objects"]) == 1
+    assert ops_payload["storage_objects"][0]["object_kind"] == "source_local_payload"
+    assert ops_payload["storage_objects"][0]["source_uri"] == str(fixture)
+    assert ops_payload["storage_objects"][0]["metadata_json"]["import_run_id"] == payload["import_run_id"]
+
+>>>>>>> 05aeee6 (chore: initialize repository)
     layers_response = client.get("/api/layers")
     assert layers_response.status_code == 200
     assert any(layer["key"] == "marine-track" for layer in layers_response.json())
@@ -144,6 +163,14 @@ def test_source_definition_run_creates_import_and_history(client: TestClient, tm
         and row["action"] == "source_run_completed"
         for row in custody_rows
     )
+<<<<<<< HEAD
+=======
+    assert any(
+        row["object_type"] == "storage_object"
+        and row["action"] in {"storage_registered", "storage_refreshed"}
+        for row in custody_rows
+    )
+>>>>>>> 05aeee6 (chore: initialize repository)
 
 
 def test_source_sync_schedule_runs_source_definition(client: TestClient, tmp_path: Path) -> None:
@@ -248,6 +275,16 @@ def test_http_source_retries_and_records_fetch_metadata(client: TestClient) -> N
         assert state["last_header"] == "forte"
         assert state["last_user_agent"] == "11Writer-Forte/0.1 (+headless-source-fetch)"
 
+<<<<<<< HEAD
+=======
+        ops_response = client.get(f"/api/sources/{source_id}/ops")
+        assert ops_response.status_code == 200
+        ops_payload = ops_response.json()
+        assert ops_payload["storage_objects"][0]["object_kind"] == "source_cached_payload"
+        assert ops_payload["storage_objects"][0]["object_uri"].endswith(".json")
+        assert ops_payload["storage_objects"][0]["metadata_json"]["attempt_count"] == 2
+
+>>>>>>> 05aeee6 (chore: initialize repository)
         custody_response = client.get("/api/custody/logs")
         assert custody_response.status_code == 200
         custody_rows = custody_response.json()
@@ -312,6 +349,18 @@ def test_source_run_skips_unchanged_payloads(client: TestClient, tmp_path: Path)
     assert source_runs[0]["status"] == "skipped"
     assert source_runs[1]["status"] == "completed"
 
+<<<<<<< HEAD
+=======
+    ops_response = client.get(f"/api/sources/{source_id}/ops")
+    assert ops_response.status_code == 200
+    ops_payload = ops_response.json()
+    assert len(ops_payload["storage_objects"]) == 2
+    assert {row["metadata_json"]["run_status"] for row in ops_payload["storage_objects"]} == {
+        "skipped",
+        "completed",
+    }
+
+>>>>>>> 05aeee6 (chore: initialize repository)
     custody_response = client.get("/api/custody/logs")
     assert custody_response.status_code == 200
     assert any(
@@ -471,3 +520,163 @@ def test_http_xml_source_uses_env_basic_auth_and_parses_records(
 
         assert state["requests"] == 1
         assert state["last_authorization"] is not None
+<<<<<<< HEAD
+=======
+
+
+def test_source_summary_and_report_index_capture_stale_failing_and_unscheduled_sources(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    healthy_fixture = tmp_path / "healthy-source.json"
+    healthy_fixture.write_text(
+        json.dumps(
+            [
+                {
+                    "title": "Healthy source",
+                    "url": "https://healthy-source.example.com/1",
+                    "lat": 29.76,
+                    "lon": -95.36,
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    unscheduled_fixture = tmp_path / "unscheduled-source.json"
+    unscheduled_fixture.write_text(
+        json.dumps(
+            [
+                {
+                    "title": "Unscheduled source",
+                    "url": "https://unscheduled-source.example.com/1",
+                    "lat": 29.77,
+                    "lon": -95.35,
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    healthy_source = client.post(
+        "/api/sources",
+        json={
+            "name": "healthy-source",
+            "source_kind": "local_file",
+            "layer_key": "marine-track",
+            "target_uri": str(healthy_fixture),
+        },
+    )
+    assert healthy_source.status_code == 200
+    healthy_source_id = healthy_source.json()["source_id"]
+
+    schedule_response = client.post(
+        "/api/scheduler/tasks",
+        json={
+            "name": "healthy-source-sync",
+            "task_type": "source_sync",
+            "interval_seconds": 300,
+            "source_id": healthy_source_id,
+        },
+    )
+    assert schedule_response.status_code == 200
+    task_id = schedule_response.json()["task_id"]
+    scheduled_run = client.post(f"/api/scheduler/tasks/{task_id}/run")
+    assert scheduled_run.status_code == 200
+
+    failing_source = client.post(
+        "/api/sources",
+        json={
+            "name": "failing-source",
+            "source_kind": "http_json",
+            "layer_key": "remote-feed",
+            "target_uri": "http://127.0.0.1:1/failing.json",
+            "metadata_json": {
+                "retry_attempts": 1,
+                "request_timeout_seconds": 1,
+            },
+        },
+    )
+    assert failing_source.status_code == 200
+    failing_source_id = failing_source.json()["source_id"]
+    session = get_session_factory()()
+    try:
+        try:
+            run_source_definition(session, failing_source_id)
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError("Expected source run to fail.")
+    finally:
+        session.close()
+
+    unscheduled_source = client.post(
+        "/api/sources",
+        json={
+            "name": "unscheduled-source",
+            "source_kind": "local_file",
+            "layer_key": "news-track",
+            "target_uri": str(unscheduled_fixture),
+        },
+    )
+    assert unscheduled_source.status_code == 200
+    unscheduled_source_id = unscheduled_source.json()["source_id"]
+
+    disabled_source = client.post(
+        "/api/sources",
+        json={
+            "name": "disabled-source",
+            "source_kind": "local_file",
+            "layer_key": "disabled-feed",
+            "target_uri": str(unscheduled_fixture),
+            "enabled": False,
+        },
+    )
+    assert disabled_source.status_code == 200
+
+    summary_response = client.get("/api/sources/summary", params={"stale_after_hours": 24})
+    assert summary_response.status_code == 200
+    summary = summary_response.json()
+    assert summary["total_count"] == 4
+    assert summary["enabled_count"] == 3
+    assert summary["disabled_count"] == 1
+    assert summary["scheduled_count"] == 1
+    assert summary["unscheduled_count"] == 3
+    assert summary["failing_count"] == 1
+    assert summary["stale_count"] == 2
+    assert any(bucket["key"] == "local_file" for bucket in summary["source_kind_counts"])
+    assert any(bucket["key"] == "failed" for bucket in summary["latest_status_counts"])
+    assert any(bucket["key"] == "never_run" for bucket in summary["latest_status_counts"])
+
+    report_index_response = client.get(
+        "/api/sources/report-index",
+        params={"stale_after_hours": 24, "limit": 10, "stale_source_limit": 10},
+    )
+    assert report_index_response.status_code == 200
+    report = report_index_response.json()
+    assert report["sync_task_count"] == 1
+    assert report["sync_run_count"] == 1
+    assert report["sync_failure_count"] == 0
+    assert report["inventory_summary"]["total_count"] == 4
+    assert any(row["source"]["source_id"] == failing_source_id for row in report["failing_sources"])
+    assert any(row["source"]["source_id"] == failing_source_id for row in report["stale_sources"])
+    assert any(row["source"]["source_id"] == unscheduled_source_id for row in report["unscheduled_sources"])
+    healthy_status = next(
+        row for row in report["recent_runs"] if row["source_id"] == healthy_source_id
+    )
+    assert healthy_status["status"] == "completed"
+
+    export_response = client.get(
+        "/api/sources/export/summary",
+        params={"stale_after_hours": 24, "source_limit": 10, "report_limit": 10, "stale_source_limit": 10},
+    )
+    assert export_response.status_code == 200
+    export_payload = export_response.json()
+    assert export_payload["filters_json"]["source_limit"] == 10
+    assert export_payload["report_index"]["inventory_summary"]["total_count"] == 4
+    assert len(export_payload["sources"]) == 4
+    assert any(row["source_id"] == healthy_source_id for row in export_payload["sources"])
+
+    healthy_ops = client.get(f"/api/sources/{healthy_source_id}/ops")
+    assert healthy_ops.status_code == 200
+    assert healthy_ops.json()["storage_objects"]
+>>>>>>> 05aeee6 (chore: initialize repository)
