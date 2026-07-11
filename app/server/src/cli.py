@@ -18,6 +18,7 @@ from src.models import (
     ScheduledTaskRunORM,
     SituationProductORM,
     SourceTrustProfileORM,
+    ResearchProviderORM,
 )
 from src.schemas import (
     AlertCreate,
@@ -60,6 +61,8 @@ from src.schemas import (
     DiscoveryRunRead,
     DiscoveryRunRequest,
     DiscoveryRunResultRead,
+    ResearchProviderCreate,
+    ResearchProviderRead,
     EventExportBundleRead,
     EventCreate,
     EventFusionRequest,
@@ -175,6 +178,13 @@ from src.services.investigation_service import (
 from src.services.layer_service import create_data_layer, list_data_layers
 from src.services.observation_service import build_cross_verification_summaries, query_observations
 from src.services.operations_report_service import build_operations_report
+from src.services.provider_registry_service import (
+    create_provider,
+    enable_provider,
+    pause_provider,
+    provider_coverage_summary,
+    validate_provider_configuration,
+)
 from src.services.redaction_service import enforce_export_redaction
 from src.services.runtime_bundle_service import export_runtime_bundle, restore_runtime_bundle
 from src.services.runtime_snapshot_service import build_runtime_snapshot
@@ -4427,6 +4437,129 @@ def list_discovery_domain_policies_command(
                 f"{row['policy']} | robots={row['robots_mode']} | enabled={row['enabled']} | "
                 f"subdomains={row['allow_subdomains']} | concurrency={row['max_concurrency']}"
             )
+    finally:
+        session.close()
+
+
+def load_research_provider_config(config_file: Path) -> ResearchProviderCreate:
+    """Load an offline JSON provider config without accepting secret material."""
+
+    try:
+        payload = json.loads(config_file.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise typer.BadParameter(f"Unable to read provider config: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise typer.BadParameter("Provider config must be a JSON object.") from exc
+    if not isinstance(payload, dict):
+        raise typer.BadParameter("Provider config must be a JSON object.")
+    try:
+        return ResearchProviderCreate.model_validate(payload)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+
+@app.command("add-research-provider")
+def add_research_provider_command(config_file: Path) -> None:
+    """Create a disabled provider from a local, secret-free JSON configuration."""
+
+    payload = load_research_provider_config(config_file)
+    init_db()
+    session = get_session_factory()()
+    try:
+        print_banner()
+        echo_model_json(ResearchProviderRead, create_provider(session, payload, actor="cli"))
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.command("validate-research-provider")
+def validate_research_provider_command(provider_key: str) -> None:
+    """Show whether a stored provider has a complete, safe configuration."""
+
+    init_db()
+    session = get_session_factory()()
+    try:
+        provider = session.scalar(
+            select(ResearchProviderORM).where(ResearchProviderORM.provider_key == provider_key)
+        )
+        if provider is None:
+            raise typer.BadParameter(f"Research provider '{provider_key}' does not exist.")
+        normalized = validate_provider_configuration(provider)
+        print_banner()
+        typer.echo(
+            json.dumps(
+                {
+                    "provider_key": provider.provider_key,
+                    "valid": True,
+                    "enabled": provider.enabled,
+                    "health_status": provider.health_status,
+                    "approved_origins": normalized["base_urls_json"],
+                    "applied_budget": normalized["request_budget_json"],
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.command("enable-research-provider")
+def enable_research_provider_command(provider_key: str) -> None:
+    """Explicitly activate a healthy, validated provider."""
+
+    init_db()
+    session = get_session_factory()()
+    try:
+        provider = session.scalar(
+            select(ResearchProviderORM).where(ResearchProviderORM.provider_key == provider_key)
+        )
+        if provider is None:
+            raise typer.BadParameter(f"Research provider '{provider_key}' does not exist.")
+        print_banner()
+        echo_model_json(ResearchProviderRead, enable_provider(session, provider.provider_id, actor="cli"))
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.command("pause-research-provider")
+def pause_research_provider_command(provider_key: str, reason: str = typer.Option(..., "--reason")) -> None:
+    """Stop scheduling a provider immediately, preserving the reason in custody."""
+
+    init_db()
+    session = get_session_factory()()
+    try:
+        provider = session.scalar(
+            select(ResearchProviderORM).where(ResearchProviderORM.provider_key == provider_key)
+        )
+        if provider is None:
+            raise typer.BadParameter(f"Research provider '{provider_key}' does not exist.")
+        print_banner()
+        echo_model_json(
+            ResearchProviderRead,
+            pause_provider(session, provider.provider_id, reason=reason, actor="cli"),
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.command("show-research-fleet-health")
+def show_research_fleet_health_command() -> None:
+    """Report configured/available provider capability coverage without networking."""
+
+    init_db()
+    session = get_session_factory()()
+    try:
+        print_banner()
+        typer.echo(json.dumps(provider_coverage_summary(session), indent=2, sort_keys=True))
     finally:
         session.close()
 

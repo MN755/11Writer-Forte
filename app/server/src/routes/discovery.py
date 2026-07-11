@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 
+from src.auth import OperatorPrincipal, require_scope
 from src.db import get_db
 from src.schemas import (
     CandidateHealthCheckRead,
@@ -31,6 +32,9 @@ from src.schemas import (
     CandidateHealthScanResultRead,
     SourceCandidateDetailRead,
     SourceCandidateRead,
+    ResearchProviderCreate,
+    ResearchProviderRead,
+    ResearchProviderUpdate,
 )
 from src.services.discovery_service import (
     build_candidate_lineage,
@@ -57,8 +61,120 @@ from src.services.discovery_service import (
     update_domain_policy,
     upsert_domain_policy,
 )
+from src.services.provider_registry_service import (
+    ProviderPauseRequest,
+    create_provider,
+    enable_provider,
+    get_provider,
+    list_providers,
+    pause_provider,
+    provider_coverage_summary,
+    update_provider,
+)
 
 router = APIRouter(prefix="/discovery", tags=["discovery"])
+
+
+@router.get("/providers/coverage")
+def discovery_provider_coverage(
+    session: Session = Depends(get_db),
+    _: OperatorPrincipal = Depends(require_scope("read")),
+) -> dict[str, object]:
+    return provider_coverage_summary(session)
+
+
+@router.get("/providers", response_model=list[ResearchProviderRead])
+def discovery_providers(
+    kind: str | None = None,
+    enabled: bool | None = None,
+    health: str | None = None,
+    capability: str | None = None,
+    jurisdiction: str | None = None,
+    limit: int = Query(default=200, ge=1, le=5000),
+    session: Session = Depends(get_db),
+    _: OperatorPrincipal = Depends(require_scope("read")),
+) -> list[object]:
+    return list_providers(
+        session,
+        provider_kind=kind,
+        enabled=enabled,
+        health=health,
+        capability=capability,
+        jurisdiction=jurisdiction,
+        limit=limit,
+    )
+
+
+@router.post("/providers", response_model=ResearchProviderRead)
+async def create_discovery_provider(
+    payload: ResearchProviderCreate,
+    request: Request,
+    session: Session = Depends(get_db),
+    principal: OperatorPrincipal = Depends(require_scope("operate")),
+) -> object:
+    try:
+        raw_payload = await request.json()
+        if not isinstance(raw_payload, dict):
+            raise HTTPException(status_code=422, detail="Provider configuration must be an object.")
+        unexpected_fields = sorted(set(raw_payload) - set(ResearchProviderCreate.model_fields))
+        if unexpected_fields:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Unsupported provider configuration fields: {', '.join(unexpected_fields)}.",
+            )
+        return create_provider(session, payload, actor=principal.actor)
+    except ValueError as exc:
+        raise translate_discovery_error(exc) from exc
+
+
+@router.get("/providers/{provider_id}", response_model=ResearchProviderRead)
+def discovery_provider(
+    provider_id: int,
+    session: Session = Depends(get_db),
+    _: OperatorPrincipal = Depends(require_scope("read")),
+) -> object:
+    try:
+        return get_provider(session, provider_id)
+    except ValueError as exc:
+        raise translate_discovery_error(exc) from exc
+
+
+@router.patch("/providers/{provider_id}", response_model=ResearchProviderRead)
+def patch_discovery_provider(
+    provider_id: int,
+    payload: ResearchProviderUpdate,
+    session: Session = Depends(get_db),
+    principal: OperatorPrincipal = Depends(require_scope("operate")),
+) -> object:
+    try:
+        return update_provider(session, provider_id, payload, actor=principal.actor)
+    except ValueError as exc:
+        raise translate_discovery_error(exc) from exc
+
+
+@router.post("/providers/{provider_id}/enable", response_model=ResearchProviderRead)
+def enable_discovery_provider(
+    provider_id: int,
+    session: Session = Depends(get_db),
+    principal: OperatorPrincipal = Depends(require_scope("admin")),
+) -> object:
+    try:
+        return enable_provider(session, provider_id, actor=principal.actor)
+    except ValueError as exc:
+        raise translate_discovery_error(exc) from exc
+
+
+@router.post("/providers/{provider_id}/pause", response_model=ResearchProviderRead)
+def pause_discovery_provider(
+    provider_id: int,
+    payload: ProviderPauseRequest,
+    session: Session = Depends(get_db),
+    principal: OperatorPrincipal = Depends(require_scope("operate")),
+) -> object:
+    try:
+        return pause_provider(session, provider_id, reason=payload.reason, actor=principal.actor)
+    except ValueError as exc:
+        raise translate_discovery_error(exc) from exc
 
 
 @router.get("/health", response_model=DiscoveryHealthSummaryRead)
