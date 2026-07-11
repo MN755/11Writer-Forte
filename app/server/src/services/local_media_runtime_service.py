@@ -76,13 +76,11 @@ class TesseractOcrResult:
 
 def resolve_data_dir_path(value: str | Path, *, label: str) -> Path:
     """Resolve a runtime path and reject escapes from the configured local data root."""
-    root = get_settings().data_dir.resolve()
-    path = Path(value).expanduser().resolve()
-    try:
-        path.relative_to(root)
-    except ValueError as exc:
-        raise LocalMediaRuntimeError(f"{label} must be inside the configured data_dir.") from exc
-    return path
+    root = os.path.realpath(os.fspath(get_settings().data_dir))
+    path = os.path.realpath(os.path.expanduser(os.fspath(value)))
+    if path.startswith(root + os.sep):
+        return Path(path)
+    raise LocalMediaRuntimeError(f"{label} must be inside the configured data_dir.")
 
 
 def build_model_approval(
@@ -333,12 +331,11 @@ def load_model_approval(path: str | Path) -> LocalModelApproval:
 
 
 def _resolve_under_root(value: str | Path, root: Path, *, label: str) -> Path:
-    path = Path(value).resolve()
-    try:
-        path.relative_to(root)
-    except ValueError as exc:
-        raise LocalMediaRuntimeError(f"{label} must be inside the approved artifact root.") from exc
-    return path
+    root_path = os.path.realpath(os.fspath(root))
+    path = os.path.realpath(os.path.expanduser(os.fspath(value)))
+    if path.startswith(root_path + os.sep):
+        return Path(path)
+    raise LocalMediaRuntimeError(f"{label} must be inside the approved artifact root.")
 
 
 def hash_file(path: str | Path) -> str:
