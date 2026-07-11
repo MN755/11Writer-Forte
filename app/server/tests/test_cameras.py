@@ -315,6 +315,7 @@ def test_camera_inventory_materialization_and_update(client: TestClient, tmp_pat
         for row in custody_rows
     )
     assert any(
-        row["object_type"] == "storage_object" and row["action"] == "storage_refreshed"
+        row["object_type"] == "storage_object"
+        and row["action"] == "storage_refreshed"
         for row in custody_rows
     )

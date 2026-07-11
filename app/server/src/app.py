@@ -20,6 +20,7 @@ from src.routes.geofences import router as geofences_router
 from src.routes.health import router as health_router
 from src.routes.imports import router as imports_router
 from src.routes.investigations import router as investigations_router
+from src.routes.media_intelligence import router as media_intelligence_router
 from src.routes.observations import router as observations_router
 from src.routes.operations import router as operations_router
 from src.routes.scheduler import router as scheduler_router
@@ -57,6 +58,7 @@ def create_application() -> FastAPI:
     application.include_router(discovery_router, prefix=settings.api_prefix)
     application.include_router(imports_router, prefix=settings.api_prefix)
     application.include_router(investigations_router, prefix=settings.api_prefix)
+    application.include_router(media_intelligence_router, prefix=settings.api_prefix)
     application.include_router(observations_router, prefix=settings.api_prefix)
     application.include_router(operations_router, prefix=settings.api_prefix)
     application.include_router(scheduler_router, prefix=settings.api_prefix)

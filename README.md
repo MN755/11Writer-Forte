@@ -65,6 +65,9 @@ Upstream camera/webcam inventory and local parity notes live in [UPSTREAM_CAMERA
 
 Source discovery architecture, safety defaults, scoring, promotion, and operator workflows live in [docs/source-discovery.md](docs/source-discovery.md).
 
+Local media storage, deterministic intake, offline inference contracts, and visual-change
+candidate delivery live in [docs/media-intelligence.md](docs/media-intelligence.md).
+
 ## Codex Research Agent
 
 Forte now has a local, headless Codex research adapter. Its MCP server exposes only read-only local evidence tools: runtime inventory, sources, alerts, events, recent observations, and custody records. The scheduler, source ingestion, alerting, storage lifecycle, and outbound delivery stay rule/code-driven.
