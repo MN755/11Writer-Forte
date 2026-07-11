@@ -3,7 +3,17 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import JSON, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    JSON,
+    Float,
+    ForeignKey,
+    ForeignKeyConstraint,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -61,6 +71,307 @@ class EntityORM(TimestampMixin, Base):
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
     observation_links: Mapped[list["EntityObservationLinkORM"]] = relationship(back_populates="entity")
+    candidates: Mapped[list["EntityCandidateORM"]] = relationship(back_populates="resolved_entity")
+    aliases: Mapped[list["EntityAliasORM"]] = relationship(back_populates="entity")
+    identity_assertions: Mapped[list["EntityIdentityAssertionORM"]] = relationship(
+        back_populates="entity"
+    )
+    outgoing_relationship_assertions: Mapped[list["EntityRelationshipAssertionORM"]] = relationship(
+        foreign_keys="EntityRelationshipAssertionORM.subject_entity_id",
+        back_populates="subject_entity",
+    )
+    incoming_relationship_assertions: Mapped[list["EntityRelationshipAssertionORM"]] = relationship(
+        foreign_keys="EntityRelationshipAssertionORM.object_entity_id",
+        back_populates="object_entity",
+    )
+
+
+class EntityCandidateORM(TimestampMixin, Base):
+    """A source-derived identity candidate retained until resolution is reviewed."""
+
+    __tablename__ = "entity_candidates"
+    __table_args__ = (
+        Index(
+            "ix_entity_candidates_type_name_jurisdiction",
+            "entity_type",
+            "normalized_name",
+            "jurisdiction",
+        ),
+    )
+
+    entity_candidate_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    entity_type: Mapped[str] = mapped_column(String(40), index=True)
+    display_name: Mapped[str] = mapped_column(String(300))
+    normalized_name: Mapped[str] = mapped_column(String(300), index=True)
+    jurisdiction: Mapped[str | None] = mapped_column(String(80), default=None, index=True)
+    source_record_key: Mapped[str | None] = mapped_column(String(200), default=None, index=True)
+    resolution_status: Mapped[str] = mapped_column(String(40), default="unresolved", index=True)
+    resolved_entity_id: Mapped[int | None] = mapped_column(
+        ForeignKey("entities.entity_id"), default=None, index=True
+    )
+    confidence_score: Mapped[float] = mapped_column(Float, default=0.5)
+    review_state: Mapped[str] = mapped_column(String(40), default="pending", index=True)
+    contradiction_state: Mapped[str] = mapped_column(String(40), default="none", index=True)
+    valid_from: Mapped[datetime | None] = mapped_column(default=None, index=True)
+    valid_to: Mapped[datetime | None] = mapped_column(default=None, index=True)
+    observed_from: Mapped[datetime | None] = mapped_column(default=None, index=True)
+    observed_to: Mapped[datetime | None] = mapped_column(default=None, index=True)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+    resolved_entity: Mapped[EntityORM | None] = relationship(back_populates="candidates")
+    citation_links: Mapped[list["EntityCandidateCitationLinkORM"]] = relationship(
+        back_populates="entity_candidate", cascade="all, delete-orphan"
+    )
+    identity_assertions: Mapped[list["EntityIdentityAssertionORM"]] = relationship(
+        back_populates="entity_candidate"
+    )
+
+
+class EntityAliasORM(TimestampMixin, Base):
+    __tablename__ = "entity_aliases"
+    __table_args__ = (
+        Index("ix_entity_aliases_normalized_lookup", "normalized_alias", "entity_type", "jurisdiction"),
+    )
+
+    entity_alias_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    entity_id: Mapped[int] = mapped_column(ForeignKey("entities.entity_id"), index=True)
+    entity_type: Mapped[str] = mapped_column(String(40), index=True)
+    alias_text: Mapped[str] = mapped_column(String(300))
+    normalized_alias: Mapped[str] = mapped_column(String(300), index=True)
+    alias_type: Mapped[str] = mapped_column(String(40), default="alternate_name", index=True)
+    language_code: Mapped[str | None] = mapped_column(String(16), default=None)
+    script_code: Mapped[str | None] = mapped_column(String(16), default=None)
+    jurisdiction: Mapped[str | None] = mapped_column(String(80), default=None, index=True)
+    confidence_score: Mapped[float] = mapped_column(Float, default=0.5)
+    review_state: Mapped[str] = mapped_column(String(40), default="pending", index=True)
+    contradiction_state: Mapped[str] = mapped_column(String(40), default="none", index=True)
+    valid_from: Mapped[datetime | None] = mapped_column(default=None, index=True)
+    valid_to: Mapped[datetime | None] = mapped_column(default=None, index=True)
+    observed_from: Mapped[datetime | None] = mapped_column(default=None, index=True)
+    observed_to: Mapped[datetime | None] = mapped_column(default=None, index=True)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+    entity: Mapped[EntityORM] = relationship(back_populates="aliases")
+    citation_links: Mapped[list["EntityAliasCitationLinkORM"]] = relationship(
+        back_populates="entity_alias", cascade="all, delete-orphan"
+    )
+
+
+class EntityRelationshipTypeORM(TimestampMixin, Base):
+    """Versioned relationship vocabulary; services validate endpoints against its type lists."""
+
+    __tablename__ = "entity_relationship_types"
+    __table_args__ = (UniqueConstraint("relation_type", "relation_version"),)
+
+    relationship_type_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    relation_type: Mapped[str] = mapped_column(String(80), index=True)
+    relation_version: Mapped[int] = mapped_column(Integer, default=1)
+    display_name: Mapped[str] = mapped_column(String(160))
+    description: Mapped[str] = mapped_column(Text, default="")
+    allowed_subject_types_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+    allowed_object_types_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+    symmetric: Mapped[bool] = mapped_column(default=False)
+    active: Mapped[bool] = mapped_column(default=True, index=True)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+    assertions: Mapped[list["EntityRelationshipAssertionORM"]] = relationship(
+        back_populates="relationship_type_definition"
+    )
+
+
+class EntityCitationORM(TimestampMixin, Base):
+    """An attributable span in a persisted artifact or normalized observation."""
+
+    __tablename__ = "entity_citations"
+    __table_args__ = (
+        Index("ix_entity_citations_evidence", "storage_object_id", "observation_id"),
+    )
+
+    entity_citation_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    storage_object_id: Mapped[int | None] = mapped_column(
+        ForeignKey("storage_objects.storage_object_id"), default=None, index=True
+    )
+    observation_id: Mapped[int | None] = mapped_column(
+        ForeignKey("observations.observation_id"), default=None, index=True
+    )
+    source_uri: Mapped[str | None] = mapped_column(Text, default=None)
+    source_title: Mapped[str | None] = mapped_column(String(400), default=None)
+    source_published_at: Mapped[datetime | None] = mapped_column(default=None, index=True)
+    retrieved_at: Mapped[datetime] = mapped_column(default=utcnow, index=True)
+    content_hash: Mapped[str | None] = mapped_column(String(64), default=None, index=True)
+    locator: Mapped[str | None] = mapped_column(String(500), default=None)
+    quote_text: Mapped[str | None] = mapped_column(Text, default=None)
+    span_start: Mapped[int | None] = mapped_column(Integer, default=None)
+    span_end: Mapped[int | None] = mapped_column(Integer, default=None)
+    jurisdiction: Mapped[str | None] = mapped_column(String(80), default=None, index=True)
+    source_reliability: Mapped[str] = mapped_column(String(40), default="unassessed", index=True)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+    candidate_links: Mapped[list["EntityCandidateCitationLinkORM"]] = relationship(
+        back_populates="citation", cascade="all, delete-orphan"
+    )
+    alias_links: Mapped[list["EntityAliasCitationLinkORM"]] = relationship(
+        back_populates="citation", cascade="all, delete-orphan"
+    )
+    identity_assertion_links: Mapped[list["EntityIdentityAssertionCitationLinkORM"]] = relationship(
+        back_populates="citation", cascade="all, delete-orphan"
+    )
+    relationship_assertion_links: Mapped[
+        list["EntityRelationshipAssertionCitationLinkORM"]
+    ] = relationship(back_populates="citation", cascade="all, delete-orphan")
+
+
+class EntityIdentityAssertionORM(TimestampMixin, Base):
+    __tablename__ = "entity_identity_assertions"
+
+    entity_identity_assertion_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    entity_candidate_id: Mapped[int] = mapped_column(
+        ForeignKey("entity_candidates.entity_candidate_id"), index=True
+    )
+    entity_id: Mapped[int] = mapped_column(ForeignKey("entities.entity_id"), index=True)
+    assertion_kind: Mapped[str] = mapped_column(String(40), default="same_as", index=True)
+    status: Mapped[str] = mapped_column(String(40), default="asserted", index=True)
+    jurisdiction: Mapped[str | None] = mapped_column(String(80), default=None, index=True)
+    confidence_score: Mapped[float] = mapped_column(Float, default=0.5)
+    review_state: Mapped[str] = mapped_column(String(40), default="pending", index=True)
+    contradiction_state: Mapped[str] = mapped_column(String(40), default="none", index=True)
+    valid_from: Mapped[datetime | None] = mapped_column(default=None, index=True)
+    valid_to: Mapped[datetime | None] = mapped_column(default=None, index=True)
+    observed_from: Mapped[datetime | None] = mapped_column(default=None, index=True)
+    observed_to: Mapped[datetime | None] = mapped_column(default=None, index=True)
+    rationale: Mapped[str] = mapped_column(Text, default="")
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+    entity_candidate: Mapped[EntityCandidateORM] = relationship(back_populates="identity_assertions")
+    entity: Mapped[EntityORM] = relationship(back_populates="identity_assertions")
+    citation_links: Mapped[list["EntityIdentityAssertionCitationLinkORM"]] = relationship(
+        back_populates="identity_assertion", cascade="all, delete-orphan"
+    )
+
+
+class EntityRelationshipAssertionORM(TimestampMixin, Base):
+    __tablename__ = "entity_relationship_assertions"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["relation_type", "relation_version"],
+            ["entity_relationship_types.relation_type", "entity_relationship_types.relation_version"],
+        ),
+        Index(
+            "ix_entity_relationship_assertions_subject_relation",
+            "subject_entity_id",
+            "relation_type",
+            "relation_version",
+        ),
+        Index(
+            "ix_entity_relationship_assertions_object_relation",
+            "object_entity_id",
+            "relation_type",
+            "relation_version",
+        ),
+    )
+
+    entity_relationship_assertion_id: Mapped[int] = mapped_column(
+        Integer, primary_key=True, autoincrement=True
+    )
+    subject_entity_id: Mapped[int] = mapped_column(ForeignKey("entities.entity_id"), index=True)
+    object_entity_id: Mapped[int] = mapped_column(ForeignKey("entities.entity_id"), index=True)
+    relation_type: Mapped[str] = mapped_column(String(80), index=True)
+    relation_version: Mapped[int] = mapped_column(Integer, default=1)
+    assertion_kind: Mapped[str] = mapped_column(String(40), default="asserted", index=True)
+    status: Mapped[str] = mapped_column(String(40), default="asserted", index=True)
+    jurisdiction: Mapped[str | None] = mapped_column(String(80), default=None, index=True)
+    confidence_score: Mapped[float] = mapped_column(Float, default=0.5)
+    review_state: Mapped[str] = mapped_column(String(40), default="pending", index=True)
+    contradiction_state: Mapped[str] = mapped_column(String(40), default="none", index=True)
+    valid_from: Mapped[datetime | None] = mapped_column(default=None, index=True)
+    valid_to: Mapped[datetime | None] = mapped_column(default=None, index=True)
+    observed_from: Mapped[datetime | None] = mapped_column(default=None, index=True)
+    observed_to: Mapped[datetime | None] = mapped_column(default=None, index=True)
+    statement: Mapped[str] = mapped_column(Text, default="")
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+    subject_entity: Mapped[EntityORM] = relationship(
+        foreign_keys=[subject_entity_id], back_populates="outgoing_relationship_assertions"
+    )
+    object_entity: Mapped[EntityORM] = relationship(
+        foreign_keys=[object_entity_id], back_populates="incoming_relationship_assertions"
+    )
+    relationship_type_definition: Mapped[EntityRelationshipTypeORM] = relationship(
+        back_populates="assertions"
+    )
+    citation_links: Mapped[list["EntityRelationshipAssertionCitationLinkORM"]] = relationship(
+        back_populates="relationship_assertion", cascade="all, delete-orphan"
+    )
+
+
+class EntityCandidateCitationLinkORM(Base):
+    __tablename__ = "entity_candidate_citation_links"
+    __table_args__ = (UniqueConstraint("entity_candidate_id", "entity_citation_id"),)
+
+    entity_candidate_citation_link_id: Mapped[int] = mapped_column(
+        Integer, primary_key=True, autoincrement=True
+    )
+    entity_candidate_id: Mapped[int] = mapped_column(
+        ForeignKey("entity_candidates.entity_candidate_id"), index=True
+    )
+    entity_citation_id: Mapped[int] = mapped_column(ForeignKey("entity_citations.entity_citation_id"), index=True)
+    evidence_role: Mapped[str] = mapped_column(String(40), default="supporting")
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+    entity_candidate: Mapped[EntityCandidateORM] = relationship(back_populates="citation_links")
+    citation: Mapped[EntityCitationORM] = relationship(back_populates="candidate_links")
+
+
+class EntityAliasCitationLinkORM(Base):
+    __tablename__ = "entity_alias_citation_links"
+    __table_args__ = (UniqueConstraint("entity_alias_id", "entity_citation_id"),)
+
+    entity_alias_citation_link_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    entity_alias_id: Mapped[int] = mapped_column(ForeignKey("entity_aliases.entity_alias_id"), index=True)
+    entity_citation_id: Mapped[int] = mapped_column(ForeignKey("entity_citations.entity_citation_id"), index=True)
+    evidence_role: Mapped[str] = mapped_column(String(40), default="supporting")
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+    entity_alias: Mapped[EntityAliasORM] = relationship(back_populates="citation_links")
+    citation: Mapped[EntityCitationORM] = relationship(back_populates="alias_links")
+
+
+class EntityIdentityAssertionCitationLinkORM(Base):
+    __tablename__ = "entity_identity_assertion_citation_links"
+    __table_args__ = (UniqueConstraint("entity_identity_assertion_id", "entity_citation_id"),)
+
+    entity_identity_assertion_citation_link_id: Mapped[int] = mapped_column(
+        Integer, primary_key=True, autoincrement=True
+    )
+    entity_identity_assertion_id: Mapped[int] = mapped_column(
+        ForeignKey("entity_identity_assertions.entity_identity_assertion_id"), index=True
+    )
+    entity_citation_id: Mapped[int] = mapped_column(ForeignKey("entity_citations.entity_citation_id"), index=True)
+    evidence_role: Mapped[str] = mapped_column(String(40), default="supporting")
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+    identity_assertion: Mapped[EntityIdentityAssertionORM] = relationship(back_populates="citation_links")
+    citation: Mapped[EntityCitationORM] = relationship(back_populates="identity_assertion_links")
+
+
+class EntityRelationshipAssertionCitationLinkORM(Base):
+    __tablename__ = "entity_relationship_assertion_citation_links"
+    __table_args__ = (UniqueConstraint("entity_relationship_assertion_id", "entity_citation_id"),)
+
+    entity_relationship_assertion_citation_link_id: Mapped[int] = mapped_column(
+        Integer, primary_key=True, autoincrement=True
+    )
+    entity_relationship_assertion_id: Mapped[int] = mapped_column(
+        ForeignKey("entity_relationship_assertions.entity_relationship_assertion_id"), index=True
+    )
+    entity_citation_id: Mapped[int] = mapped_column(ForeignKey("entity_citations.entity_citation_id"), index=True)
+    evidence_role: Mapped[str] = mapped_column(String(40), default="supporting")
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+    relationship_assertion: Mapped[EntityRelationshipAssertionORM] = relationship(
+        back_populates="citation_links"
+    )
+    citation: Mapped[EntityCitationORM] = relationship(back_populates="relationship_assertion_links")
 
 
 class GeofenceORM(TimestampMixin, Base):
@@ -165,8 +476,6 @@ class CameraInventoryORM(TimestampMixin, Base):
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
 
-<<<<<<< HEAD
-=======
 class CameraSourceInventoryORM(TimestampMixin, Base):
     __tablename__ = "camera_source_inventory"
 
@@ -197,9 +506,6 @@ class CameraSourceInventoryORM(TimestampMixin, Base):
     confidence_score: Mapped[float] = mapped_column(Float, default=0.5)
     graduation_score: Mapped[float] = mapped_column(Float, default=0.0)
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
-
-
->>>>>>> 05aeee6 (chore: initialize repository)
 class StorageObjectORM(TimestampMixin, Base):
     __tablename__ = "storage_objects"
 
