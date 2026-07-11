@@ -8,13 +8,9 @@ from fastapi import FastAPI
 from src.config import get_settings
 from src.db import init_db
 from src.routes.alerts import router as alerts_router
-<<<<<<< HEAD
-from src.routes.cameras import router as cameras_router
-=======
 from src.routes.camera_sources import router as camera_sources_router
 from src.routes.cameras import router as cameras_router
 from src.routes.clickhouse import router as clickhouse_router
->>>>>>> 05aeee6 (chore: initialize repository)
 from src.routes.custody import router as custody_router
 from src.routes.discovery import router as discovery_router
 from src.routes.entities import router as entities_router
@@ -23,6 +19,7 @@ from src.routes.events import router as events_router
 from src.routes.geofences import router as geofences_router
 from src.routes.health import router as health_router
 from src.routes.imports import router as imports_router
+from src.routes.media_intelligence import router as media_intelligence_router
 from src.routes.observations import router as observations_router
 from src.routes.operations import router as operations_router
 from src.routes.scheduler import router as scheduler_router
@@ -52,16 +49,13 @@ def create_application() -> FastAPI:
     application.include_router(layer_router, prefix=settings.api_prefix)
     application.include_router(geofences_router, prefix=settings.api_prefix)
     application.include_router(alerts_router, prefix=settings.api_prefix)
-<<<<<<< HEAD
-    application.include_router(cameras_router, prefix=settings.api_prefix)
-=======
     application.include_router(camera_sources_router, prefix=settings.api_prefix)
     application.include_router(cameras_router, prefix=settings.api_prefix)
     application.include_router(clickhouse_router, prefix=settings.api_prefix)
->>>>>>> 05aeee6 (chore: initialize repository)
     application.include_router(custody_router, prefix=settings.api_prefix)
     application.include_router(discovery_router, prefix=settings.api_prefix)
     application.include_router(imports_router, prefix=settings.api_prefix)
+    application.include_router(media_intelligence_router, prefix=settings.api_prefix)
     application.include_router(observations_router, prefix=settings.api_prefix)
     application.include_router(operations_router, prefix=settings.api_prefix)
     application.include_router(scheduler_router, prefix=settings.api_prefix)
