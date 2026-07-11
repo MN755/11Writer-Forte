@@ -79,13 +79,9 @@ Forte currently has:
 - generic managed-source ingestion
 - local/import/scheduler/event infrastructure
 - `/api/cameras`, `/api/cameras/materialize`, `/api/cameras/summary`, and `/api/cameras/{id}/ops`
-<<<<<<< HEAD
-- persisted camera inventory records with provenance, custody logs, and scheduler-native refresh tasks
-=======
 - `/api/camera-sources`, `/api/camera-sources/materialize`, `/api/camera-sources/summary`, and `/api/camera-sources/{id}/ops`
 - persisted camera inventory records with provenance, custody logs, and scheduler-native refresh tasks
 - persisted camera source candidate records with rule-based graduation scores, verification state, and custody logs
->>>>>>> 05aeee6 (chore: initialize repository)
 - MnDOT FEU-g XML support
 - MnDOT live camera access notes and verified public HLS/JPEG endpoints in [MNDOT_FEEDS.md](MNDOT_FEEDS.md)
 

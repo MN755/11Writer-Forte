@@ -6,6 +6,9 @@ from sqlalchemy.orm import Session
 from src.db import get_db
 from src.schemas import (
     AlertRead,
+    InvestigationWatchCandidateCreate,
+    InvestigationWatchCompilation,
+    InvestigationWatchCompileRequest,
     ScheduledTaskRead,
     StorageObjectRead,
     WatchCreate,
@@ -16,6 +19,8 @@ from src.schemas import (
 )
 from src.services.watch_service import (
     attach_watch_schedule,
+    compile_investigation_watch_instruction,
+    create_investigation_watch_candidate,
     create_watch,
     evaluate_watch,
     get_watch,
@@ -30,6 +35,36 @@ from src.services.watch_service import (
 )
 
 router = APIRouter(prefix="/watches", tags=["watches"])
+
+
+@router.post("/compile", response_model=InvestigationWatchCompilation)
+def compile_investigation_watch(
+    payload: InvestigationWatchCompileRequest,
+) -> object:
+    """Preview the deterministic enforced scope before any watch is enabled."""
+    return compile_investigation_watch_instruction(payload)
+
+
+@router.post("/investigation-candidates", response_model=WatchRead)
+def create_investigation_candidate(
+    payload: InvestigationWatchCandidateCreate,
+    session: Session = Depends(get_db),
+) -> object:
+    try:
+        watch, _ = create_investigation_watch_candidate(
+            session,
+            InvestigationWatchCompileRequest(
+                **payload.model_dump(exclude={"name", "slug", "description", "severity"})
+            ),
+            name=payload.name,
+            slug=payload.slug,
+            description=payload.description,
+            severity=payload.severity,
+            actor="api",
+        )
+        return watch
+    except ValueError as exc:
+        raise translate_watch_value_error(exc, action="create_investigation_candidate") from exc
 
 
 @router.get("", response_model=list[WatchRead])

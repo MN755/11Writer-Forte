@@ -30,6 +30,9 @@ REQUIRED_ADDITIVE_COLUMNS: dict[str, dict[str, str]] = {
     "alerts": {
         "disposition_note": "TEXT NOT NULL DEFAULT ''",
     },
+    "watches": {
+        "coverage_json": "JSON NOT NULL DEFAULT '{}'",
+    },
 }
 
 REQUIRED_POSTGIS_INDEX_DDLS: dict[str, str] = {

@@ -64,6 +64,7 @@ from src.schemas import (
     EventCreate,
     EventFusionRequest,
     GeofenceCreate,
+    InvestigationWatchCompileRequest,
     InvestigationCreate,
     InvestigationRead,
     InvestigationTransitionRequest,
@@ -210,6 +211,15 @@ from src.services.trust_service import (
     create_source_trust_profile,
     seed_default_integrity_sources,
     update_source_trust_profile,
+)
+from src.services.watch_service import (
+    archive_watch as archive_watch_record,
+    create_investigation_watch_candidate,
+    generate_watch_report,
+    get_watch,
+    list_watch_rule_versions,
+    pause_watch,
+    resume_watch,
 )
 
 app = typer.Typer(help="11Writer Forte backend operator CLI")
@@ -4788,6 +4798,137 @@ def archive_investigation_command(investigation_id: int, stop_reason: str | None
             InvestigationArchiveResultRead,
             archive_investigation(session, investigation_id, stop_reason=stop_reason, actor="cli"),
         )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.command("create-investigation-watch")
+def create_investigation_watch_command(
+    name: str,
+    slug: str,
+    parent_investigation_id: str,
+    instruction: str,
+    query_version: str = "1",
+    description: str = "",
+) -> None:
+    """Compile a deterministic natural-language watch and save it paused for review."""
+    init_db()
+    session = get_session_factory()()
+    try:
+        watch, compilation = create_investigation_watch_candidate(
+            session,
+            InvestigationWatchCompileRequest(
+                instruction=instruction,
+                parent_investigation_id=parent_investigation_id,
+                query_version=query_version,
+            ),
+            name=name,
+            slug=slug,
+            description=description,
+            actor="cli",
+        )
+        typer.echo(
+            json.dumps(
+                {
+                    "watch_id": watch.watch_id,
+                    "state": watch.state,
+                    "scope_preview": compilation.scope_preview_json,
+                    "rule_hash": compilation.rule_hash,
+                    "unresolved_ambiguities": compilation.unresolved_ambiguities,
+                },
+                indent=2,
+                default=str,
+            )
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.command("show-watch")
+def show_watch_command(watch_id: int) -> None:
+    """Inspect the current watch plus its immutable compiled-rule history."""
+    init_db()
+    session = get_session_factory()()
+    try:
+        watch = get_watch(session, watch_id)
+        typer.echo(
+            json.dumps(
+                {
+                    "watch": {
+                        "watch_id": watch.watch_id,
+                        "name": watch.name,
+                        "slug": watch.slug,
+                        "state": watch.state,
+                        "rule": watch.rule_json,
+                        "coverage": watch.coverage_json,
+                    },
+                    "rule_versions": [
+                        {
+                            "version": item.version_number,
+                            "status": item.status,
+                            "hash": item.rule_hash,
+                            "scope": item.scope_preview_json,
+                        }
+                        for item in list_watch_rule_versions(session, watch_id)
+                    ],
+                },
+                indent=2,
+                default=str,
+            )
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.command("pause-watch")
+def pause_watch_command(watch_id: int) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        typer.echo(f"watch {pause_watch(session, watch_id, actor='cli').watch_id} paused")
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.command("resume-watch")
+def resume_watch_command(watch_id: int) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        typer.echo(f"watch {resume_watch(session, watch_id, actor='cli').watch_id} enabled")
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.command("report-watch")
+def report_watch_command(watch_id: int) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        report = generate_watch_report(session, watch_id, actor="cli")
+        typer.echo(f"watch report {report.watch_report_id} generated")
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.command("archive-watch")
+def archive_watch_command(watch_id: int) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        typer.echo(f"watch {archive_watch_record(session, watch_id, actor='cli').watch_id} archived")
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
     finally:
