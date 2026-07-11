@@ -691,18 +691,18 @@ class ResearchProviderORM(TimestampMixin, Base):
 
     provider_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     provider_key: Mapped[str] = mapped_column(String(120), unique=True, index=True)
-    display_name: Mapped[str] = mapped_column(String(200))
-    provider_kind: Mapped[str] = mapped_column(String(40), index=True)
+    display_name: Mapped[str] = mapped_column(String(200), default="unnamed provider")
+    provider_kind: Mapped[str] = mapped_column(String(40), default="structured_dataset", index=True)
     capabilities_json: Mapped[list[str]] = mapped_column(JSON, default=list)
     base_urls_json: Mapped[list[str]] = mapped_column(JSON, default=list)
-    access_mode: Mapped[str] = mapped_column(String(50))
-    terms_url: Mapped[str] = mapped_column(Text)
-    license_note: Mapped[str] = mapped_column(Text)
-    robots_mode: Mapped[str] = mapped_column(String(50))
+    access_mode: Mapped[str] = mapped_column(String(50), default="public_no_login")
+    terms_url: Mapped[str] = mapped_column(Text, default="")
+    license_note: Mapped[str] = mapped_column(Text, default="")
+    robots_mode: Mapped[str] = mapped_column(String(50), default="required")
     jurisdictions_json: Mapped[list[str]] = mapped_column(JSON, default=list)
     languages_json: Mapped[list[str]] = mapped_column(JSON, default=list)
     request_budget_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
-    artifact_capture_mode: Mapped[str] = mapped_column(String(50))
+    artifact_capture_mode: Mapped[str] = mapped_column(String(50), default="metadata_only")
     health_status: Mapped[str] = mapped_column(String(40), default="unknown", index=True)
     health_reason: Mapped[str | None] = mapped_column(Text, default=None)
     schema_version: Mapped[int] = mapped_column(Integer, default=1)
@@ -712,6 +712,111 @@ class ResearchProviderORM(TimestampMixin, Base):
     disabled_reason: Mapped[str | None] = mapped_column(Text, default=None)
     created_by: Mapped[str] = mapped_column(String(120), default="operator")
     approved_by: Mapped[str | None] = mapped_column(String(120), default=None)
+    # Durable-worker operational metadata complements the policy registry; it does not
+    # introduce a second incompatible definition of a research provider.
+    freshness_hours: Mapped[int] = mapped_column(Integer, default=24)
+    cost: Mapped[str] = mapped_column(String(30), default="free")
+    access_requirement: Mapped[str] = mapped_column(String(40), default="none")
+    robots_supported: Mapped[bool] = mapped_column(default=True)
+    evidence_capture_method: Mapped[str] = mapped_column(String(120), default="response_manifest")
+    coverage_gaps_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    last_success_at: Mapped[datetime | None] = mapped_column(default=None, index=True)
+    last_error_text: Mapped[str | None] = mapped_column(Text, default=None)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+    runs: Mapped[list["ResearchProviderRunORM"]] = relationship(back_populates="provider")
+
+    # Compatibility aliases keep the durable-worker API attached to the one canonical
+    # provider table while its external route is migrated to the policy vocabulary.
+    @property
+    def research_provider_id(self) -> int:
+        return self.provider_id
+
+    @property
+    def name(self) -> str:
+        return self.display_name
+
+    @name.setter
+    def name(self, value: str) -> None:
+        self.display_name = value
+
+    @property
+    def source_kind(self) -> str:
+        return self.provider_kind
+
+    @source_kind.setter
+    def source_kind(self, value: str) -> None:
+        self.provider_kind = value
+
+    @property
+    def health_state(self) -> str:
+        return self.health_status
+
+    @health_state.setter
+    def health_state(self, value: str) -> None:
+        self.health_status = value
+
+    @property
+    def default_budget_json(self) -> dict[str, Any]:
+        return self.request_budget_json
+
+    @default_budget_json.setter
+    def default_budget_json(self, value: dict[str, Any]) -> None:
+        self.request_budget_json = value
+
+
+class ResearchProviderRunORM(Base):
+    """Durable provider work with leases, retry state, and budget accounting."""
+
+    __tablename__ = "research_provider_runs"
+    __table_args__ = (
+        Index("ix_research_provider_run_provider_status", "provider_id", "status"),
+        Index("ix_research_provider_run_lease", "status", "lease_expires_at"),
+        Index("ix_research_provider_run_priority", "status", "priority", "created_at"),
+    )
+
+    research_provider_run_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    provider_id: Mapped[int] = mapped_column(ForeignKey("research_providers.provider_id"), index=True)
+    investigation_id: Mapped[int | None] = mapped_column(
+        ForeignKey("investigations.investigation_id"), default=None, index=True
+    )
+    idempotency_key: Mapped[str] = mapped_column(String(160), unique=True, index=True)
+    status: Mapped[str] = mapped_column(String(30), default="queued", index=True)
+    worker_class: Mapped[str] = mapped_column(String(60), default="search", index=True)
+    priority: Mapped[int] = mapped_column(Integer, default=0, index=True)
+    cancellation_requested: Mapped[bool] = mapped_column(default=False, index=True)
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, default=2)
+    retry_class: Mapped[str] = mapped_column(String(50), default="transient")
+    retry_at: Mapped[datetime | None] = mapped_column(default=None, index=True)
+    lease_owner: Mapped[str | None] = mapped_column(String(120), default=None, index=True)
+    lease_acquired_at: Mapped[datetime | None] = mapped_column(default=None)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(default=None, index=True)
+    heartbeat_at: Mapped[datetime | None] = mapped_column(default=None, index=True)
+    started_at: Mapped[datetime | None] = mapped_column(default=None, index=True)
+    finished_at: Mapped[datetime | None] = mapped_column(default=None, index=True)
+    normalized_query: Mapped[str] = mapped_column(Text, default="")
+    request_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    response_hash: Mapped[str | None] = mapped_column(String(128), default=None, index=True)
+    candidate_urls_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+    coverage_gaps_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    budget_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    bytes_collected: Mapped[int] = mapped_column(Integer, default=0)
+    request_count: Mapped[int] = mapped_column(Integer, default=0)
+    error_text: Mapped[str | None] = mapped_column(Text, default=None)
+    output_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow, index=True)
+    updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
+
+    provider: Mapped[ResearchProviderORM] = relationship(back_populates="runs")
+
+    @property
+    def research_provider_id(self) -> int:
+        return self.provider_id
+
+    @research_provider_id.setter
+    def research_provider_id(self, value: int) -> None:
+        self.provider_id = value
 
 
 class DiscoveryCampaignORM(TimestampMixin, Base):

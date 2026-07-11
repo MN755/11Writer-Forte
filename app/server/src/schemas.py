@@ -115,6 +115,7 @@ DISCOVERY_SNAPSHOT_ROW_SCHEMAS = {
     "robots_observations": "RobotsObservationRead",
     "discovery_artifacts": "DiscoveryArtifactRead",
     "research_providers": "ResearchProviderRead",
+    "research_provider_runs": "ResearchFleetProviderRunRead",
 }
 
 
@@ -346,6 +347,107 @@ class ResearchProviderRead(ResearchProviderCreate):
     updated_at: datetime
 
 
+class ResearchFleetProviderCreate(ForteModel):
+    """Operational provider settings used by the durable-worker surface."""
+
+    provider_key: str = Field(min_length=1, max_length=120, pattern=r"^[a-z0-9][a-z0-9_-]*$")
+    name: str = Field(min_length=1, max_length=200)
+    source_kind: str = Field(min_length=1, max_length=80)
+    enabled: bool = True
+    health_state: str = Field(default="unknown", max_length=30)
+    license_notes: str = ""
+    jurisdiction: str = Field(default="operator-configured", max_length=160)
+    languages_json: list[str] = Field(default_factory=list)
+    freshness_hours: int = Field(default=24, ge=0, le=87_600)
+    cost: Literal["free", "operator-supplied", "disabled"] = "free"
+    access_requirement: Literal["none", "operator_supplied"] = "none"
+    robots_supported: bool = True
+    evidence_capture_method: str = Field(default="response_manifest", max_length=120)
+    capabilities_json: list[str] = Field(default_factory=list)
+    default_budget_json: dict[str, Any] = Field(default_factory=dict)
+    coverage_gaps_json: dict[str, Any] = Field(default_factory=dict)
+    last_health_at: datetime | None = None
+    last_success_at: datetime | None = None
+    last_error_text: str | None = None
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+
+
+class ResearchFleetProviderUpdate(ForteModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    source_kind: str | None = Field(default=None, min_length=1, max_length=80)
+    enabled: bool | None = None
+    health_state: str | None = Field(default=None, max_length=30)
+    license_notes: str | None = None
+    jurisdiction: str | None = Field(default=None, max_length=160)
+    languages_json: list[str] | None = None
+    freshness_hours: int | None = Field(default=None, ge=0, le=87_600)
+    cost: Literal["free", "operator-supplied", "disabled"] | None = None
+    access_requirement: Literal["none", "operator_supplied"] | None = None
+    robots_supported: bool | None = None
+    evidence_capture_method: str | None = Field(default=None, max_length=120)
+    capabilities_json: list[str] | None = None
+    default_budget_json: dict[str, Any] | None = None
+    coverage_gaps_json: dict[str, Any] | None = None
+    last_health_at: datetime | None = None
+    last_success_at: datetime | None = None
+    last_error_text: str | None = None
+    metadata_json: dict[str, Any] | None = None
+
+
+class ResearchFleetProviderRead(ResearchFleetProviderCreate):
+    provider_id: int
+    research_provider_id: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class ResearchFleetProviderRunCreate(ForteModel):
+    provider_id: int | None = Field(default=None, gt=0)
+    research_provider_id: int | None = Field(default=None, gt=0)
+    investigation_id: int | None = Field(default=None, gt=0)
+    idempotency_key: str = Field(min_length=1, max_length=160)
+    status: str = Field(default="queued", max_length=30)
+    worker_class: str = Field(default="search", max_length=60)
+    priority: int = Field(default=0, ge=-100_000, le=100_000)
+    cancellation_requested: bool = False
+    attempt_count: int = Field(default=0, ge=0)
+    max_attempts: int = Field(default=2, ge=1, le=20)
+    retry_class: str = Field(default="transient", max_length=50)
+    retry_at: datetime | None = None
+    lease_owner: str | None = Field(default=None, max_length=120)
+    lease_acquired_at: datetime | None = None
+    lease_expires_at: datetime | None = None
+    heartbeat_at: datetime | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    normalized_query: str = ""
+    request_snapshot_json: dict[str, Any] = Field(default_factory=dict)
+    response_hash: str | None = Field(default=None, max_length=128)
+    candidate_urls_json: list[str] = Field(default_factory=list)
+    coverage_gaps_json: dict[str, Any] = Field(default_factory=dict)
+    budget_json: dict[str, Any] = Field(default_factory=dict)
+    bytes_collected: int = Field(default=0, ge=0)
+    request_count: int = Field(default=0, ge=0)
+    error_text: str | None = None
+    output_json: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def require_one_provider_id(self) -> "ResearchFleetProviderRunCreate":
+        if self.provider_id is None and self.research_provider_id is None:
+            raise ValueError("provider_id is required.")
+        if self.provider_id is not None and self.research_provider_id not in {None, self.provider_id}:
+            raise ValueError("provider_id and research_provider_id must match when both are supplied.")
+        if self.provider_id is None:
+            self.provider_id = self.research_provider_id
+        return self
+
+
+class ResearchFleetProviderRunRead(ResearchFleetProviderRunCreate):
+    research_provider_run_id: int
+    created_at: datetime
+    updated_at: datetime
+
+
 class HealthResponse(ForteModel):
     status: str
     app_name: str
@@ -550,6 +652,7 @@ class RuntimeSnapshotRead(ForteModel):
     robots_observations: list["RobotsObservationRead"] = Field(default_factory=list)
     discovery_artifacts: list["DiscoveryArtifactRead"] = Field(default_factory=list)
     research_providers: list["ResearchProviderRead"] = Field(default_factory=list)
+    research_provider_runs: list["ResearchFleetProviderRunRead"] = Field(default_factory=list)
     geofences: list["GeofenceRead"]
     source_definitions: list["SourceDefinitionRead"]
     local_import_runs: list["LocalImportRunSummaryRead"]
@@ -594,7 +697,7 @@ class RuntimeSnapshotRead(ForteModel):
         if not isinstance(value, dict):
             return value
         version = int(value.get("snapshot_version", 1))
-        if version not in {1, 2, 3}:
+        if version not in {1, 2, 3, 4}:
             raise ValueError(f"Unsupported runtime snapshot version: {version}.")
         if version < 2:
             return value

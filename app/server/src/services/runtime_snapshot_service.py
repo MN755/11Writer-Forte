@@ -45,6 +45,7 @@ from src.models import (
     ObservationORM,
     RobotsObservationORM,
     ResearchProviderORM,
+    ResearchProviderRunORM,
     ScheduledTaskORM,
     ScheduledTaskRunORM,
     SituationProductORM,
@@ -94,6 +95,7 @@ from src.schemas import (
     ObservationRead,
     RobotsObservationRead,
     ResearchProviderRead,
+    ResearchFleetProviderRunRead,
     RuntimeRestoreResultRead,
     RuntimeSnapshotRead,
     ScheduledTaskRead,
@@ -258,6 +260,12 @@ SNAPSHOT_SECTIONS: tuple[tuple[str, object, type[BaseModel], object], ...] = (
         ResearchProviderORM.provider_id,
     ),
     (
+        "research_provider_runs",
+        ResearchProviderRunORM,
+        ResearchFleetProviderRunRead,
+        ResearchProviderRunORM.research_provider_run_id,
+    ),
+    (
         "event_observation_links",
         EventObservationLinkORM,
         EventObservationLinkRead,
@@ -304,6 +312,7 @@ RESTORE_ORDER: tuple[tuple[str, object], ...] = (
     ("candidate_promotion_decisions", CandidatePromotionDecisionORM),
     ("robots_observations", RobotsObservationORM),
     ("research_providers", ResearchProviderORM),
+    ("research_provider_runs", ResearchProviderRunORM),
     ("local_import_runs", LocalImportRunORM),
     ("events", EventORM),
     ("entities", EntityORM),
@@ -343,7 +352,7 @@ def build_runtime_snapshot(session: Session) -> dict[str, object]:
     export_log = log_runtime_snapshot_export(session, row_counts=row_counts_before)
     try:
         snapshot = {
-            "snapshot_version": 3,
+            "snapshot_version": 4,
             "exported_at": snapshot_now(),
             "app_name": settings.app_name,
             "app_version": settings.app_version,
