@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+import os
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
@@ -36,12 +37,12 @@ def import_local_path(
     notes: str,
     actor: str = "system",
 ) -> LocalImportRunORM:
-    path = Path(source_path).expanduser().resolve()
-    data_dir = get_settings().data_dir.resolve()
-    try:
-        path.relative_to(data_dir)
-    except ValueError as exc:
-        raise ValueError("Local import paths must be staged inside the configured data_dir.") from exc
+    data_dir = os.path.realpath(os.fspath(get_settings().data_dir))
+    path_string = os.path.realpath(os.path.expanduser(source_path))
+    if path_string.startswith(data_dir + os.sep):
+        path = Path(path_string)
+    else:
+        raise ValueError("Local import paths must be staged inside the configured data_dir.")
     if not path.is_file():
         raise FileNotFoundError("Input file does not exist.")
 
