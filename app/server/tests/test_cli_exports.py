@@ -11,7 +11,10 @@ from src.models import SituationProductORM
 from src.services.camera_source_service import build_camera_source_ops_export_summary
 from src.services.camera_service import build_camera_ops_export_summary
 from src.services.event_export_service import build_event_export_bundle
-from src.services.export_artifact_service import write_json_export_artifact, write_text_export_artifact
+from src.services.export_artifact_service import (
+    write_json_export_artifact,
+    write_text_export_artifact,
+)
 from src.services.operations_report_service import build_operations_report
 from src.services.runtime_snapshot_service import build_runtime_snapshot
 from src.services.scheduler_service import build_scheduler_ops_export_summary
@@ -75,18 +78,27 @@ def test_export_artifact_service_registers_storage_objects(
         encoding="utf-8",
     )
 
-    assert client.post(
-        "/api/imports/local",
-        json={"source_path": str(source_fixture), "layer_key": "marine-track"},
-    ).status_code == 200
-    assert client.post(
-        "/api/imports/local",
-        json={"source_path": str(corroboration_fixture), "layer_key": "news-track"},
-    ).status_code == 200
-    assert client.post(
-        "/api/imports/local",
-        json={"source_path": str(camera_fixture), "layer_key": "traffic-camera-feed"},
-    ).status_code == 200
+    assert (
+        client.post(
+            "/api/imports/local",
+            json={"source_path": str(source_fixture), "layer_key": "marine-track"},
+        ).status_code
+        == 200
+    )
+    assert (
+        client.post(
+            "/api/imports/local",
+            json={"source_path": str(corroboration_fixture), "layer_key": "news-track"},
+        ).status_code
+        == 200
+    )
+    assert (
+        client.post(
+            "/api/imports/local",
+            json={"source_path": str(camera_fixture), "layer_key": "traffic-camera-feed"},
+        ).status_code
+        == 200
+    )
     source_definition = client.post(
         "/api/sources",
         json={
@@ -97,10 +109,13 @@ def test_export_artifact_service_registers_storage_objects(
         },
     )
     assert source_definition.status_code == 200
-    assert client.post(
-        "/api/cameras/materialize",
-        json={"layer_key": "traffic-camera-feed", "limit": 25},
-    ).status_code == 200
+    assert (
+        client.post(
+            "/api/cameras/materialize",
+            json={"layer_key": "traffic-camera-feed", "limit": 25},
+        ).status_code
+        == 200
+    )
 
     fused = client.post(
         "/api/events/fuse",
@@ -177,7 +192,9 @@ def test_export_artifact_service_registers_storage_objects(
             metadata_json=camera_summary_payload["filters_json"],
         )
 
-        camera_source_summary = build_camera_source_ops_export_summary(session, layer_key="traffic-camera-feed")
+        camera_source_summary = build_camera_source_ops_export_summary(
+            session, layer_key="traffic-camera-feed"
+        )
         camera_source_payload = json.loads(json.dumps(camera_source_summary, default=str))
         write_json_export_artifact(
             session,
@@ -227,7 +244,9 @@ def test_export_artifact_service_registers_storage_objects(
             },
         )
 
-        scheduler_summary = build_scheduler_ops_export_summary(session, task_limit=50, report_limit=25, overdue_task_limit=25)
+        scheduler_summary = build_scheduler_ops_export_summary(
+            session, task_limit=50, report_limit=25, overdue_task_limit=25
+        )
         scheduler_payload = json.loads(json.dumps(scheduler_summary, default=str))
         write_json_export_artifact(
             session,
@@ -241,7 +260,9 @@ def test_export_artifact_service_registers_storage_objects(
             metadata_json=scheduler_payload["filters_json"],
         )
 
-        source_summary = build_source_ops_export_summary(session, source_limit=50, report_limit=25, stale_source_limit=25)
+        source_summary = build_source_ops_export_summary(
+            session, source_limit=50, report_limit=25, stale_source_limit=25
+        )
         source_payload = json.loads(json.dumps(source_summary, default=str))
         write_json_export_artifact(
             session,
@@ -259,7 +280,11 @@ def test_export_artifact_service_registers_storage_objects(
 
     event_rows = client.get(
         "/api/storage/objects",
-        params={"owner_type": "event", "owner_id": str(event_id), "object_kind": "event_bundle_export"},
+        params={
+            "owner_type": "event",
+            "owner_id": str(event_id),
+            "object_kind": "event_bundle_export",
+        },
     ).json()
     assert len(event_rows) == 1
     assert event_rows[0]["metadata_json"]["requested_redaction_level"] == "public"
@@ -273,7 +298,11 @@ def test_export_artifact_service_registers_storage_objects(
 
     camera_rows = client.get(
         "/api/storage/objects",
-        params={"owner_type": "camera_export", "owner_id": "traffic-camera-feed", "object_kind": "camera_summary_export"},
+        params={
+            "owner_type": "camera_export",
+            "owner_id": "traffic-camera-feed",
+            "object_kind": "camera_summary_export",
+        },
     ).json()
     assert len(camera_rows) == 1
     assert camera_rows[0]["metadata_json"]["layer_key"] == "traffic-camera-feed"

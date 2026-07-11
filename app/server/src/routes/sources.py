@@ -2,10 +2,6 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from src.db import get_db
-<<<<<<< HEAD
-from src.schemas import SourceDefinitionCreate, SourceDefinitionRead, SourceDefinitionUpdate, SourceRunRead
-from src.services.source_service import (
-=======
 from src.schemas import (
     SourceDefinitionCreate,
     SourceDefinitionRead,
@@ -21,7 +17,6 @@ from src.services.source_service import (
     build_source_ops_detail,
     build_source_ops_export_summary,
     build_source_ops_report_index,
->>>>>>> 05aeee6 (chore: initialize repository)
     create_source_definition,
     list_source_definitions,
     list_source_runs,
@@ -46,7 +41,9 @@ def create_source(payload: SourceDefinitionCreate, session: Session = Depends(ge
 
 
 @router.patch("/{source_id}", response_model=SourceDefinitionRead)
-def update_source(source_id: int, payload: SourceDefinitionUpdate, session: Session = Depends(get_db)) -> object:
+def update_source(
+    source_id: int, payload: SourceDefinitionUpdate, session: Session = Depends(get_db)
+) -> object:
     try:
         return update_source_definition(session, source_id, payload)
     except ValueError as exc:
@@ -58,8 +55,6 @@ def list_runs(session: Session = Depends(get_db)) -> list[object]:
     return list_source_runs(session)
 
 
-<<<<<<< HEAD
-=======
 @router.get("/summary", response_model=SourceInventorySummaryRead)
 def source_summary(
     stale_after_hours: float = 24.0,
@@ -108,7 +103,6 @@ def source_ops(source_id: int, session: Session = Depends(get_db)) -> dict[str, 
         raise translate_source_error(exc) from exc
 
 
->>>>>>> 05aeee6 (chore: initialize repository)
 @router.post("/{source_id}/run", response_model=SourceRunRead)
 def run_source(source_id: int, session: Session = Depends(get_db)) -> object:
     try:

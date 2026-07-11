@@ -121,13 +121,14 @@ def test_local_import_skips_duplicate_observations(client: TestClient, tmp_path:
     custody_response = client.get("/api/custody/logs")
     assert custody_response.status_code == 200
     assert any(
-        row["object_type"] == "local_import_run"
-        and row["details_json"]["records_skipped"] == 2
+        row["object_type"] == "local_import_run" and row["details_json"]["records_skipped"] == 2
         for row in custody_response.json()
     )
-    assert sum(
-        1
-        for row in custody_response.json()
-        if row["object_type"] == "storage_object"
-        and row["action"] == "storage_registered"
-    ) >= 2
+    assert (
+        sum(
+            1
+            for row in custody_response.json()
+            if row["object_type"] == "storage_object" and row["action"] == "storage_registered"
+        )
+        >= 2
+    )

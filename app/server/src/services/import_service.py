@@ -70,7 +70,9 @@ def import_local_path(
     run.status = "completed"
     imported_count = 0
     skipped_count = 0
-    existing_hashes = existing_observation_hashes(session, layer_key, {item.raw_hash for item in parsed})
+    existing_hashes = existing_observation_hashes(
+        session, layer_key, {item.raw_hash for item in parsed}
+    )
     seen_hashes: set[str] = set()
 
     for item in parsed:

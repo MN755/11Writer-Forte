@@ -13,10 +13,7 @@ from src.models import (
     CandidatePromotionDecisionORM,
     CandidateSuppressionORM,
     CameraInventoryORM,
-<<<<<<< HEAD
-=======
     CameraSourceInventoryORM,
->>>>>>> 05aeee6 (chore: initialize repository)
     CustodyLogORM,
     DataLayerORM,
     DiscoveryArtifactORM,
@@ -30,6 +27,10 @@ from src.models import (
     EventObservationLinkORM,
     EventORM,
     GeofenceORM,
+    InvestigationDiscoveryAttemptORM,
+    InvestigationEvidencePromotionORM,
+    InvestigationORM,
+    InvestigationReportVersionORM,
     LocalImportRunORM,
     ObservationORM,
     RobotsObservationORM,
@@ -49,10 +50,7 @@ from src.schemas import (
     CandidatePromotionDecisionRead,
     CandidateSuppressionRead,
     CameraInventoryRead,
-<<<<<<< HEAD
-=======
     CameraSourceInventoryRead,
->>>>>>> 05aeee6 (chore: initialize repository)
     CustodyLogRead,
     DataLayerRead,
     DatabaseTableCountRead,
@@ -67,6 +65,10 @@ from src.schemas import (
     EventObservationLinkRead,
     EventRead,
     GeofenceRead,
+    InvestigationDiscoveryAttemptRead,
+    InvestigationEvidencePromotionRead,
+    InvestigationRead,
+    InvestigationReportVersionRead,
     LocalImportRunSummaryRead,
     ObservationRead,
     RobotsObservationRead,
@@ -116,7 +118,12 @@ SNAPSHOT_SECTIONS: tuple[tuple[str, object, type[BaseModel], object], ...] = (
         DiscoveryRunORM.discovery_run_id,
     ),
     ("geofences", GeofenceORM, GeofenceRead, GeofenceORM.geofence_id),
-    ("source_definitions", SourceDefinitionORM, SourceDefinitionRead, SourceDefinitionORM.source_id),
+    (
+        "source_definitions",
+        SourceDefinitionORM,
+        SourceDefinitionRead,
+        SourceDefinitionORM.source_id,
+    ),
     (
         "source_candidates",
         SourceCandidateORM,
@@ -165,21 +172,47 @@ SNAPSHOT_SECTIONS: tuple[tuple[str, object, type[BaseModel], object], ...] = (
         RobotsObservationRead,
         RobotsObservationORM.robots_observation_id,
     ),
-    ("local_import_runs", LocalImportRunORM, LocalImportRunSummaryRead, LocalImportRunORM.import_run_id),
+    (
+        "local_import_runs",
+        LocalImportRunORM,
+        LocalImportRunSummaryRead,
+        LocalImportRunORM.import_run_id,
+    ),
     ("events", EventORM, EventRead, EventORM.event_id),
     ("entities", EntityORM, EntityRead, EntityORM.entity_id),
     ("observations", ObservationORM, ObservationRead, ObservationORM.observation_id),
-    ("camera_inventory", CameraInventoryORM, CameraInventoryRead, CameraInventoryORM.camera_inventory_id),
-<<<<<<< HEAD
-=======
+    (
+        "camera_inventory",
+        CameraInventoryORM,
+        CameraInventoryRead,
+        CameraInventoryORM.camera_inventory_id,
+    ),
     (
         "camera_source_inventory",
         CameraSourceInventoryORM,
         CameraSourceInventoryRead,
         CameraSourceInventoryORM.camera_source_inventory_id,
     ),
->>>>>>> 05aeee6 (chore: initialize repository)
     ("storage_objects", StorageObjectORM, StorageObjectRead, StorageObjectORM.storage_object_id),
+    ("investigations", InvestigationORM, InvestigationRead, InvestigationORM.investigation_id),
+    (
+        "investigation_discovery_attempts",
+        InvestigationDiscoveryAttemptORM,
+        InvestigationDiscoveryAttemptRead,
+        InvestigationDiscoveryAttemptORM.investigation_attempt_id,
+    ),
+    (
+        "investigation_report_versions",
+        InvestigationReportVersionORM,
+        InvestigationReportVersionRead,
+        InvestigationReportVersionORM.investigation_report_version_id,
+    ),
+    (
+        "investigation_evidence_promotions",
+        InvestigationEvidencePromotionORM,
+        InvestigationEvidencePromotionRead,
+        InvestigationEvidencePromotionORM.investigation_evidence_promotion_id,
+    ),
     (
         "discovery_artifacts",
         DiscoveryArtifactORM,
@@ -200,9 +233,19 @@ SNAPSHOT_SECTIONS: tuple[tuple[str, object, type[BaseModel], object], ...] = (
     ),
     ("alerts", AlertORM, AlertRead, AlertORM.alert_id),
     ("scheduled_tasks", ScheduledTaskORM, ScheduledTaskRead, ScheduledTaskORM.task_id),
-    ("scheduled_task_runs", ScheduledTaskRunORM, ScheduledTaskRunRead, ScheduledTaskRunORM.task_run_id),
+    (
+        "scheduled_task_runs",
+        ScheduledTaskRunORM,
+        ScheduledTaskRunRead,
+        ScheduledTaskRunORM.task_run_id,
+    ),
     ("source_runs", SourceRunORM, SourceRunRead, SourceRunORM.source_run_id),
-    ("situation_products", SituationProductORM, SituationProductRead, SituationProductORM.product_id),
+    (
+        "situation_products",
+        SituationProductORM,
+        SituationProductRead,
+        SituationProductORM.product_id,
+    ),
     ("custody_logs", CustodyLogORM, CustodyLogRead, CustodyLogORM.custody_log_id),
 )
 
@@ -227,11 +270,12 @@ RESTORE_ORDER: tuple[tuple[str, object], ...] = (
     ("entities", EntityORM),
     ("observations", ObservationORM),
     ("camera_inventory", CameraInventoryORM),
-<<<<<<< HEAD
-=======
     ("camera_source_inventory", CameraSourceInventoryORM),
->>>>>>> 05aeee6 (chore: initialize repository)
     ("storage_objects", StorageObjectORM),
+    ("investigations", InvestigationORM),
+    ("investigation_discovery_attempts", InvestigationDiscoveryAttemptORM),
+    ("investigation_report_versions", InvestigationReportVersionORM),
+    ("investigation_evidence_promotions", InvestigationEvidencePromotionORM),
     ("discovery_artifacts", DiscoveryArtifactORM),
     ("event_observation_links", EventObservationLinkORM),
     ("entity_observation_links", EntityObservationLinkORM),
@@ -250,7 +294,7 @@ def build_runtime_snapshot(session: Session) -> dict[str, object]:
     export_log = log_runtime_snapshot_export(session, row_counts=row_counts_before)
     try:
         snapshot = {
-            "snapshot_version": 2,
+            "snapshot_version": 3,
             "exported_at": snapshot_now(),
             "app_name": settings.app_name,
             "app_version": settings.app_version,
@@ -260,8 +304,7 @@ def build_runtime_snapshot(session: Session) -> dict[str, object]:
         }
         snapshot.update(serialize_snapshot_sections(session))
         if not any(
-            log["custody_log_id"] == export_log.custody_log_id
-            for log in snapshot["custody_logs"]
+            log["custody_log_id"] == export_log.custody_log_id for log in snapshot["custody_logs"]
         ):
             snapshot["custody_logs"].append(serialize_row(export_log, CustodyLogRead))
         TypeAdapter(RuntimeSnapshotRead).validate_python(snapshot)
@@ -281,7 +324,9 @@ def restore_runtime_snapshot(
     snapshot = TypeAdapter(RuntimeSnapshotRead).validate_python(snapshot_payload)
     if runtime_has_records(session):
         if not replace_existing:
-            raise ValueError("Runtime restore requires an empty database unless replace_existing is enabled.")
+            raise ValueError(
+                "Runtime restore requires an empty database unless replace_existing is enabled."
+            )
         clear_runtime_tables(session)
 
     for section_name, model in RESTORE_ORDER:
@@ -302,22 +347,28 @@ def restore_runtime_snapshot(
             details_json={
                 "snapshot_exported_at": snapshot.exported_at.isoformat(),
                 "replaced_existing": replace_existing,
-                "restored_total_records": sum(len(getattr(snapshot, section_name)) for section_name, _ in RESTORE_ORDER),
+                "restored_total_records": sum(
+                    len(getattr(snapshot, section_name)) for section_name, _ in RESTORE_ORDER
+                ),
             },
         )
     )
     session.commit()
 
     row_counts = collect_table_counts(session)
-    return TypeAdapter(RuntimeRestoreResultRead).validate_python(
-        {
-            "restored_at": restored_at,
-            "database_backend": session.get_bind().dialect.name,
-            "replaced_existing": replace_existing,
-            "total_records": sum(item["row_count"] for item in row_counts),
-            "row_counts": row_counts,
-        }
-    ).model_dump(mode="python")
+    return (
+        TypeAdapter(RuntimeRestoreResultRead)
+        .validate_python(
+            {
+                "restored_at": restored_at,
+                "database_backend": session.get_bind().dialect.name,
+                "replaced_existing": replace_existing,
+                "total_records": sum(item["row_count"] for item in row_counts),
+                "row_counts": row_counts,
+            }
+        )
+        .model_dump(mode="python")
+    )
 
 
 def serialize_snapshot_sections(session: Session) -> dict[str, list[dict[str, object]]]:

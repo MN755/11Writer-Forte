@@ -221,6 +221,5 @@ def test_managed_storage_lifecycle_moves_and_deletes_owned_files(
         for row in transition_logs
     )
     assert any(
-        row["details_json"]["managed_file"]["action"] == "deleted"
-        for row in transition_logs
+        row["details_json"]["managed_file"]["action"] == "deleted" for row in transition_logs
     )

@@ -13,10 +13,7 @@ from src.models import (
     CandidatePromotionDecisionORM,
     CandidateSuppressionORM,
     CameraInventoryORM,
-<<<<<<< HEAD
-=======
     CameraSourceInventoryORM,
->>>>>>> 05aeee6 (chore: initialize repository)
     CustodyLogORM,
     DataLayerORM,
     DiscoveryArtifactORM,
@@ -63,10 +60,7 @@ TABLE_COUNT_MODELS: tuple[tuple[str, object], ...] = (
     ("local_import_runs", LocalImportRunORM),
     ("observations", ObservationORM),
     ("camera_inventory", CameraInventoryORM),
-<<<<<<< HEAD
-=======
     ("camera_source_inventory", CameraSourceInventoryORM),
->>>>>>> 05aeee6 (chore: initialize repository)
     ("storage_objects", StorageObjectORM),
     ("events", EventORM),
     ("entities", EntityORM),
@@ -186,11 +180,7 @@ def collect_spatial_index_statuses(session: Session) -> list[dict[str, object]]:
 
 def fetch_postgres_index_names(session: Session) -> set[str]:
     rows = session.execute(
-        text(
-            "SELECT indexname "
-            "FROM pg_indexes "
-            "WHERE schemaname = ANY(current_schemas(false))"
-        )
+        text("SELECT indexname FROM pg_indexes WHERE schemaname = ANY(current_schemas(false))")
     ).all()
     return {str(row[0]) for row in rows}
 
