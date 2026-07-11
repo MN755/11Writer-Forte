@@ -21,8 +21,7 @@ def health(session: Session = Depends(get_db)) -> HealthResponse:
         database_backend=str(diagnostics["database_backend"]),
         database_connected=bool(diagnostics["database_connected"]),
         spatial_backend=settings.spatial_backend,
-        postgis_ready=not bool(diagnostics["postgis_expected"]) or bool(
-            diagnostics["postgis_extension_installed"]
-        ),
+        postgis_ready=not bool(diagnostics["postgis_expected"])
+        or bool(diagnostics["postgis_extension_installed"]),
         warning_count=int(diagnostics["warning_count"]),
     )

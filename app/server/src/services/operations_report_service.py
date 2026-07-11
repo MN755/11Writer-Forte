@@ -20,10 +20,19 @@ from src.services.camera_source_service import (
     build_camera_source_inventory_summary,
     build_camera_source_ops_report_index,
 )
-from src.services.camera_service import build_camera_inventory_summary, build_camera_ops_report_index
+from src.services.camera_service import (
+    build_camera_inventory_summary,
+    build_camera_ops_report_index,
+)
 from src.services.discovery_service import build_discovery_ops_summary
-from src.services.scheduler_service import build_scheduler_inventory_summary, build_scheduler_ops_report_index
-from src.services.source_service import build_source_inventory_summary, build_source_ops_report_index
+from src.services.scheduler_service import (
+    build_scheduler_inventory_summary,
+    build_scheduler_ops_report_index,
+)
+from src.services.source_service import (
+    build_source_inventory_summary,
+    build_source_ops_report_index,
+)
 from src.services.storage_service import build_storage_report
 
 
@@ -41,7 +50,9 @@ def build_operations_report(
     import_runs = list(
         session.scalars(
             apply_time_filters(
-                select(LocalImportRunORM).order_by(LocalImportRunORM.created_at.desc()).limit(limit),
+                select(LocalImportRunORM)
+                .order_by(LocalImportRunORM.created_at.desc())
+                .limit(limit),
                 LocalImportRunORM.created_at,
                 since=since,
                 until=until,
@@ -61,7 +72,9 @@ def build_operations_report(
     scheduled_task_runs = list(
         session.scalars(
             apply_time_filters(
-                select(ScheduledTaskRunORM).order_by(ScheduledTaskRunORM.task_run_id.desc()).limit(limit),
+                select(ScheduledTaskRunORM)
+                .order_by(ScheduledTaskRunORM.task_run_id.desc())
+                .limit(limit),
                 ScheduledTaskRunORM.started_at,
                 since=since,
                 until=until,
@@ -105,7 +118,9 @@ def build_operations_report(
         "scope_since": since,
         "scope_until": until,
         "summary": {
-            "import_run_count": count_records(session, LocalImportRunORM, LocalImportRunORM.created_at, since, until),
+            "import_run_count": count_records(
+                session, LocalImportRunORM, LocalImportRunORM.created_at, since, until
+            ),
             "imported_record_count": sum_integer_field(
                 session,
                 LocalImportRunORM,
@@ -122,7 +137,9 @@ def build_operations_report(
                 since,
                 until,
             ),
-            "source_run_count": count_records(session, SourceRunORM, SourceRunORM.started_at, since, until),
+            "source_run_count": count_records(
+                session, SourceRunORM, SourceRunORM.started_at, since, until
+            ),
             "source_run_failure_count": count_status_records(
                 session,
                 SourceRunORM,
@@ -178,7 +195,9 @@ def build_operations_report(
             ),
             "event_count": count_records(session, EventORM, EventORM.created_at, since, until),
             "entity_count": count_records(session, EntityORM, EntityORM.created_at, since, until),
-            "observation_count": count_records(session, ObservationORM, ObservationORM.created_at, since, until),
+            "observation_count": count_records(
+                session, ObservationORM, ObservationORM.created_at, since, until
+            ),
         },
         "storage_report": storage_report,
         "clickhouse_diagnostics": clickhouse_diagnostics,
@@ -213,8 +232,12 @@ def apply_time_filters(
     return statement
 
 
-def count_records(session: Session, model, timestamp_column, since: datetime | None, until: datetime | None) -> int:
-    statement = apply_time_filters(select(func.count()).select_from(model), timestamp_column, since=since, until=until)
+def count_records(
+    session: Session, model, timestamp_column, since: datetime | None, until: datetime | None
+) -> int:
+    statement = apply_time_filters(
+        select(func.count()).select_from(model), timestamp_column, since=since, until=until
+    )
     return int(session.scalar(statement) or 0)
 
 

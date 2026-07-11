@@ -8,6 +8,7 @@ version = "0.1.0"
 description = "Backend-only geospatial OSINT runtime for 11Writer Forte"
 requires-python = ">=3.10"
 dependencies = [
+  "blake3>=1.0.0,<2.0.0",
   "fastapi>=0.115.0,<1.0.0",
   "pydantic>=2.8.0,<3.0.0",
   "pydantic-settings>=2.4.0,<3.0.0",

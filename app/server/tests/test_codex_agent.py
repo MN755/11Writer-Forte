@@ -19,7 +19,9 @@ def test_codex_research_is_read_only_and_tracks_local_briefing(client: TestClien
 
     def fake_runner(command: list[str], **_: object) -> CompletedProcess[str]:
         captured.extend(command)
-        return CompletedProcess(command, 0, stdout="# Briefing\n\nEvidence-backed summary.", stderr="")
+        return CompletedProcess(
+            command, 0, stdout="# Briefing\n\nEvidence-backed summary.", stderr=""
+        )
 
     session = get_session_factory()()
     try:

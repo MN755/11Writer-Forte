@@ -273,7 +273,9 @@ def validate_fetch_url(
         raise UnsafeTargetError("Discovery target contains an invalid port.")
 
     hostname = normalize_hostname(parsed.hostname)
-    if hostname in {"localhost", "localhost.localdomain"} or hostname.endswith((".localhost", ".local")):
+    if hostname in {"localhost", "localhost.localdomain"} or hostname.endswith(
+        (".localhost", ".local")
+    ):
         if not allow_private_networks:
             raise UnsafeTargetError(f"Private or local target is blocked: {hostname}")
 
@@ -542,9 +544,7 @@ def fetch_url(
                 address_pool.validate_url(final_url)
                 payload = read_bounded(response, normalized_policy.max_response_bytes)
                 status_code = int(
-                    getattr(response, "status", None)
-                    or getattr(response, "code", None)
-                    or 200
+                    getattr(response, "status", None) or getattr(response, "code", None) or 200
                 )
                 return FetchResult(
                     requested_url=url,

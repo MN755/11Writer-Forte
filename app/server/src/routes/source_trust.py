@@ -21,7 +21,9 @@ router = APIRouter(prefix="/source-trust", tags=["source-trust"])
 
 @router.get("/profiles", response_model=list[SourceTrustProfileRead])
 def list_profiles(session: Session = Depends(get_db)) -> list[SourceTrustProfileORM]:
-    return list(session.scalars(select(SourceTrustProfileORM).order_by(SourceTrustProfileORM.domain.asc())))
+    return list(
+        session.scalars(select(SourceTrustProfileORM).order_by(SourceTrustProfileORM.domain.asc()))
+    )
 
 
 @router.post("/profiles", response_model=SourceTrustProfileRead)

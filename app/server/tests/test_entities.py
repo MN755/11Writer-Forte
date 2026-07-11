@@ -43,8 +43,12 @@ def test_entity_resolution_materializes_entity_links_and_custody(
         encoding="utf-8",
     )
 
-    client.post("/api/imports/local", json={"source_path": str(fixture_a), "layer_key": "marine-track"})
-    client.post("/api/imports/local", json={"source_path": str(fixture_b), "layer_key": "news-track"})
+    client.post(
+        "/api/imports/local", json={"source_path": str(fixture_a), "layer_key": "marine-track"}
+    )
+    client.post(
+        "/api/imports/local", json={"source_path": str(fixture_b), "layer_key": "news-track"}
+    )
 
     response = client.post(
         "/api/entities/resolve",

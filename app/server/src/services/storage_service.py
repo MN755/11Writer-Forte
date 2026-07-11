@@ -125,12 +125,14 @@ def build_storage_report(
             "next_expiration_at": first_timestamp(
                 normalize_timestamp(row.expires_at)
                 for row in rows
-                if row.lifecycle_status != "expired" and normalize_timestamp(row.expires_at) is not None
+                if row.lifecycle_status != "expired"
+                and normalize_timestamp(row.expires_at) is not None
             ),
             "oldest_expired_at": first_timestamp(
                 normalize_timestamp(row.expires_at)
                 for row in rows
-                if is_storage_object_expired(row, now) and normalize_timestamp(row.expires_at) is not None
+                if is_storage_object_expired(row, now)
+                and normalize_timestamp(row.expires_at) is not None
             ),
             "retention_class_counts": build_storage_buckets(
                 rows,
@@ -150,7 +152,8 @@ def build_storage_report(
             "expiring_objects": [
                 row
                 for row in rows
-                if row.lifecycle_status != "expired" and normalize_timestamp(row.expires_at) is not None
+                if row.lifecycle_status != "expired"
+                and normalize_timestamp(row.expires_at) is not None
             ][:limit],
         }
     )
@@ -268,7 +271,9 @@ def register_storage_object(
     metadata_json: dict[str, Any] | None = None,
     actor: str = "system",
 ) -> StorageObjectORM:
-    record = session.scalar(select(StorageObjectORM).where(StorageObjectORM.object_key == object_key))
+    record = session.scalar(
+        select(StorageObjectORM).where(StorageObjectORM.object_key == object_key)
+    )
     normalized_observed_at = normalize_timestamp(observed_at) or utcnow()
     resolved_expires_at = resolve_expiration(
         retention_class,
@@ -356,7 +361,9 @@ def register_import_storage_object(
     actor: str,
 ) -> StorageObjectORM:
     path = Path(run.source_path)
-    content_hash = hash_file(path) if path.exists() and path.is_file() else hash_text(run.source_path)
+    content_hash = (
+        hash_file(path) if path.exists() and path.is_file() else hash_text(run.source_path)
+    )
     byte_size = path.stat().st_size if path.exists() and path.is_file() else None
     return register_storage_object(
         session,
@@ -766,10 +773,7 @@ def build_export_storage_key(
     output_path: Path,
 ) -> str:
     normalized_path = str(output_path).replace("\\", "/")
-    return (
-        f"export:{owner_type}:{owner_id}:{object_kind}:"
-        f"{hash_text(normalized_path)[:16]}"
-    )
+    return f"export:{owner_type}:{owner_id}:{object_kind}:{hash_text(normalized_path)[:16]}"
 
 
 def resolve_managed_storage_object_path(object_uri: str) -> Path | None:
@@ -796,7 +800,11 @@ def resolve_storage_object_local_path(object_uri: str) -> Path | None:
 
 def build_managed_archive_path(record: StorageObjectORM, source_path: Path) -> Path:
     managed_root = get_settings().data_dir.resolve()
-    archive_root = managed_root / MANAGED_STORAGE_ARCHIVE_DIRNAME / f"storage-object-{record.storage_object_id}"
+    archive_root = (
+        managed_root
+        / MANAGED_STORAGE_ARCHIVE_DIRNAME
+        / f"storage-object-{record.storage_object_id}"
+    )
     try:
         relative = source_path.relative_to(managed_root)
     except ValueError:

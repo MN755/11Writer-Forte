@@ -198,9 +198,7 @@ def campaign_queries(campaign: DiscoveryCampaignORM) -> list[str]:
     values: list[str] = list(explicit) if isinstance(explicit, list) else []
     if campaign.query_text.strip():
         values.extend(
-            part.strip()
-            for part in re.split(r"[\r\n]+", campaign.query_text)
-            if part.strip()
+            part.strip() for part in re.split(r"[\r\n]+", campaign.query_text) if part.strip()
         )
     values.extend(
         str(value).strip()
@@ -243,7 +241,9 @@ def validate_campaign_configuration(data: dict[str, Any]) -> None:
     invalid = sorted(
         str(mode)
         for mode in modes
-        if mode and str(mode).strip().lower() not in DISCOVERY_MODES and str(mode).strip().lower() != "multi"
+        if mode
+        and str(mode).strip().lower() not in DISCOVERY_MODES
+        and str(mode).strip().lower() != "multi"
     )
     if invalid:
         raise ValueError(f"Unsupported discovery mode(s): {', '.join(invalid)}")
@@ -361,9 +361,7 @@ def update_discovery_campaign(
             changes[field_name] = {}
     if "crawl_policy_json" in changes:
         existing_policy = (
-            dict(record.crawl_policy_json)
-            if isinstance(record.crawl_policy_json, dict)
-            else {}
+            dict(record.crawl_policy_json) if isinstance(record.crawl_policy_json, dict) else {}
         )
         incoming_policy = (
             dict(changes["crawl_policy_json"])
@@ -458,8 +456,7 @@ def build_discovery_campaign_detail(session: Session, campaign_id: int) -> dict[
             .select_from(CandidatePromotionDecisionORM)
             .join(
                 DiscoveryRunORM,
-                DiscoveryRunORM.discovery_run_id
-                == CandidatePromotionDecisionORM.discovery_run_id,
+                DiscoveryRunORM.discovery_run_id == CandidatePromotionDecisionORM.discovery_run_id,
             )
             .where(DiscoveryRunORM.campaign_id == campaign_id)
         )
@@ -623,9 +620,7 @@ def find_domain_policy(
 ) -> DiscoveryDomainPolicyORM | None:
     policies = list(
         session.scalars(
-            select(DiscoveryDomainPolicyORM).where(
-                DiscoveryDomainPolicyORM.enabled.is_(True)
-            )
+            select(DiscoveryDomainPolicyORM).where(DiscoveryDomainPolicyORM.enabled.is_(True))
         )
     )
     matches = [
@@ -677,9 +672,7 @@ def effective_campaign_policy(campaign: DiscoveryCampaignORM) -> dict[str, Any]:
     policy["private_network_override_enabled"] = private_networks_enabled
     policy["allow_private_networks"] = private_networks_requested and private_networks_enabled
     policy["store_artifacts"] = bool(policy.get("store_artifacts", True))
-    policy["allow_cross_domain_links"] = bool(
-        policy.get("allow_cross_domain_links", False)
-    )
+    policy["allow_cross_domain_links"] = bool(policy.get("allow_cross_domain_links", False))
     policy["request_timeout_seconds"] = clamp_float(
         policy.get("request_timeout_seconds"), 15.0, 0.1, 300.0
     )
@@ -690,13 +683,9 @@ def effective_campaign_policy(campaign: DiscoveryCampaignORM) -> dict[str, Any]:
     policy["max_response_bytes"] = clamp_int(
         policy.get("max_response_bytes"), 5_000_000, 1024, 100_000_000
     )
-    policy["crawl_delay_seconds"] = clamp_float(
-        policy.get("crawl_delay_seconds"), 1.0, 0.0, 3600.0
-    )
+    policy["crawl_delay_seconds"] = clamp_float(policy.get("crawl_delay_seconds"), 1.0, 0.0, 3600.0)
     policy["max_concurrency"] = clamp_int(policy.get("max_concurrency"), 1, 1, 20)
-    policy["max_pages_per_domain"] = clamp_int(
-        policy.get("max_pages_per_domain"), 25, 1, 10_000
-    )
+    policy["max_pages_per_domain"] = clamp_int(policy.get("max_pages_per_domain"), 25, 1, 10_000)
     policy["max_seconds"] = clamp_float(policy.get("max_seconds"), 300.0, 1.0, 86_400.0)
     policy["robots_ttl_seconds"] = clamp_int(
         policy.get("robots_ttl_seconds"), 86_400, 300, 2_592_000
@@ -704,9 +693,7 @@ def effective_campaign_policy(campaign: DiscoveryCampaignORM) -> dict[str, Any]:
     policy["max_depth"] = max(0, min(int(campaign.max_depth), 10))
     policy["max_pages"] = max(1, min(int(campaign.max_pages), 10_000))
     policy["max_candidates"] = max(1, min(int(campaign.max_candidates), 100_000))
-    policy["user_agent"] = str(
-        policy.get("user_agent") or DEFAULT_CRAWL_POLICY["user_agent"]
-    )[:500]
+    policy["user_agent"] = str(policy.get("user_agent") or DEFAULT_CRAWL_POLICY["user_agent"])[:500]
     return policy
 
 
@@ -750,7 +737,9 @@ def discovery_lease_expires_at(lease: dict[str, Any]) -> datetime | None:
     timeout_seconds = clamp_float(lease.get("lease_timeout_seconds"), 300.0, 60.0, 86_400.0)
     if isinstance(heartbeat, str):
         try:
-            heartbeat_at = normalize_timestamp(datetime.fromisoformat(heartbeat.replace("Z", "+00:00")))
+            heartbeat_at = normalize_timestamp(
+                datetime.fromisoformat(heartbeat.replace("Z", "+00:00"))
+            )
         except ValueError:
             return None
         if heartbeat_at is not None:
@@ -813,7 +802,10 @@ def release_discovery_run_lease(
 ) -> None:
     metadata = dict(campaign.metadata_json or {})
     active_lease = metadata.get("active_run_lease")
-    if isinstance(active_lease, dict) and int(active_lease.get("run_id") or 0) == run.discovery_run_id:
+    if (
+        isinstance(active_lease, dict)
+        and int(active_lease.get("run_id") or 0) == run.discovery_run_id
+    ):
         metadata.pop("active_run_lease", None)
         campaign.metadata_json = metadata
     run_metadata = dict(run.metadata_json or {})
@@ -938,8 +930,7 @@ def effective_fetch_policy(
         ),
         max_response_bytes=domain_policy.max_response_bytes,
         allow_private_networks=(
-            private_networks_requested
-            and bool(get_settings().discovery_allow_private_networks)
+            private_networks_requested and bool(get_settings().discovery_allow_private_networks)
         ),
         user_agent=str(campaign_policy.get("user_agent", DEFAULT_CRAWL_POLICY["user_agent"])),
     )
@@ -1155,7 +1146,9 @@ def build_search_seed_urls(campaign: DiscoveryCampaignORM) -> list[tuple[str, di
                             recency_days=campaign.recency_days or "",
                         )
                     except (KeyError, ValueError) as exc:
-                        raise ValueError(f"Invalid discovery search template '{template}': {exc}") from exc
+                        raise ValueError(
+                            f"Invalid discovery search template '{template}': {exc}"
+                        ) from exc
                     seeds.append(
                         (
                             search_url,
@@ -1179,29 +1172,35 @@ def seed_run_frontier(
     queued = 0
     modes = set(campaign_modes(campaign))
     for seed_url in campaign.seed_urls_json or []:
-        if enqueue_frontier(
-            session,
-            campaign,
-            run,
-            str(seed_url),
-            discovery_method="seed_url",
-            depth=0,
-            priority=100.0,
-            metadata={"seed": True},
-        ) is not None:
+        if (
+            enqueue_frontier(
+                session,
+                campaign,
+                run,
+                str(seed_url),
+                discovery_method="seed_url",
+                depth=0,
+                priority=100.0,
+                metadata={"seed": True},
+            )
+            is not None
+        ):
             queued += 1
 
     for search_url, metadata in build_search_seed_urls(campaign):
-        if enqueue_frontier(
-            session,
-            campaign,
-            run,
-            search_url,
-            discovery_method="query_seeded",
-            depth=0,
-            priority=95.0,
-            metadata=metadata,
-        ) is not None:
+        if (
+            enqueue_frontier(
+                session,
+                campaign,
+                run,
+                search_url,
+                discovery_method="query_seeded",
+                depth=0,
+                priority=95.0,
+                metadata=metadata,
+            )
+            is not None
+        ):
             queued += 1
 
     if "sitemap" in modes:
@@ -1211,16 +1210,19 @@ def seed_run_frontier(
             if parsed.scheme in {"http", "https"} and parsed.netloc:
                 origins.add(urlunsplit((parsed.scheme, parsed.netloc, "", "", "")))
         for origin in origins:
-            if enqueue_frontier(
-                session,
-                campaign,
-                run,
-                f"{origin.rstrip('/')}/sitemap.xml",
-                discovery_method="sitemap_probe",
-                depth=0,
-                priority=90.0,
-                metadata={"sitemap_probe": True},
-            ) is not None:
+            if (
+                enqueue_frontier(
+                    session,
+                    campaign,
+                    run,
+                    f"{origin.rstrip('/')}/sitemap.xml",
+                    discovery_method="sitemap_probe",
+                    depth=0,
+                    priority=90.0,
+                    metadata={"sitemap_probe": True},
+                )
+                is not None
+            ):
                 queued += 1
     run.pages_queued = queued
     return queued
@@ -1422,9 +1424,7 @@ def run_discovery_campaign(
         return build_discovery_run_result(session, run)
 
     max_pages = int(payload_value(payload, "max_pages", None) or campaign.max_pages)
-    max_candidates = int(
-        payload_value(payload, "max_candidates", None) or campaign.max_candidates
-    )
+    max_candidates = int(payload_value(payload, "max_candidates", None) or campaign.max_candidates)
     max_seconds = float(
         payload_value(payload, "max_seconds", None)
         or (run.policy_snapshot_json or persisted_policy).get("max_seconds", 300.0)
@@ -1513,7 +1513,9 @@ def process_discovery_frontier(
     )
     started_entry_count = int(
         session.scalar(
-            select(func.count()).select_from(DiscoveryFrontierEntryORM).where(
+            select(func.count())
+            .select_from(DiscoveryFrontierEntryORM)
+            .where(
                 DiscoveryFrontierEntryORM.discovery_run_id == run.discovery_run_id,
                 DiscoveryFrontierEntryORM.attempt_count > 0,
             )
@@ -1574,11 +1576,7 @@ def process_discovery_frontier(
                     DiscoveryFrontierEntryORM.next_attempt_at.is_(None),
                     DiscoveryFrontierEntryORM.next_attempt_at <= now,
                 ),
-                *(
-                    (DiscoveryFrontierEntryORM.attempt_count > 0,)
-                    if page_budget_exhausted
-                    else ()
-                ),
+                *((DiscoveryFrontierEntryORM.attempt_count > 0,) if page_budget_exhausted else ()),
             )
             .order_by(
                 DiscoveryFrontierEntryORM.priority.desc(),
@@ -1647,7 +1645,9 @@ def process_discovery_frontier(
 
     remaining = int(
         session.scalar(
-            select(func.count()).select_from(DiscoveryFrontierEntryORM).where(
+            select(func.count())
+            .select_from(DiscoveryFrontierEntryORM)
+            .where(
                 DiscoveryFrontierEntryORM.discovery_run_id == run.discovery_run_id,
                 DiscoveryFrontierEntryORM.state.in_(("queued", "retry_wait", "fetching")),
             )
@@ -1656,7 +1656,9 @@ def process_discovery_frontier(
     )
     dead_letters = int(
         session.scalar(
-            select(func.count()).select_from(DiscoveryFrontierEntryORM).where(
+            select(func.count())
+            .select_from(DiscoveryFrontierEntryORM)
+            .where(
                 DiscoveryFrontierEntryORM.discovery_run_id == run.discovery_run_id,
                 DiscoveryFrontierEntryORM.state == "dead_letter",
             )
@@ -1676,8 +1678,10 @@ def process_discovery_frontier(
         "dead_letter_count": dead_letters,
         "domain_fetch_counts": dict(domain_fetch_counts),
     }
-    run.status = "checkpointed" if remaining else (
-        "completed_with_errors" if run.error_count else "completed"
+    run.status = (
+        "checkpointed"
+        if remaining
+        else ("completed_with_errors" if run.error_count else "completed")
     )
     if not remaining:
         run.finished_at = discovery_now()
@@ -1819,11 +1823,7 @@ def process_frontier_batch(
                 DiscoveryFrontierEntryORM.next_attempt_at.is_(None),
                 DiscoveryFrontierEntryORM.next_attempt_at <= discovery_now(),
             ),
-            *(
-                (DiscoveryFrontierEntryORM.attempt_count > 0,)
-                if page_budget_exhausted
-                else ()
-            ),
+            *((DiscoveryFrontierEntryORM.attempt_count > 0,) if page_budget_exhausted else ()),
         )
         if skipped_entry_ids:
             statement = statement.where(
@@ -1894,8 +1894,7 @@ def process_frontier_batch(
     if tasks:
         with ThreadPoolExecutor(max_workers=len(tasks)) as executor:
             future_map = {
-                executor.submit(execute_frontier_fetch_task, task): task
-                for task in tasks
+                executor.submit(execute_frontier_fetch_task, task): task for task in tasks
             }
             for future, task in future_map.items():
                 entry = session.get(DiscoveryFrontierEntryORM, task.entry_id)
@@ -2328,7 +2327,11 @@ def handle_frontier_error(
         CustodyLogORM(
             object_type="discovery_frontier_entry",
             object_id=str(entry.frontier_entry_id),
-            action=("discovery_frontier_dead_lettered" if entry.state == "dead_letter" else "discovery_frontier_retry_scheduled"),
+            action=(
+                "discovery_frontier_dead_lettered"
+                if entry.state == "dead_letter"
+                else "discovery_frontier_retry_scheduled"
+            ),
             actor=actor,
             details_json={
                 "discovery_run_id": run.discovery_run_id,
@@ -2415,9 +2418,7 @@ def check_robots_permission(
         observation.http_status = result.status_code
         observation.allowed = allowed
         normalized_crawl_delay = (
-            max(0.0, min(float(crawl_delay), 3600.0))
-            if crawl_delay is not None
-            else None
+            max(0.0, min(float(crawl_delay), 3600.0)) if crawl_delay is not None else None
         )
         observation.crawl_delay_seconds = normalized_crawl_delay
         observation.sitemap_urls_json = sitemap_urls
@@ -2464,9 +2465,7 @@ def check_robots_permission(
         observation.error_text = str(exc)[:4000]
         observation.metadata_json = {
             "default_behavior": (
-                "allow_on_missing_robots_file"
-                if allowed_on_error
-                else "deny_on_robots_fetch_error"
+                "allow_on_missing_robots_file" if allowed_on_error else "deny_on_robots_fetch_error"
             )
         }
         return allowed_on_error, observation
@@ -2491,7 +2490,9 @@ def score_candidate_analysis(
 ) -> dict[str, Any]:
     same_pattern_count = int(
         session.scalar(
-            select(func.count()).select_from(SourceCandidateORM).where(
+            select(func.count())
+            .select_from(SourceCandidateORM)
+            .where(
                 SourceCandidateORM.normalized_domain == domain,
                 SourceCandidateORM.path_pattern == path_pattern,
             )
@@ -2523,9 +2524,7 @@ def score_candidate_analysis(
     recency_timestamp = latest_analysis_timestamp(analysis.temporal_hints)
     if campaign.recency_days is not None and recency_timestamp is not None:
         age_days = max(0.0, (discovery_now() - recency_timestamp).total_seconds() / 86_400.0)
-        component_overrides["freshness"] = (
-            90.0 if age_days <= campaign.recency_days else 20.0
-        )
+        component_overrides["freshness"] = 90.0 if age_days <= campaign.recency_days else 20.0
     analysis_for_score: DocumentAnalysis | dict[str, Any] = analysis
     if effective_campaign_policy(campaign).get("allow_private_networks", False):
         analysis_for_score = analysis.as_dict()
@@ -2534,9 +2533,7 @@ def score_candidate_analysis(
             "private_network": False,
             "private_network_allowed_by_policy": True,
         }
-    trust_value = {"trusted": 90.0, "neutral": 50.0, "blocked": 0.0}.get(
-        trust_level, 50.0
-    )
+    trust_value = {"trusted": 90.0, "neutral": 50.0, "blocked": 0.0}.get(trust_level, 50.0)
     if trust_level != "blocked" and (
         is_official_domain(domain) or analysis.trust_hints.get("official_domain")
     ):
@@ -2596,7 +2593,9 @@ def apply_custom_scoring_weights(
     if weight_sum <= 0:
         return result
     normalized_weights = {key: value / weight_sum for key, value in base_weights.items()}
-    positive = sum(float(components.get(key, 0.0)) * weight for key, weight in normalized_weights.items())
+    positive = sum(
+        float(components.get(key, 0.0)) * weight for key, weight in normalized_weights.items()
+    )
     penalties = result.get("penalties", {})
     total = max(0.0, min(100.0, positive - sum(float(value) for value in penalties.values())))
     bucket = (
@@ -2694,7 +2693,11 @@ def upsert_fetched_candidate(
     }
     operational_hints = dict(analysis_value(analysis, "operational_hints", {}) or {})
     analysis_trust_hints = dict(analysis_value(analysis, "trust_hints", {}) or {})
-    existing_metadata = record.metadata_json if record is not None and isinstance(record.metadata_json, dict) else {}
+    existing_metadata = (
+        record.metadata_json
+        if record is not None and isinstance(record.metadata_json, dict)
+        else {}
+    )
     score_owner_campaign_id = int(
         existing_metadata.get("best_score_campaign_id")
         or (record.last_campaign_id if record is not None else campaign.campaign_id)
@@ -2748,7 +2751,9 @@ def upsert_fetched_candidate(
     footprint_geojson = geo_hints.get("geometry")
     existing_status = record.status if record is not None else None
     status = status_for_score(bucket, trust_level=trust_level, existing_status=existing_status)
-    changed = record is None or record.content_hash != content_hash or record.schema_hash != schema_hash
+    changed = (
+        record is None or record.content_hash != content_hash or record.schema_hash != schema_hash
+    )
 
     if record is None:
         record = SourceCandidateORM(
@@ -2883,7 +2888,11 @@ def upsert_fetched_candidate(
         run_id=run.discovery_run_id,
         revision_kind="discovered" if created else "rediscovered",
         changed=changed,
-        reason=("New canonical candidate." if created else "Candidate observed in another discovery pass."),
+        reason=(
+            "New canonical candidate."
+            if created
+            else "Candidate observed in another discovery pass."
+        ),
         score_override=observation_score,
         score_bucket_override=observation_bucket,
         score_breakdown_override=observation_score_result,
@@ -2941,7 +2950,9 @@ def append_candidate_revision(
     )
     snapshot = serialize_candidate_snapshot(candidate)
     revision_score = candidate.score if score_override is None else score_override
-    revision_bucket = candidate.score_bucket if score_bucket_override is None else score_bucket_override
+    revision_bucket = (
+        candidate.score_bucket if score_bucket_override is None else score_bucket_override
+    )
     revision_breakdown = (
         candidate.score_breakdown_json or {}
         if score_breakdown_override is None
@@ -3283,9 +3294,7 @@ def persist_discovery_artifact(
     try:
         if bool(policy.get("store_artifacts", True)):
             artifact_dir = (
-                get_settings().data_dir
-                / "discovery_artifacts"
-                / f"run-{run.discovery_run_id}"
+                get_settings().data_dir / "discovery_artifacts" / f"run-{run.discovery_run_id}"
             )
             artifact_dir.mkdir(parents=True, exist_ok=True)
             suffix = artifact_suffix(candidate.format_hint, fetch_result.content_type)
@@ -3506,7 +3515,9 @@ def evaluate_run_alerts(
             )
     robots_blocks = int(
         session.scalar(
-            select(func.count()).select_from(DiscoveryFrontierEntryORM).where(
+            select(func.count())
+            .select_from(DiscoveryFrontierEntryORM)
+            .where(
                 DiscoveryFrontierEntryORM.discovery_run_id == run.discovery_run_id,
                 DiscoveryFrontierEntryORM.state == "robots_blocked",
             )
@@ -3615,8 +3626,7 @@ def build_discovery_run_detail(session: Session, run_id: int) -> dict[str, objec
             for row in revisions
         ],
         "candidates": [
-            SourceCandidateRead.model_validate(row).model_dump(mode="json")
-            for row in candidates
+            SourceCandidateRead.model_validate(row).model_dump(mode="json") for row in candidates
         ],
     }
 
@@ -3670,8 +3680,7 @@ def build_source_candidate_detail(session: Session, candidate_id: int) -> dict[s
         raise ValueError(f"Source candidate {candidate_id} does not exist.")
     domain_labels = candidate.normalized_domain.split(".")
     domain_suffixes = [
-        ".".join(domain_labels[index:])
-        for index in range(max(0, len(domain_labels) - 1))
+        ".".join(domain_labels[index:]) for index in range(max(0, len(domain_labels) - 1))
     ]
     return {
         "candidate": candidate,
@@ -3754,9 +3763,7 @@ def explain_candidate_score(session: Session, candidate_id: int) -> dict[str, ob
     best_score_observed_at = (candidate.metadata_json or {}).get("best_score_observed_at")
     if isinstance(best_score_observed_at, str):
         try:
-            evaluated_at = datetime.fromisoformat(
-                best_score_observed_at.replace("Z", "+00:00")
-            )
+            evaluated_at = datetime.fromisoformat(best_score_observed_at.replace("Z", "+00:00"))
         except ValueError:
             pass
     return {
@@ -3834,11 +3841,7 @@ def build_candidate_lineage(session: Session, candidate_id: int) -> dict[str, ob
         "incoming_edges": incoming,
         "outgoing_edges": outgoing,
         "ancestor_candidate_ids": sorted(
-            {
-                edge.parent_candidate_id
-                for edge in incoming
-                if edge.parent_candidate_id is not None
-            }
+            {edge.parent_candidate_id for edge in incoming if edge.parent_candidate_id is not None}
         ),
         "descendant_candidate_ids": sorted({edge.child_candidate_id for edge in outgoing}),
     }
@@ -3882,7 +3885,9 @@ def promote_source_candidate(
         or (candidate.promotion_json or {}).get("recommended_source_kind")
     )
     if requested_kind is None:
-        raise ValueError(f"Source candidate {candidate_id} has no promotable managed-source mapping.")
+        raise ValueError(
+            f"Source candidate {candidate_id} has no promotable managed-source mapping."
+        )
     source_kind = str(requested_kind)
     if source_kind not in RUNNABLE_SOURCE_KINDS | REFERENCE_ONLY_SOURCE_KINDS:
         raise ValueError(f"Unsupported discovery promotion source kind: {source_kind}")
@@ -3949,8 +3954,7 @@ def promote_source_candidate(
         "runtime_support": "runnable" if runnable else "reference_only",
         "block_private_networks": True,
         "allow_private_networks": (
-            private_runtime_requested
-            and bool(get_settings().discovery_allow_private_networks)
+            private_runtime_requested and bool(get_settings().discovery_allow_private_networks)
         ),
         "max_response_bytes": 20 * 1024 * 1024,
         "request_timeout_seconds": 30.0,
@@ -3973,7 +3977,11 @@ def promote_source_candidate(
                 integrity_source=bool(request_data.get("integrity_source", False)),
                 notes=(
                     str(request_data.get("reason") or "Promoted from discovery candidate.")
-                    + (" Reference-only source; batch execution is disabled." if not runnable else "")
+                    + (
+                        " Reference-only source; batch execution is disabled."
+                        if not runnable
+                        else ""
+                    )
                 ).strip(),
                 metadata_json=source_metadata,
             ),
@@ -4018,9 +4026,9 @@ def promote_source_candidate(
             "official_domain": is_official_domain(candidate.normalized_domain),
         },
         health_risks_json=health_risks,
-        geo_relevance_json=(candidate.score_breakdown_json or {}).get("components", {}).get(
-            "geospatial_relevance", candidate.geo_hints_json or {}
-        ),
+        geo_relevance_json=(candidate.score_breakdown_json or {})
+        .get("components", {})
+        .get("geospatial_relevance", candidate.geo_hints_json or {}),
         evidence_json={
             "candidate_revision_count": count_candidate_revisions(session, candidate_id),
             "latest_health_check_id": latest_health.health_check_id if latest_health else None,
@@ -4153,7 +4161,7 @@ def unique_promoted_source_name(session: Session, base: str) -> str:
     while session.scalar(select(SourceDefinitionORM).where(SourceDefinitionORM.name == candidate)):
         suffix += 1
         trailer = f"-{suffix}"
-        candidate = f"{base[:160 - len(trailer)]}{trailer}"
+        candidate = f"{base[: 160 - len(trailer)]}{trailer}"
     return candidate
 
 
@@ -4163,16 +4171,16 @@ def unique_schedule_name(session: Session, base: str) -> str:
     while session.scalar(select(ScheduledTaskORM).where(ScheduledTaskORM.name == candidate)):
         suffix += 1
         trailer = f"-{suffix}"
-        candidate = f"{base[:160 - len(trailer)]}{trailer}"
+        candidate = f"{base[: 160 - len(trailer)]}{trailer}"
     return candidate
 
 
 def count_candidate_revisions(session: Session, candidate_id: int) -> int:
     return int(
         session.scalar(
-            select(func.count()).select_from(SourceCandidateRevisionORM).where(
-                SourceCandidateRevisionORM.candidate_id == candidate_id
-            )
+            select(func.count())
+            .select_from(SourceCandidateRevisionORM)
+            .where(SourceCandidateRevisionORM.candidate_id == candidate_id)
         )
         or 0
     )
@@ -4263,9 +4271,13 @@ def suppress_source_candidate(
     normalized_domain = (
         requested_domain or candidate.normalized_domain if scope == "domain" else None
     )
-    if scope == "domain" and normalized_domain and not domain_matches(
-        candidate.normalized_domain,
-        normalized_domain,
+    if (
+        scope == "domain"
+        and normalized_domain
+        and not domain_matches(
+            candidate.normalized_domain,
+            normalized_domain,
+        )
     ):
         raise ValueError(
             f"Candidate domain {candidate.normalized_domain} is outside suppression domain "
@@ -4520,8 +4532,7 @@ def check_candidate_health(
             or campaign.campaign_id
         )
         use_observation_score = (
-            score_owner_campaign_id == campaign.campaign_id
-            or observation_score >= candidate.score
+            score_owner_campaign_id == campaign.campaign_id or observation_score >= candidate.score
         )
         previous_status = candidate.status
         candidate.candidate_type = analysis.document_type
@@ -4995,9 +5006,7 @@ def build_candidate_inventory_summary(
     now = discovery_now()
     stale_before = now - timedelta(hours=max(0.0, stale_after_hours))
     candidates = list(
-        session.scalars(
-            select(SourceCandidateORM).order_by(SourceCandidateORM.candidate_id.asc())
-        )
+        session.scalars(select(SourceCandidateORM).order_by(SourceCandidateORM.candidate_id.asc()))
     )
     latest_health = latest_health_by_candidate(session)
     return {
@@ -5009,9 +5018,7 @@ def build_candidate_inventory_summary(
             if candidate.status not in {"suppressed", "ignored", "quarantined", "retired"}
         ),
         "promoted_count": sum(1 for candidate in candidates if candidate.status == "promoted"),
-        "suppressed_count": sum(
-            1 for candidate in candidates if candidate.status == "suppressed"
-        ),
+        "suppressed_count": sum(1 for candidate in candidates if candidate.status == "suppressed"),
         "failing_count": sum(
             1
             for candidate in candidates
@@ -5035,9 +5042,7 @@ def build_candidate_inventory_summary(
             and normalize_timestamp(candidate.next_revisit_at) <= now
         ),
         "status_counts": count_by_value(candidate.status for candidate in candidates),
-        "score_bucket_counts": count_by_value(
-            candidate.score_bucket for candidate in candidates
-        ),
+        "score_bucket_counts": count_by_value(candidate.score_bucket for candidate in candidates),
         "type_counts": count_by_value(candidate.candidate_type for candidate in candidates),
         "format_counts": count_by_value(candidate.format_hint for candidate in candidates),
         "domain_counts": count_by_value(candidate.normalized_domain for candidate in candidates),
@@ -5081,25 +5086,25 @@ def build_discovery_health_summary(
     )
     queued_count = int(
         session.scalar(
-            select(func.count()).select_from(DiscoveryFrontierEntryORM).where(
-                DiscoveryFrontierEntryORM.state.in_(("queued", "retry_wait", "deferred"))
-            )
+            select(func.count())
+            .select_from(DiscoveryFrontierEntryORM)
+            .where(DiscoveryFrontierEntryORM.state.in_(("queued", "retry_wait", "deferred")))
         )
         or 0
     )
     dead_letter_count = int(
         session.scalar(
-            select(func.count()).select_from(DiscoveryFrontierEntryORM).where(
-                DiscoveryFrontierEntryORM.state == "dead_letter"
-            )
+            select(func.count())
+            .select_from(DiscoveryFrontierEntryORM)
+            .where(DiscoveryFrontierEntryORM.state == "dead_letter")
         )
         or 0
     )
     robots_block_count = int(
         session.scalar(
-            select(func.count()).select_from(DiscoveryFrontierEntryORM).where(
-                DiscoveryFrontierEntryORM.state == "robots_blocked"
-            )
+            select(func.count())
+            .select_from(DiscoveryFrontierEntryORM)
+            .where(DiscoveryFrontierEntryORM.state == "robots_blocked")
         )
         or 0
     )
@@ -5179,9 +5184,7 @@ def build_discovery_ops_summary(
     ]
     campaigns = list(session.scalars(select(DiscoveryCampaignORM)))
     runs = list(
-        session.scalars(
-            select(DiscoveryRunORM).order_by(DiscoveryRunORM.discovery_run_id.desc())
-        )
+        session.scalars(select(DiscoveryRunORM).order_by(DiscoveryRunORM.discovery_run_id.desc()))
     )
     frontier_states = dict(
         session.execute(
@@ -5200,13 +5203,9 @@ def build_discovery_ops_summary(
         ),
         "campaign_status_counts": count_by_value(campaign.status for campaign in campaigns),
         "run_status_counts": count_by_value(run.status for run in runs),
-        "frontier_state_counts": {
-            str(key): int(value) for key, value in frontier_states.items()
-        },
+        "frontier_state_counts": {str(key): int(value) for key, value in frontier_states.items()},
         "candidate_status_counts": count_by_value(candidate.status for candidate in candidates),
-        "score_bucket_counts": count_by_value(
-            candidate.score_bucket for candidate in candidates
-        ),
+        "score_bucket_counts": count_by_value(candidate.score_bucket for candidate in candidates),
         "domain_candidate_counts": count_by_value(
             candidate.normalized_domain for candidate in candidates
         ),

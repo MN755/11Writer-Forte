@@ -36,7 +36,10 @@ def test_create_geofence_writes_custody_log(client: TestClient) -> None:
     rows = custody.json()
     assert len(rows) == 1
     assert rows[0]["details_json"]["name"] == "Harbor Watch"
-    assert rows[0]["details_json"]["geometry_wkt"] == "POLYGON ((-96 29, -94 29, -94 31, -96 31, -96 29))"
+    assert (
+        rows[0]["details_json"]["geometry_wkt"]
+        == "POLYGON ((-96 29, -94 29, -94 31, -96 31, -96 29))"
+    )
 
 
 def test_real_typer_add_and_list_geofences(client: TestClient) -> None:

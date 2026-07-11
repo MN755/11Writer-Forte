@@ -100,7 +100,9 @@ def query_camera_inventory(
     if active is not None:
         statement = statement.where(CameraInventoryORM.active == active)
 
-    if has_complete_bbox(min_lon=min_lon, min_lat=min_lat, max_lon=max_lon, max_lat=max_lat) and uses_postgis(session):
+    if has_complete_bbox(
+        min_lon=min_lon, min_lat=min_lat, max_lon=max_lon, max_lat=max_lat
+    ) and uses_postgis(session):
         statement = statement.where(
             build_bbox_sql_filter(
                 CameraInventoryORM.location_wkt,
@@ -206,7 +208,8 @@ def materialize_camera_inventory(
         if (
             record.last_observed_at is not None
             and candidate.last_observed_at is not None
-            and normalize_timestamp(candidate.last_observed_at) < normalize_timestamp(record.last_observed_at)
+            and normalize_timestamp(candidate.last_observed_at)
+            < normalize_timestamp(record.last_observed_at)
         ):
             continue
 
@@ -303,7 +306,9 @@ def build_camera_inventory_summary(
         "active_count": sum(1 for camera in cameras if camera.active),
         "inactive_count": sum(1 for camera in cameras if not camera.active),
         "stale_count": sum(1 for camera in cameras if is_stale_camera(camera, stale_before)),
-        "layer_counts": build_camera_summary_buckets(cameras, lambda camera: camera.layer_key, stale_before),
+        "layer_counts": build_camera_summary_buckets(
+            cameras, lambda camera: camera.layer_key, stale_before
+        ),
         "source_domain_counts": build_camera_summary_buckets(
             cameras,
             lambda camera: camera.source_domain or "unknown",
@@ -314,7 +319,9 @@ def build_camera_inventory_summary(
             lambda camera: camera.provider or "unknown",
             stale_before,
         ),
-        "status_counts": build_camera_summary_buckets(cameras, lambda camera: camera.status or "unknown", stale_before),
+        "status_counts": build_camera_summary_buckets(
+            cameras, lambda camera: camera.status or "unknown", stale_before
+        ),
     }
 
 
@@ -326,7 +333,11 @@ def build_camera_inventory_ops_detail(
     if camera is None:
         raise ValueError(f"Camera inventory record {camera_inventory_id} does not exist.")
 
-    latest_observation = session.get(ObservationORM, camera.observation_id) if camera.observation_id is not None else None
+    latest_observation = (
+        session.get(ObservationORM, camera.observation_id)
+        if camera.observation_id is not None
+        else None
+    )
     latest_import_run = (
         session.get(LocalImportRunORM, latest_observation.import_run_id)
         if latest_observation is not None and latest_observation.import_run_id is not None
@@ -350,11 +361,7 @@ def build_camera_inventory_ops_detail(
             .order_by(ScheduledTaskORM.task_id.asc())
         )
     )
-    matching_tasks = [
-        task
-        for task in refresh_tasks
-        if camera_matches_refresh_task(camera, task)
-    ]
+    matching_tasks = [task for task in refresh_tasks if camera_matches_refresh_task(camera, task)]
     return {
         "camera": camera,
         "latest_observation": latest_observation,
@@ -405,11 +412,9 @@ def build_camera_ops_report_index(
         max_lat=max_lat,
         limit=None,
     )
-    stale_cameras = [
-        camera
-        for camera in scoped_cameras
-        if is_stale_camera(camera, stale_before)
-    ][:stale_camera_limit]
+    stale_cameras = [camera for camera in scoped_cameras if is_stale_camera(camera, stale_before)][
+        :stale_camera_limit
+    ]
 
     refresh_tasks = list(
         session.scalars(
@@ -455,7 +460,9 @@ def build_camera_ops_report_index(
         for log in materialization_logs
         if materialization_matches_scope(log, layer_key=layer_key, source_domain=source_domain)
     ][:limit]
-    latest_materialization_at = recent_materializations[0].created_at if recent_materializations else None
+    latest_materialization_at = (
+        recent_materializations[0].created_at if recent_materializations else None
+    )
 
     return {
         "generated_at": generated_at,
@@ -548,9 +555,16 @@ def extract_camera_candidate(observation: ObservationORM) -> CameraCandidate | N
         ("stream_url", "streamUrl", "video_url", "videoUrl", "hls_url", "hlsUrl", "stream"),
     )
     page_url = first_string(payload, ("page_url", "pageUrl", "url", "source_url", "link"))
-    road_name = first_string(payload, ("road_name", "roadName", "route", "route_designator", "roadway")) or ""
-    provider = first_string(payload, ("provider", "agency", "source_agency")) or (observation.source_domain or "")
-    status = (first_string(payload, ("status", "camera_status", "availability")) or "unknown").lower()
+    road_name = (
+        first_string(payload, ("road_name", "roadName", "route", "route_designator", "roadway"))
+        or ""
+    )
+    provider = first_string(payload, ("provider", "agency", "source_agency")) or (
+        observation.source_domain or ""
+    )
+    status = (
+        first_string(payload, ("status", "camera_status", "availability")) or "unknown"
+    ).lower()
     location_geojson = observation.location_geojson
     camera_source_domain = resolve_camera_source_domain(
         image_url=image_url,
@@ -647,7 +661,9 @@ def build_camera_key(
     )
     digest = hashlib.sha256(raw_key.encode("utf-8")).hexdigest()[:16]
     prefix = external_id or (name or "camera").strip().lower().replace(" ", "-")[:48] or "camera"
-    prefix = "".join(ch for ch in prefix if ch.isalnum() or ch in {"-", "_"}).strip("-_") or "camera"
+    prefix = (
+        "".join(ch for ch in prefix if ch.isalnum() or ch in {"-", "_"}).strip("-_") or "camera"
+    )
     return f"{prefix}-{digest}"
 
 
@@ -783,7 +799,9 @@ def camera_matches_refresh_task(camera: CameraInventoryORM, task: ScheduledTaskO
     if not isinstance(task_source_domain, str) or not task_source_domain.strip():
         return True
     normalized_task_domain = normalize_domain(task_source_domain)
-    normalized_camera_domain = normalize_domain(camera.source_domain) if camera.source_domain else None
+    normalized_camera_domain = (
+        normalize_domain(camera.source_domain) if camera.source_domain else None
+    )
     if not normalized_task_domain or not normalized_camera_domain:
         return False
     return (
@@ -851,7 +869,9 @@ def serialize_refresh_run(task: ScheduledTaskORM, run: ScheduledTaskRunORM) -> d
         "task_id": task.task_id,
         "task_name": task.name,
         "layer_key": task.layer_key,
-        "source_domain": payload.get("source_domain") if isinstance(payload.get("source_domain"), str) else None,
+        "source_domain": payload.get("source_domain")
+        if isinstance(payload.get("source_domain"), str)
+        else None,
         "status": run.status,
         "started_at": run.started_at,
         "finished_at": run.finished_at,
