@@ -13,6 +13,21 @@ RetentionClass = Literal["ephemeral", "operational", "investigative", "permanent
 StorageLifecycleStatus = Literal["active", "promoted", "degraded", "archived", "expired"]
 CameraSourceStatus = Literal["candidate", "review", "ready", "graduated", "ignored", "retired"]
 CameraSourceVerificationState = Literal["unknown", "observed", "reachable", "failed"]
+GraphEntityType = Literal[
+    "person",
+    "organization",
+    "vessel",
+    "aircraft",
+    "location",
+    "account",
+    "legal_case",
+    "document",
+    "event",
+    "public_institution",
+]
+GraphReviewState = Literal["pending", "reviewed", "accepted", "rejected"]
+GraphContradictionState = Literal["none", "disputed", "contradicted", "superseded"]
+GraphAssertionStatus = Literal["asserted", "reported", "denied", "retracted", "superseded"]
 
 
 class ForteModel(BaseModel):
@@ -228,6 +243,16 @@ class RuntimeSnapshotRead(ForteModel):
     local_import_runs: list["LocalImportRunSummaryRead"]
     events: list["EventRead"]
     entities: list["EntityRead"]
+    entity_candidates: list["EntityCandidateRead"] = Field(default_factory=list)
+    entity_aliases: list["EntityAliasRead"] = Field(default_factory=list)
+    entity_relationship_types: list["EntityRelationshipTypeRead"] = Field(default_factory=list)
+    entity_citations: list["EntityCitationRead"] = Field(default_factory=list)
+    entity_identity_assertions: list["EntityIdentityAssertionRead"] = Field(default_factory=list)
+    entity_relationship_assertions: list["EntityRelationshipAssertionRead"] = Field(default_factory=list)
+    entity_candidate_citation_links: list["EntityCandidateCitationLinkRead"] = Field(default_factory=list)
+    entity_alias_citation_links: list["EntityAliasCitationLinkRead"] = Field(default_factory=list)
+    entity_identity_assertion_citation_links: list["EntityIdentityAssertionCitationLinkRead"] = Field(default_factory=list)
+    entity_relationship_assertion_citation_links: list["EntityRelationshipAssertionCitationLinkRead"] = Field(default_factory=list)
     observations: list["ObservationRead"]
     camera_inventory: list["CameraInventoryRead"]
     camera_source_inventory: list["CameraSourceInventoryRead"]
@@ -348,6 +373,336 @@ class EntityRead(ForteModel):
     metadata_json: dict[str, Any]
     created_at: datetime
     updated_at: datetime
+
+
+class GraphTemporalFields(ForteModel):
+    """Shared time bounds for graph facts; both valid and observed time are retained."""
+
+    valid_from: datetime | None = None
+    valid_to: datetime | None = None
+    observed_from: datetime | None = None
+    observed_to: datetime | None = None
+
+    @model_validator(mode="after")
+    def validate_temporal_ranges(self) -> "GraphTemporalFields":
+        if self.valid_from is not None and self.valid_to is not None and self.valid_to < self.valid_from:
+            raise ValueError("valid_to must not precede valid_from")
+        if (
+            self.observed_from is not None
+            and self.observed_to is not None
+            and self.observed_to < self.observed_from
+        ):
+            raise ValueError("observed_to must not precede observed_from")
+        return self
+
+
+class EntityCitationCreate(ForteModel):
+    """A citation must point to an immutable artifact or a normalized observation."""
+
+    storage_object_id: int | None = Field(default=None, ge=1)
+    observation_id: int | None = Field(default=None, ge=1)
+    source_uri: str | None = Field(default=None, max_length=4000)
+    source_title: str | None = Field(default=None, max_length=400)
+    source_published_at: datetime | None = None
+    retrieved_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    content_hash: str | None = Field(default=None, min_length=64, max_length=64)
+    locator: str | None = Field(default=None, max_length=500)
+    quote_text: str | None = None
+    span_start: int | None = Field(default=None, ge=0)
+    span_end: int | None = Field(default=None, ge=0)
+    jurisdiction: str | None = Field(default=None, max_length=80)
+    source_reliability: str = Field(default="unassessed", max_length=40)
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def require_durable_evidence_reference(self) -> "EntityCitationCreate":
+        if self.storage_object_id is None and self.observation_id is None:
+            raise ValueError("A citation requires a storage_object_id or observation_id.")
+        if self.span_start is not None and self.span_end is not None and self.span_end < self.span_start:
+            raise ValueError("span_end must not precede span_start")
+        return self
+
+
+class EntityCitationUpdate(ForteModel):
+    source_uri: str | None = Field(default=None, max_length=4000)
+    source_title: str | None = Field(default=None, max_length=400)
+    source_published_at: datetime | None = None
+    retrieved_at: datetime | None = None
+    content_hash: str | None = Field(default=None, min_length=64, max_length=64)
+    locator: str | None = Field(default=None, max_length=500)
+    quote_text: str | None = None
+    span_start: int | None = Field(default=None, ge=0)
+    span_end: int | None = Field(default=None, ge=0)
+    jurisdiction: str | None = Field(default=None, max_length=80)
+    source_reliability: str | None = Field(default=None, max_length=40)
+    metadata_json: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def validate_span(self) -> "EntityCitationUpdate":
+        if self.span_start is not None and self.span_end is not None and self.span_end < self.span_start:
+            raise ValueError("span_end must not precede span_start")
+        return self
+
+
+class EntityCitationRead(EntityCitationCreate):
+    entity_citation_id: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class EntityCandidateCreate(GraphTemporalFields):
+    entity_type: GraphEntityType
+    display_name: str = Field(min_length=1, max_length=300)
+    normalized_name: str = Field(min_length=1, max_length=300)
+    jurisdiction: str | None = Field(default=None, max_length=80)
+    source_record_key: str | None = Field(default=None, max_length=200)
+    resolution_status: str = Field(default="unresolved", max_length=40)
+    resolved_entity_id: int | None = Field(default=None, ge=1)
+    confidence_score: float = Field(default=0.5, ge=0.0, le=1.0)
+    review_state: GraphReviewState = "pending"
+    contradiction_state: GraphContradictionState = "none"
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+    citation_ids: list[int] = Field(min_length=1)
+
+
+class EntityCandidateUpdate(GraphTemporalFields):
+    display_name: str | None = Field(default=None, min_length=1, max_length=300)
+    normalized_name: str | None = Field(default=None, min_length=1, max_length=300)
+    jurisdiction: str | None = Field(default=None, max_length=80)
+    source_record_key: str | None = Field(default=None, max_length=200)
+    resolution_status: str | None = Field(default=None, max_length=40)
+    resolved_entity_id: int | None = Field(default=None, ge=1)
+    confidence_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    review_state: GraphReviewState | None = None
+    contradiction_state: GraphContradictionState | None = None
+    metadata_json: dict[str, Any] | None = None
+    citation_ids: list[int] | None = Field(default=None, min_length=1)
+
+
+class EntityCandidateRead(GraphTemporalFields):
+    entity_candidate_id: int
+    entity_type: GraphEntityType
+    display_name: str
+    normalized_name: str
+    jurisdiction: str | None
+    source_record_key: str | None
+    resolution_status: str
+    resolved_entity_id: int | None
+    confidence_score: float
+    review_state: GraphReviewState
+    contradiction_state: GraphContradictionState
+    metadata_json: dict[str, Any]
+    created_at: datetime
+    updated_at: datetime
+    citation_ids: list[int] = Field(default_factory=list)
+
+
+class EntityAliasCreate(GraphTemporalFields):
+    entity_id: int = Field(ge=1)
+    entity_type: GraphEntityType
+    alias_text: str = Field(min_length=1, max_length=300)
+    normalized_alias: str = Field(min_length=1, max_length=300)
+    alias_type: str = Field(default="alternate_name", max_length=40)
+    language_code: str | None = Field(default=None, max_length=16)
+    script_code: str | None = Field(default=None, max_length=16)
+    jurisdiction: str | None = Field(default=None, max_length=80)
+    confidence_score: float = Field(default=0.5, ge=0.0, le=1.0)
+    review_state: GraphReviewState = "pending"
+    contradiction_state: GraphContradictionState = "none"
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+    citation_ids: list[int] = Field(min_length=1)
+
+
+class EntityAliasUpdate(GraphTemporalFields):
+    alias_text: str | None = Field(default=None, min_length=1, max_length=300)
+    normalized_alias: str | None = Field(default=None, min_length=1, max_length=300)
+    alias_type: str | None = Field(default=None, max_length=40)
+    language_code: str | None = Field(default=None, max_length=16)
+    script_code: str | None = Field(default=None, max_length=16)
+    jurisdiction: str | None = Field(default=None, max_length=80)
+    confidence_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    review_state: GraphReviewState | None = None
+    contradiction_state: GraphContradictionState | None = None
+    metadata_json: dict[str, Any] | None = None
+    citation_ids: list[int] | None = Field(default=None, min_length=1)
+
+
+class EntityAliasRead(GraphTemporalFields):
+    entity_alias_id: int
+    entity_id: int
+    entity_type: GraphEntityType
+    alias_text: str
+    normalized_alias: str
+    alias_type: str
+    language_code: str | None
+    script_code: str | None
+    jurisdiction: str | None
+    confidence_score: float
+    review_state: GraphReviewState
+    contradiction_state: GraphContradictionState
+    metadata_json: dict[str, Any]
+    created_at: datetime
+    updated_at: datetime
+    citation_ids: list[int] = Field(default_factory=list)
+
+
+class EntityRelationshipTypeCreate(ForteModel):
+    relation_type: str = Field(min_length=1, max_length=80)
+    relation_version: int = Field(default=1, ge=1)
+    display_name: str = Field(min_length=1, max_length=160)
+    description: str = ""
+    allowed_subject_types_json: list[GraphEntityType] = Field(min_length=1)
+    allowed_object_types_json: list[GraphEntityType] = Field(min_length=1)
+    symmetric: bool = False
+    active: bool = True
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+
+
+class EntityRelationshipTypeUpdate(ForteModel):
+    display_name: str | None = Field(default=None, min_length=1, max_length=160)
+    description: str | None = None
+    allowed_subject_types_json: list[GraphEntityType] | None = Field(default=None, min_length=1)
+    allowed_object_types_json: list[GraphEntityType] | None = Field(default=None, min_length=1)
+    symmetric: bool | None = None
+    active: bool | None = None
+    metadata_json: dict[str, Any] | None = None
+
+
+class EntityRelationshipTypeRead(EntityRelationshipTypeCreate):
+    relationship_type_id: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class EntityIdentityAssertionCreate(GraphTemporalFields):
+    entity_candidate_id: int = Field(ge=1)
+    entity_id: int = Field(ge=1)
+    assertion_kind: Literal["same_as", "not_same_as"] = "same_as"
+    status: GraphAssertionStatus = "asserted"
+    jurisdiction: str | None = Field(default=None, max_length=80)
+    confidence_score: float = Field(default=0.5, ge=0.0, le=1.0)
+    review_state: GraphReviewState = "pending"
+    contradiction_state: GraphContradictionState = "none"
+    rationale: str = ""
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+    citation_ids: list[int] = Field(min_length=1)
+
+
+class EntityIdentityAssertionUpdate(GraphTemporalFields):
+    assertion_kind: Literal["same_as", "not_same_as"] | None = None
+    status: GraphAssertionStatus | None = None
+    jurisdiction: str | None = Field(default=None, max_length=80)
+    confidence_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    review_state: GraphReviewState | None = None
+    contradiction_state: GraphContradictionState | None = None
+    rationale: str | None = None
+    metadata_json: dict[str, Any] | None = None
+    citation_ids: list[int] | None = Field(default=None, min_length=1)
+
+
+class EntityIdentityAssertionRead(GraphTemporalFields):
+    entity_identity_assertion_id: int
+    entity_candidate_id: int
+    entity_id: int
+    assertion_kind: Literal["same_as", "not_same_as"]
+    status: GraphAssertionStatus
+    jurisdiction: str | None
+    confidence_score: float
+    review_state: GraphReviewState
+    contradiction_state: GraphContradictionState
+    rationale: str
+    metadata_json: dict[str, Any]
+    created_at: datetime
+    updated_at: datetime
+    citation_ids: list[int] = Field(default_factory=list)
+
+
+class EntityRelationshipAssertionCreate(GraphTemporalFields):
+    subject_entity_id: int = Field(ge=1)
+    object_entity_id: int = Field(ge=1)
+    relation_type: str = Field(min_length=1, max_length=80)
+    relation_version: int = Field(default=1, ge=1)
+    assertion_kind: GraphAssertionStatus = "asserted"
+    status: GraphAssertionStatus = "asserted"
+    jurisdiction: str | None = Field(default=None, max_length=80)
+    confidence_score: float = Field(default=0.5, ge=0.0, le=1.0)
+    review_state: GraphReviewState = "pending"
+    contradiction_state: GraphContradictionState = "none"
+    statement: str = ""
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+    citation_ids: list[int] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def require_distinct_endpoints(self) -> "EntityRelationshipAssertionCreate":
+        if self.subject_entity_id == self.object_entity_id:
+            raise ValueError("A relationship assertion requires distinct subject and object entities.")
+        return self
+
+
+class EntityRelationshipAssertionUpdate(GraphTemporalFields):
+    assertion_kind: GraphAssertionStatus | None = None
+    status: GraphAssertionStatus | None = None
+    jurisdiction: str | None = Field(default=None, max_length=80)
+    confidence_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    review_state: GraphReviewState | None = None
+    contradiction_state: GraphContradictionState | None = None
+    statement: str | None = None
+    metadata_json: dict[str, Any] | None = None
+    citation_ids: list[int] | None = Field(default=None, min_length=1)
+
+
+class EntityRelationshipAssertionRead(GraphTemporalFields):
+    entity_relationship_assertion_id: int
+    subject_entity_id: int
+    object_entity_id: int
+    relation_type: str
+    relation_version: int
+    assertion_kind: GraphAssertionStatus
+    status: GraphAssertionStatus
+    jurisdiction: str | None
+    confidence_score: float
+    review_state: GraphReviewState
+    contradiction_state: GraphContradictionState
+    statement: str
+    metadata_json: dict[str, Any]
+    created_at: datetime
+    updated_at: datetime
+    citation_ids: list[int] = Field(default_factory=list)
+
+
+class EntityRelationshipAssertionEvidenceRead(EntityRelationshipAssertionRead):
+    """The only relationship view intended for display; evidence is mandatory."""
+
+    citations: list[EntityCitationRead] = Field(min_length=1)
+
+
+class EntityCitationLinkCreate(ForteModel):
+    entity_citation_id: int = Field(ge=1)
+    evidence_role: Literal["supporting", "contradicting", "context"] = "supporting"
+
+
+class EntityCandidateCitationLinkRead(EntityCitationLinkCreate):
+    entity_candidate_citation_link_id: int
+    entity_candidate_id: int
+    created_at: datetime
+
+
+class EntityAliasCitationLinkRead(EntityCitationLinkCreate):
+    entity_alias_citation_link_id: int
+    entity_alias_id: int
+    created_at: datetime
+
+
+class EntityIdentityAssertionCitationLinkRead(EntityCitationLinkCreate):
+    entity_identity_assertion_citation_link_id: int
+    entity_identity_assertion_id: int
+    created_at: datetime
+
+
+class EntityRelationshipAssertionCitationLinkRead(EntityCitationLinkCreate):
+    entity_relationship_assertion_citation_link_id: int
+    entity_relationship_assertion_id: int
+    created_at: datetime
 
 
 class EntityObservationLinkRead(ForteModel):
