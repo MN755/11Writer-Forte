@@ -44,6 +44,8 @@ from src.models import (
     LocalImportRunORM,
     ObservationORM,
     RobotsObservationORM,
+    ResearchProviderORM,
+    ResearchProviderRunORM,
     ScheduledTaskORM,
     ScheduledTaskRunORM,
     SituationProductORM,
@@ -92,6 +94,8 @@ from src.schemas import (
     LocalImportRunSummaryRead,
     ObservationRead,
     RobotsObservationRead,
+    ResearchProviderRead,
+    ResearchProviderRunRead,
     RuntimeRestoreResultRead,
     RuntimeSnapshotRead,
     ScheduledTaskRead,
@@ -143,6 +147,12 @@ SNAPSHOT_SECTIONS: tuple[tuple[str, object, type[BaseModel], object], ...] = (
         SourceDefinitionORM,
         SourceDefinitionRead,
         SourceDefinitionORM.source_id,
+    ),
+    (
+        "research_providers",
+        ResearchProviderORM,
+        ResearchProviderRead,
+        ResearchProviderORM.research_provider_id,
     ),
     (
         "source_candidates",
@@ -244,6 +254,12 @@ SNAPSHOT_SECTIONS: tuple[tuple[str, object, type[BaseModel], object], ...] = (
         InvestigationEvidencePromotionORM.investigation_evidence_promotion_id,
     ),
     (
+        "research_provider_runs",
+        ResearchProviderRunORM,
+        ResearchProviderRunRead,
+        ResearchProviderRunORM.research_provider_run_id,
+    ),
+    (
         "discovery_artifacts",
         DiscoveryArtifactORM,
         DiscoveryArtifactRead,
@@ -285,6 +301,7 @@ RESTORE_ORDER: tuple[tuple[str, object], ...] = (
     ("discovery_domain_policies", DiscoveryDomainPolicyORM),
     ("geofences", GeofenceORM),
     ("source_definitions", SourceDefinitionORM),
+    ("research_providers", ResearchProviderORM),
     ("discovery_campaigns", DiscoveryCampaignORM),
     ("discovery_runs", DiscoveryRunORM),
     ("source_candidates", SourceCandidateORM),
@@ -307,6 +324,7 @@ RESTORE_ORDER: tuple[tuple[str, object], ...] = (
     ("investigation_discovery_attempts", InvestigationDiscoveryAttemptORM),
     ("investigation_report_versions", InvestigationReportVersionORM),
     ("investigation_evidence_promotions", InvestigationEvidencePromotionORM),
+    ("research_provider_runs", ResearchProviderRunORM),
     ("entity_citations", EntityCitationORM),
     ("entity_candidates", EntityCandidateORM),
     ("entity_aliases", EntityAliasORM),
@@ -334,7 +352,7 @@ def build_runtime_snapshot(session: Session) -> dict[str, object]:
     export_log = log_runtime_snapshot_export(session, row_counts=row_counts_before)
     try:
         snapshot = {
-            "snapshot_version": 3,
+            "snapshot_version": 4,
             "exported_at": snapshot_now(),
             "app_name": settings.app_name,
             "app_version": settings.app_version,

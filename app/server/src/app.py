@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from src.config import get_settings
 from src.db import init_db
 from src.routes.alerts import router as alerts_router
+from src.routes.browser_collection import router as browser_collection_router
 from src.routes.camera_sources import router as camera_sources_router
 from src.routes.cameras import router as cameras_router
 from src.routes.clickhouse import router as clickhouse_router
@@ -20,9 +21,12 @@ from src.routes.geofences import router as geofences_router
 from src.routes.health import router as health_router
 from src.routes.imports import router as imports_router
 from src.routes.investigations import router as investigations_router
+from src.routes.investigation_control import router as investigation_control_router
+from src.routes.local_intelligence import router as local_intelligence_router
 from src.routes.media_intelligence import router as media_intelligence_router
 from src.routes.observations import router as observations_router
 from src.routes.operations import router as operations_router
+from src.routes.research_fleet import router as research_fleet_router
 from src.routes.scheduler import router as scheduler_router
 from src.routes.storage import router as storage_router
 from src.routes.sources import router as sources_router
@@ -51,6 +55,7 @@ def create_application() -> FastAPI:
     application.include_router(layer_router, prefix=settings.api_prefix)
     application.include_router(geofences_router, prefix=settings.api_prefix)
     application.include_router(alerts_router, prefix=settings.api_prefix)
+    application.include_router(browser_collection_router, prefix=settings.api_prefix)
     application.include_router(camera_sources_router, prefix=settings.api_prefix)
     application.include_router(cameras_router, prefix=settings.api_prefix)
     application.include_router(clickhouse_router, prefix=settings.api_prefix)
@@ -58,9 +63,12 @@ def create_application() -> FastAPI:
     application.include_router(discovery_router, prefix=settings.api_prefix)
     application.include_router(imports_router, prefix=settings.api_prefix)
     application.include_router(investigations_router, prefix=settings.api_prefix)
+    application.include_router(investigation_control_router, prefix=settings.api_prefix)
+    application.include_router(local_intelligence_router, prefix=settings.api_prefix)
     application.include_router(media_intelligence_router, prefix=settings.api_prefix)
     application.include_router(observations_router, prefix=settings.api_prefix)
     application.include_router(operations_router, prefix=settings.api_prefix)
+    application.include_router(research_fleet_router, prefix=settings.api_prefix)
     application.include_router(scheduler_router, prefix=settings.api_prefix)
     application.include_router(storage_router, prefix=settings.api_prefix)
     application.include_router(sources_router, prefix=settings.api_prefix)

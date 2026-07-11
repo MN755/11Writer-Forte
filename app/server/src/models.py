@@ -680,6 +680,87 @@ class SourceRunORM(Base):
     source: Mapped[SourceDefinitionORM] = relationship(back_populates="runs")
 
 
+class ResearchProviderORM(TimestampMixin, Base):
+    """Reviewed public-source provider configuration; credentials never live here."""
+
+    __tablename__ = "research_providers"
+
+    research_provider_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    provider_key: Mapped[str] = mapped_column(String(120), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    source_kind: Mapped[str] = mapped_column(String(80), index=True)
+    enabled: Mapped[bool] = mapped_column(default=True, index=True)
+    health_state: Mapped[str] = mapped_column(String(30), default="unknown", index=True)
+    schema_version: Mapped[str] = mapped_column(String(80), default="1")
+    license_notes: Mapped[str] = mapped_column(Text, default="")
+    jurisdiction: Mapped[str] = mapped_column(String(160), default="operator-configured")
+    languages_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+    freshness_hours: Mapped[int] = mapped_column(Integer, default=24)
+    cost: Mapped[str] = mapped_column(String(30), default="free")
+    access_requirement: Mapped[str] = mapped_column(String(40), default="none")
+    robots_supported: Mapped[bool] = mapped_column(default=True)
+    evidence_capture_method: Mapped[str] = mapped_column(String(120), default="response_manifest")
+    capabilities_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+    default_budget_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    coverage_gaps_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    last_health_at: Mapped[datetime | None] = mapped_column(default=None, index=True)
+    last_success_at: Mapped[datetime | None] = mapped_column(default=None, index=True)
+    last_error_text: Mapped[str | None] = mapped_column(Text, default=None)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+    runs: Mapped[list["ResearchProviderRunORM"]] = relationship(back_populates="provider")
+
+
+class ResearchProviderRunORM(Base):
+    """Durable provider work with explicit lease, retry, and budget control-plane state."""
+
+    __tablename__ = "research_provider_runs"
+    __table_args__ = (
+        Index("ix_research_provider_run_provider_status", "research_provider_id", "status"),
+        Index("ix_research_provider_run_lease", "status", "lease_expires_at"),
+        Index("ix_research_provider_run_priority", "status", "priority", "created_at"),
+    )
+
+    research_provider_run_id: Mapped[int] = mapped_column(
+        Integer, primary_key=True, autoincrement=True
+    )
+    research_provider_id: Mapped[int] = mapped_column(
+        ForeignKey("research_providers.research_provider_id"), index=True
+    )
+    investigation_id: Mapped[int | None] = mapped_column(
+        ForeignKey("investigations.investigation_id"), default=None, index=True
+    )
+    idempotency_key: Mapped[str] = mapped_column(String(160), unique=True, index=True)
+    status: Mapped[str] = mapped_column(String(30), default="queued", index=True)
+    worker_class: Mapped[str] = mapped_column(String(60), default="search", index=True)
+    priority: Mapped[int] = mapped_column(Integer, default=0, index=True)
+    cancellation_requested: Mapped[bool] = mapped_column(default=False, index=True)
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, default=2)
+    retry_class: Mapped[str] = mapped_column(String(50), default="transient")
+    retry_at: Mapped[datetime | None] = mapped_column(default=None, index=True)
+    lease_owner: Mapped[str | None] = mapped_column(String(120), default=None, index=True)
+    lease_acquired_at: Mapped[datetime | None] = mapped_column(default=None)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(default=None, index=True)
+    heartbeat_at: Mapped[datetime | None] = mapped_column(default=None, index=True)
+    started_at: Mapped[datetime | None] = mapped_column(default=None, index=True)
+    finished_at: Mapped[datetime | None] = mapped_column(default=None, index=True)
+    normalized_query: Mapped[str] = mapped_column(Text, default="")
+    request_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    response_hash: Mapped[str | None] = mapped_column(String(128), default=None, index=True)
+    candidate_urls_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+    coverage_gaps_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    budget_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    bytes_collected: Mapped[int] = mapped_column(Integer, default=0)
+    request_count: Mapped[int] = mapped_column(Integer, default=0)
+    error_text: Mapped[str | None] = mapped_column(Text, default=None)
+    output_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow, index=True)
+    updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
+
+    provider: Mapped[ResearchProviderORM] = relationship(back_populates="runs")
+
+
 class DiscoveryCampaignORM(TimestampMixin, Base):
     __tablename__ = "discovery_campaigns"
 
