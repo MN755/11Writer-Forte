@@ -120,7 +120,6 @@ class HealthResponse(ForteModel):
     status: str
     app_name: str
     app_version: str
-    database_url: str
     database_backend: str
     database_connected: bool
     spatial_backend: str
@@ -147,6 +146,13 @@ class InferenceRequest(ForteModel):
     artifact_id: str = Field(min_length=1, max_length=200)
     model_manifest: dict[str, Any]
     input_features: dict[str, Any] = Field(default_factory=dict)
+    prefer_gpu: bool = True
+
+
+class OnnxImageEmbeddingRequest(ForteModel):
+    artifact_id: str = Field(min_length=1, max_length=200)
+    image_path: str = Field(min_length=1, max_length=4096)
+    approval_path: str = Field(min_length=1, max_length=4096)
     prefer_gpu: bool = True
 
 

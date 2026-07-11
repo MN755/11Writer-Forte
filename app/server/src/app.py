@@ -3,10 +3,12 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 
 from src.config import get_settings
 from src.db import init_db
+from src.security import authenticate_operator, required_scope_for_request
 from src.routes.alerts import router as alerts_router
 from src.routes.camera_sources import router as camera_sources_router
 from src.routes.cameras import router as cameras_router
@@ -39,12 +41,41 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 def create_application() -> FastAPI:
     settings = get_settings()
+    settings.validate_runtime_security()
     settings.ensure_runtime_dirs()
     application = FastAPI(
         title=settings.app_name,
         version=settings.app_version,
         lifespan=lifespan,
+        docs_url="/docs" if settings.auth_mode == "disabled" else None,
+        redoc_url="/redoc" if settings.auth_mode == "disabled" else None,
+        openapi_url="/openapi.json" if settings.auth_mode == "disabled" else None,
     )
+
+    @application.middleware("http")
+    async def require_operator(request: Request, call_next):  # type: ignore[no-untyped-def]
+        # Liveness intentionally exposes no database URL, credential, storage path,
+        # or scheduler detail, so it can remain available to a local orchestrator.
+        if request.url.path == "/health":
+            return await call_next(request)
+
+        principal = authenticate_operator(request, settings)
+        if principal is None:
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "Bearer token authentication is required."},
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        required_scope = required_scope_for_request(request)
+        if not principal.allows(required_scope):
+            return JSONResponse(
+                status_code=403,
+                content={"detail": f"Operator scope {required_scope!r} is required."},
+            )
+        request.state.operator_principal = principal
+        response = await call_next(request)
+        response.headers["X-11Writer-Operator"] = principal.principal_id
+        return response
     application.include_router(health_router)
     application.include_router(events_router, prefix=settings.api_prefix)
     application.include_router(entities_router, prefix=settings.api_prefix)

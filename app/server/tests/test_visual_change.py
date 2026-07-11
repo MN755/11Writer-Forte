@@ -66,7 +66,11 @@ def test_local_adapter_records_versioned_provenance_and_cpu_fallback_without_net
         raise AssertionError("local inference attempted outbound network access")
 
     monkeypatch.setattr(socket, "create_connection", outbound_network_is_forbidden)
-    adapter = LocalInferenceAdapter(_manifest(), gpu_available=lambda: False)
+    adapter = LocalInferenceAdapter(
+        _manifest(),
+        processor=lambda payload, device: {"features": dict(payload), "device": device},
+        gpu_available=lambda: False,
+    )
     record = adapter.infer(
         artifact_id="artifact-1",
         input_features={"confidence": 0.81, "reason_codes": ["fixture_detected"]},
@@ -83,7 +87,7 @@ def test_local_adapter_records_versioned_provenance_and_cpu_fallback_without_net
 
 def test_registry_rejects_unregistered_or_duplicate_adapter_kind() -> None:
     registry = LocalInferenceRegistry()
-    adapter = LocalInferenceAdapter(_manifest())
+    adapter = LocalInferenceAdapter(_manifest(), processor=lambda payload, device: dict(payload))
     registry.register(adapter)
     with pytest.raises(ValueError, match="already registered"):
         registry.register(adapter)
