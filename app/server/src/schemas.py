@@ -332,6 +332,16 @@ class RuntimeSnapshotRead(ForteModel):
     camera_inventory: list["CameraInventoryRead"]
     camera_source_inventory: list["CameraSourceInventoryRead"]
     storage_objects: list["StorageObjectRead"]
+    investigations: list["InvestigationRead"] = Field(default_factory=list)
+    investigation_discovery_attempts: list["InvestigationDiscoveryAttemptRead"] = Field(
+        default_factory=list
+    )
+    investigation_report_versions: list["InvestigationReportVersionRead"] = Field(
+        default_factory=list
+    )
+    investigation_evidence_promotions: list["InvestigationEvidencePromotionRead"] = Field(
+        default_factory=list
+    )
     event_observation_links: list["EventObservationLinkRead"]
     entity_observation_links: list["EntityObservationLinkRead"]
     alerts: list["AlertRead"]
@@ -347,7 +357,7 @@ class RuntimeSnapshotRead(ForteModel):
         if not isinstance(value, dict):
             return value
         version = int(value.get("snapshot_version", 1))
-        if version not in {1, 2}:
+        if version not in {1, 2, 3}:
             raise ValueError(f"Unsupported runtime snapshot version: {version}.")
         if version < 2:
             return value
