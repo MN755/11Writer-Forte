@@ -155,6 +155,7 @@ from src.services.discovery_service import (
     upsert_domain_policy,
 )
 from src.services.entity_resolution_service import materialize_entities
+from src.services.entity_graph_service import get_entity_profile, query_network_slice
 from src.services.export_artifact_service import (
     write_json_export_artifact,
     write_text_export_artifact,
@@ -4738,6 +4739,61 @@ def create_investigation_command(
     try:
         print_banner()
         echo_model_json(InvestigationRead, create_investigation(session, payload, actor="cli"))
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.command("show-entity-profile")
+def show_entity_profile_command(entity_id: int, max_redaction_level: str = "public") -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        print_banner()
+        typer.echo(
+            json.dumps(
+                get_entity_profile(session, entity_id, max_redaction_level=max_redaction_level),
+                default=str,
+                indent=2,
+            )
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.command("show-entity-network")
+def show_entity_network_command(
+    entity_id: int,
+    max_depth: int = 2,
+    jurisdiction: str | None = None,
+    since: datetime | None = None,
+    until: datetime | None = None,
+    min_confidence: float = 0.0,
+    max_redaction_level: str = "public",
+) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        print_banner()
+        typer.echo(
+            json.dumps(
+                query_network_slice(
+                    session,
+                    entity_id=entity_id,
+                    max_depth=max_depth,
+                    jurisdiction=jurisdiction,
+                    since=since,
+                    until=until,
+                    min_confidence=min_confidence,
+                    max_redaction_level=max_redaction_level,
+                ),
+                default=str,
+                indent=2,
+            )
+        )
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
     finally:
