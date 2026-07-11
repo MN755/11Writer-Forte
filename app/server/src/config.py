@@ -26,6 +26,11 @@ class Settings(BaseSettings):
     codex_timeout_seconds: float = 900.0
     codex_report_max_chars: int = 30000
     allowed_origins: list[str] = Field(default_factory=list)
+    # This feed deliberately has no multi-user authentication boundary.  It remains
+    # loopback-only unless the deployment owner deliberately supplies trusted CIDRs.
+    local_api_trusted_networks: list[str] = Field(
+        default_factory=lambda: ["127.0.0.0/8", "::1/128"]
+    )
     # Campaign payloads are operator-controlled API data.  They may request access to
     # private targets, but that request is inert unless the server owner enables this
     # deployment-level escape hatch as well.

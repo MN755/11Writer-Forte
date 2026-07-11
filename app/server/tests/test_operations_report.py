@@ -63,9 +63,7 @@ def test_operations_report_summarizes_runtime_activity(client: TestClient, tmp_p
             "name": "Ops Watch",
             "geometry_geojson": {
                 "type": "Polygon",
-                "coordinates": [
-                    [[-96.0, 29.0], [-94.0, 29.0], [-94.0, 31.0], [-96.0, 31.0], [-96.0, 29.0]]
-                ],
+                "coordinates": [[[-96.0, 29.0], [-94.0, 29.0], [-94.0, 31.0], [-96.0, 31.0], [-96.0, 29.0]]],
             },
             "rule_expression": "ops watch",
         },
@@ -113,6 +111,8 @@ def test_operations_report_summarizes_runtime_activity(client: TestClient, tmp_p
     assert len(payload["alerts"]) == 2
     assert payload["alerts"][0]["status"] in {"open", "acknowledged"}
     assert payload["custody_logs"]
+    assert payload["camera_inventory_summary"]["total_count"] == 0
+    assert payload["camera_report_index"]["refresh_task_count"] == 0
     assert payload["storage_report"]["total_count"] >= 2
     assert payload["storage_report"]["active_count"] >= 2
     assert payload["clickhouse_diagnostics"]["status"] == "disabled"
@@ -176,8 +176,7 @@ def test_operations_report_summarizes_runtime_activity(client: TestClient, tmp_p
     camera_payload = camera_report_response.json()
     assert camera_payload["storage_report"]["total_count"] >= 5
     assert any(
-        bucket["key"] == "operational"
-        for bucket in camera_payload["storage_report"]["retention_class_counts"]
+        bucket["key"] == "operational" for bucket in camera_payload["storage_report"]["retention_class_counts"]
     )
     assert camera_payload["scheduler_inventory_summary"]["total_count"] == 2
     assert camera_payload["scheduler_report_index"]["task_run_count"] == 1
@@ -185,13 +184,7 @@ def test_operations_report_summarizes_runtime_activity(client: TestClient, tmp_p
     assert camera_payload["camera_inventory_summary"]["total_count"] == 1
     assert camera_payload["camera_inventory_summary"]["inactive_count"] == 1
     assert camera_payload["camera_report_index"]["refresh_task_count"] == 1
-    assert (
-        camera_payload["camera_report_index"]["recent_materializations"][0]["action"]
-        == "camera_materialization_completed"
-    )
+    assert camera_payload["camera_report_index"]["recent_materializations"][0]["action"] == "camera_materialization_completed"
     assert camera_payload["camera_source_inventory_summary"]["total_count"] == 1
     assert camera_payload["camera_source_report_index"]["refresh_task_count"] == 1
-    assert (
-        camera_payload["camera_source_report_index"]["recent_materializations"][0]["action"]
-        == "camera_source_materialization_completed"
-    )
+    assert camera_payload["camera_source_report_index"]["recent_materializations"][0]["action"] == "camera_source_materialization_completed"
