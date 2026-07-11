@@ -165,8 +165,6 @@ class CameraInventoryORM(TimestampMixin, Base):
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
 
-<<<<<<< HEAD
-=======
 class CameraSourceInventoryORM(TimestampMixin, Base):
     __tablename__ = "camera_source_inventory"
 
@@ -199,7 +197,6 @@ class CameraSourceInventoryORM(TimestampMixin, Base):
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
 
->>>>>>> 05aeee6 (chore: initialize repository)
 class StorageObjectORM(TimestampMixin, Base):
     __tablename__ = "storage_objects"
 
@@ -823,6 +820,7 @@ class WatchORM(TimestampMixin, Base):
     notification_policy_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     baseline_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     dedupe_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    coverage_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     last_evaluated_at: Mapped[datetime | None] = mapped_column(default=None, index=True)
     last_changed_at: Mapped[datetime | None] = mapped_column(default=None, index=True)
     next_run_at: Mapped[datetime | None] = mapped_column(default=None, index=True)
@@ -830,6 +828,60 @@ class WatchORM(TimestampMixin, Base):
     provenance_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
     runs: Mapped[list["WatchRunORM"]] = relationship(back_populates="watch")
+    rule_versions: Mapped[list["WatchRuleVersionORM"]] = relationship(
+        back_populates="watch",
+        cascade="all, delete-orphan",
+    )
+    reports: Mapped[list["WatchReportORM"]] = relationship(
+        back_populates="watch",
+        cascade="all, delete-orphan",
+    )
+
+
+class WatchRuleVersionORM(Base):
+    """Immutable, inspectable scope revisions for an investigation watch."""
+
+    __tablename__ = "watch_rule_versions"
+    __table_args__ = (
+        UniqueConstraint("watch_id", "version_number", name="uq_watch_rule_version"),
+        Index("ix_watch_rule_version_watch_state", "watch_id", "status"),
+        Index("ix_watch_rule_version_hash", "rule_hash"),
+    )
+
+    watch_rule_version_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    watch_id: Mapped[int] = mapped_column(ForeignKey("watches.watch_id"), index=True)
+    version_number: Mapped[int] = mapped_column(Integer)
+    query_version: Mapped[str] = mapped_column(String(80), default="1", index=True)
+    status: Mapped[str] = mapped_column(String(30), default="active", index=True)
+    compiler_name: Mapped[str] = mapped_column(String(80), default="structured")
+    original_instruction: Mapped[str | None] = mapped_column(Text, default=None)
+    rule_hash: Mapped[str] = mapped_column(String(64), index=True)
+    rule_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    scope_preview_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow, index=True)
+    activated_at: Mapped[datetime | None] = mapped_column(default=None)
+    superseded_at: Mapped[datetime | None] = mapped_column(default=None)
+    archived_at: Mapped[datetime | None] = mapped_column(default=None)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+    watch: Mapped[WatchORM] = relationship(back_populates="rule_versions")
+
+
+class WatchReportORM(Base):
+    """A locally retained on-demand summary generated from a watch's run ledger."""
+
+    __tablename__ = "watch_reports"
+    __table_args__ = (Index("ix_watch_report_watch_generated", "watch_id", "generated_at"),)
+
+    watch_report_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    watch_id: Mapped[int] = mapped_column(ForeignKey("watches.watch_id"), index=True)
+    rule_version: Mapped[int | None] = mapped_column(Integer, default=None)
+    report_hash: Mapped[str] = mapped_column(String(64), index=True)
+    report_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    generated_at: Mapped[datetime] = mapped_column(default=utcnow, index=True)
+    requested_by: Mapped[str] = mapped_column(String(120), default="api")
+
+    watch: Mapped[WatchORM] = relationship(back_populates="reports")
 
 
 class WatchRunORM(Base):

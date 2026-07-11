@@ -2,10 +2,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
-<<<<<<< HEAD
-=======
 from typing import Literal
->>>>>>> 05aeee6 (chore: initialize repository)
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -29,6 +26,11 @@ class Settings(BaseSettings):
     codex_timeout_seconds: float = 900.0
     codex_report_max_chars: int = 30000
     allowed_origins: list[str] = Field(default_factory=list)
+    # This feed deliberately has no multi-user authentication boundary.  It remains
+    # loopback-only unless the deployment owner deliberately supplies trusted CIDRs.
+    local_api_trusted_networks: list[str] = Field(
+        default_factory=lambda: ["127.0.0.0/8", "::1/128"]
+    )
     # Campaign payloads are operator-controlled API data.  They may request access to
     # private targets, but that request is inert unless the server owner enables this
     # deployment-level escape hatch as well.
@@ -48,14 +50,11 @@ class Settings(BaseSettings):
     clickhouse_r2_secret_access_key: str | None = None
     clickhouse_r2_region: str = "auto"
     clickhouse_r2_archive_prefix: str = "11writer-archive"
-<<<<<<< HEAD
-=======
     clickhouse_r2_storage_mode: Literal["archive_only", "hybrid", "r2_disk"] = "archive_only"
     clickhouse_r2_storage_bucket: str | None = None
     clickhouse_r2_storage_prefix: str = "11writer-clickhouse"
     clickhouse_r2_storage_policy: str = "r2_main"
     clickhouse_r2_cache_size: str = "10Gi"
->>>>>>> 05aeee6 (chore: initialize repository)
 
     model_config = SettingsConfigDict(
         env_prefix="ELEVENWRITER_",
@@ -96,8 +95,6 @@ class Settings(BaseSettings):
             and bool(self.clickhouse_r2_secret_access_key)
         )
 
-<<<<<<< HEAD
-=======
     @property
     def clickhouse_r2_storage_bucket_effective(self) -> str | None:
         return self.clickhouse_r2_storage_bucket or self.clickhouse_r2_bucket
@@ -114,7 +111,6 @@ class Settings(BaseSettings):
             return self.clickhouse_r2_storage_policy
         return None
 
->>>>>>> 05aeee6 (chore: initialize repository)
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

@@ -11,8 +11,6 @@ from sqlalchemy import select
 from src.config import get_settings
 from src.db import get_session_factory, init_db
 from src.models import (
-    AlertORM,
-    CustodyLogORM,
     EntityObservationLinkORM,
     EntityORM,
     LocalImportRunORM,
@@ -65,9 +63,8 @@ from src.schemas import (
     EventExportBundleRead,
     EventCreate,
     EventFusionRequest,
-    EventRead,
     GeofenceCreate,
-    GeofenceRead,
+    InvestigationWatchCompileRequest,
     EntityResolutionRequest,
     OperationsReportRead,
     RuntimeRestoreResultRead,
@@ -154,7 +151,10 @@ from src.services.discovery_service import (
     upsert_domain_policy,
 )
 from src.services.entity_resolution_service import materialize_entities
-from src.services.export_artifact_service import write_json_export_artifact, write_text_export_artifact
+from src.services.export_artifact_service import (
+    write_json_export_artifact,
+    write_text_export_artifact,
+)
 from src.services.event_export_service import build_event_export_bundle
 from src.services.event_fusion_service import materialize_fused_events
 from src.services.event_service import create_event as create_event_record
@@ -201,6 +201,15 @@ from src.services.trust_service import (
     create_source_trust_profile,
     seed_default_integrity_sources,
     update_source_trust_profile,
+)
+from src.services.watch_service import (
+    archive_watch as archive_watch_record,
+    create_investigation_watch_candidate,
+    generate_watch_report,
+    get_watch,
+    list_watch_rule_versions,
+    pause_watch,
+    resume_watch,
 )
 
 app = typer.Typer(help="11Writer Forte backend operator CLI")
@@ -335,7 +344,9 @@ def doctor(output_path: Path | None = None) -> None:
     session = get_session_factory()()
     try:
         report = build_database_diagnostics(session)
-        serializable = TypeAdapter(DatabaseDiagnosticsRead).validate_python(report).model_dump(mode="json")
+        serializable = (
+            TypeAdapter(DatabaseDiagnosticsRead).validate_python(report).model_dump(mode="json")
+        )
         print_banner()
         typer.echo(
             "status="
@@ -371,9 +382,11 @@ def doctor(output_path: Path | None = None) -> None:
 
 @app.command("show-clickhouse-status")
 def show_clickhouse_status() -> None:
-    serializable = TypeAdapter(ClickHouseDiagnosticsRead).validate_python(
-        build_clickhouse_diagnostics()
-    ).model_dump(mode="json")
+    serializable = (
+        TypeAdapter(ClickHouseDiagnosticsRead)
+        .validate_python(build_clickhouse_diagnostics())
+        .model_dump(mode="json")
+    )
     print_banner()
     typer.echo(
         "status="
@@ -407,7 +420,11 @@ def provision_clickhouse_command() -> None:
     session = get_session_factory()()
     try:
         result = provision_clickhouse_backend(session, actor="cli_clickhouse")
-        serializable = TypeAdapter(ClickHouseProvisionResultRead).validate_python(result).model_dump(mode="json")
+        serializable = (
+            TypeAdapter(ClickHouseProvisionResultRead)
+            .validate_python(result)
+            .model_dump(mode="json")
+        )
         print_banner()
         typer.echo(
             f"provisioned_at={serializable['provisioned_at']} database={serializable['clickhouse_database']} observations={serializable['observation_table']} storage={serializable['storage_object_table']}"
@@ -434,7 +451,9 @@ def sync_clickhouse_command(
             limit=limit,
             actor="cli_clickhouse",
         )
-        serializable = TypeAdapter(ClickHouseSyncResultRead).validate_python(result).model_dump(mode="json")
+        serializable = (
+            TypeAdapter(ClickHouseSyncResultRead).validate_python(result).model_dump(mode="json")
+        )
         print_banner()
         typer.echo(
             f"synced observations={serializable['observation_count']} storage_objects={serializable['storage_object_count']} database={serializable['clickhouse_database']}"
@@ -461,7 +480,9 @@ def archive_clickhouse_observations_command(
             limit=limit,
             actor="cli_clickhouse",
         )
-        serializable = TypeAdapter(ClickHouseArchiveResultRead).validate_python(result).model_dump(mode="json")
+        serializable = (
+            TypeAdapter(ClickHouseArchiveResultRead).validate_python(result).model_dump(mode="json")
+        )
         print_banner()
         typer.echo(
             f"archived rows={serializable['exported_row_count']} database={serializable['clickhouse_database']} root={serializable['archive_root_url']}"
@@ -476,7 +497,9 @@ def archive_clickhouse_observations_command(
 def show_clickhouse_r2_config() -> None:
     try:
         result = build_clickhouse_r2_config_preview()
-        serializable = TypeAdapter(ClickHouseR2ConfigRead).validate_python(result).model_dump(mode="json")
+        serializable = (
+            TypeAdapter(ClickHouseR2ConfigRead).validate_python(result).model_dump(mode="json")
+        )
         print_banner()
         typer.echo(
             f"storage_mode={serializable['storage_mode']} storage_policy={serializable['storage_policy']}"
@@ -504,7 +527,9 @@ def write_clickhouse_r2_config(
 ) -> None:
     try:
         result = build_clickhouse_r2_config_preview()
-        serializable = TypeAdapter(ClickHouseR2ConfigRead).validate_python(result).model_dump(mode="json")
+        serializable = (
+            TypeAdapter(ClickHouseR2ConfigRead).validate_python(result).model_dump(mode="json")
+        )
         target_path = output_path or default_clickhouse_r2_config_path()
         target_path.parent.mkdir(parents=True, exist_ok=True)
         target_path.write_text(serializable["storage_xml"] + "\n", encoding="utf-8")
@@ -527,7 +552,11 @@ def rehydrate_clickhouse_observations_command(archive_glob_url: str) -> None:
             archive_glob_url=archive_glob_url,
             actor="cli_clickhouse",
         )
-        serializable = TypeAdapter(ClickHouseRehydrateResultRead).validate_python(result).model_dump(mode="json")
+        serializable = (
+            TypeAdapter(ClickHouseRehydrateResultRead)
+            .validate_python(result)
+            .model_dump(mode="json")
+        )
         print_banner()
         typer.echo(
             f"rehydrated rows={serializable['imported_row_count']} database={serializable['clickhouse_database']} source={serializable['archive_glob_url']}"
@@ -562,11 +591,15 @@ def show_codex_agent_command(
     reasoning_effort: str | None = None,
 ) -> None:
     try:
-        typer.echo(json.dumps(build_codex_exec_command(
-            objective,
-            model=model,
-            reasoning_effort=reasoning_effort,
-        )))
+        typer.echo(
+            json.dumps(
+                build_codex_exec_command(
+                    objective,
+                    model=model,
+                    reasoning_effort=reasoning_effort,
+                )
+            )
+        )
     except CodexAgentError as exc:
         raise typer.BadParameter(str(exc)) from exc
 
@@ -656,7 +689,9 @@ def trust_profiles() -> None:
     session = get_session_factory()()
     try:
         profiles = list(
-            session.scalars(select(SourceTrustProfileORM).order_by(SourceTrustProfileORM.domain.asc()))
+            session.scalars(
+                select(SourceTrustProfileORM).order_by(SourceTrustProfileORM.domain.asc())
+            )
         )
         print_banner()
         for profile in profiles:
@@ -1462,7 +1497,9 @@ def show_source_summary_command(stale_after_hours: float = 24.0) -> None:
     session = get_session_factory()()
     try:
         summary = build_source_inventory_summary(session, stale_after_hours=stale_after_hours)
-        serializable = TypeAdapter(SourceInventorySummaryRead).validate_python(summary).model_dump(mode="json")
+        serializable = (
+            TypeAdapter(SourceInventorySummaryRead).validate_python(summary).model_dump(mode="json")
+        )
         print_banner()
         typer.echo(
             "totals="
@@ -1496,7 +1533,9 @@ def show_source_report_index_command(
             limit=limit,
             stale_source_limit=stale_source_limit,
         )
-        serializable = TypeAdapter(SourceOpsReportIndexRead).validate_python(report).model_dump(mode="json")
+        serializable = (
+            TypeAdapter(SourceOpsReportIndexRead).validate_python(report).model_dump(mode="json")
+        )
         print_banner()
         typer.echo(
             f"sync_tasks={serializable['sync_task_count']} sync_runs={serializable['sync_run_count']} sync_failures={serializable['sync_failure_count']}"
@@ -1550,7 +1589,9 @@ def export_source_summary_command(
             report_limit=report_limit,
             stale_source_limit=stale_source_limit,
         )
-        serializable = TypeAdapter(SourceOpsExportSummaryRead).validate_python(report).model_dump(mode="json")
+        serializable = (
+            TypeAdapter(SourceOpsExportSummaryRead).validate_python(report).model_dump(mode="json")
+        )
         write_json_export_artifact(
             session,
             payload=serializable,
@@ -1595,7 +1636,11 @@ def materialize_cameras_command(
         result["source_created_count"] = int(source_result["created_count"])
         result["source_updated_count"] = int(source_result["updated_count"])
         result["source_scanned_endpoint_count"] = int(source_result["scanned_endpoint_count"])
-        serializable = TypeAdapter(CameraMaterializationResponse).validate_python(result).model_dump(mode="json")
+        serializable = (
+            TypeAdapter(CameraMaterializationResponse)
+            .validate_python(result)
+            .model_dump(mode="json")
+        )
         print_banner()
         typer.echo(
             f"scanned={serializable['scanned_count']} created={serializable['created_count']} updated={serializable['updated_count']}"
@@ -1629,7 +1674,11 @@ def materialize_camera_sources_command(
             limit=limit,
             actor="cli_camera_source_registry",
         )
-        serializable = TypeAdapter(CameraSourceMaterializationResponse).validate_python(result).model_dump(mode="json")
+        serializable = (
+            TypeAdapter(CameraSourceMaterializationResponse)
+            .validate_python(result)
+            .model_dump(mode="json")
+        )
         print_banner()
         typer.echo(
             f"scanned_cameras={serializable['scanned_camera_count']} scanned_endpoints={serializable['scanned_endpoint_count']} created={serializable['created_count']} updated={serializable['updated_count']}"
@@ -1739,7 +1788,12 @@ def show_camera_summary_command(
             f"{summary['total_count']} active={summary['active_count']} inactive={summary['inactive_count']} "
             f"stale={summary['stale_count']} stale_before={summary['stale_before'].isoformat()}"
         )
-        for group_name in ("layer_counts", "source_domain_counts", "provider_counts", "status_counts"):
+        for group_name in (
+            "layer_counts",
+            "source_domain_counts",
+            "provider_counts",
+            "status_counts",
+        ):
             typer.echo(f"{group_name}:")
             for item in summary[group_name]:
                 typer.echo(
@@ -1770,7 +1824,9 @@ def show_camera_source_summary_command(
             verification_state=verification_state,
             active=active,
         )
-        serializable = TypeAdapter(CameraSourceSummaryRead).validate_python(summary).model_dump(mode="json")
+        serializable = (
+            TypeAdapter(CameraSourceSummaryRead).validate_python(summary).model_dump(mode="json")
+        )
         print_banner()
         typer.echo(
             "totals="
@@ -1885,7 +1941,11 @@ def show_camera_source_report_index_command(
             limit=limit,
             stale_source_limit=stale_source_limit,
         )
-        serializable = TypeAdapter(CameraSourceOpsReportIndexRead).validate_python(report).model_dump(mode="json")
+        serializable = (
+            TypeAdapter(CameraSourceOpsReportIndexRead)
+            .validate_python(report)
+            .model_dump(mode="json")
+        )
         print_banner()
         typer.echo(
             f"refresh_tasks={serializable['refresh_task_count']} refresh_runs={serializable['refresh_run_count']} failures={serializable['refresh_failure_count']}"
@@ -1942,7 +2002,9 @@ def show_camera_report_index_command(
             limit=limit,
             stale_camera_limit=stale_camera_limit,
         )
-        serializable = TypeAdapter(CameraOpsReportIndexRead).validate_python(report).model_dump(mode="json")
+        serializable = (
+            TypeAdapter(CameraOpsReportIndexRead).validate_python(report).model_dump(mode="json")
+        )
         print_banner()
         typer.echo(
             f"refresh_tasks={serializable['refresh_task_count']} refresh_runs={serializable['refresh_run_count']} failures={serializable['refresh_failure_count']}"
@@ -1998,7 +2060,11 @@ def export_camera_source_summary_command(
             report_limit=report_limit,
             stale_source_limit=stale_source_limit,
         )
-        serializable = TypeAdapter(CameraSourceOpsExportSummaryRead).validate_python(report).model_dump(mode="json")
+        serializable = (
+            TypeAdapter(CameraSourceOpsExportSummaryRead)
+            .validate_python(report)
+            .model_dump(mode="json")
+        )
         write_json_export_artifact(
             session,
             payload=serializable,
@@ -2049,7 +2115,9 @@ def export_camera_summary_command(
             report_limit=report_limit,
             stale_camera_limit=stale_camera_limit,
         )
-        serializable = TypeAdapter(CameraOpsExportSummaryRead).validate_python(report).model_dump(mode="json")
+        serializable = (
+            TypeAdapter(CameraOpsExportSummaryRead).validate_python(report).model_dump(mode="json")
+        )
         write_json_export_artifact(
             session,
             payload=serializable,
@@ -2083,9 +2151,7 @@ def create_event_command(
     try:
         parsed_metadata = parse_json_object_option(metadata_json, "--metadata-json") or {}
         occurred_at_value = (
-            TypeAdapter(datetime).validate_python(occurred_at)
-            if occurred_at is not None
-            else None
+            TypeAdapter(datetime).validate_python(occurred_at) if occurred_at is not None else None
         )
         event = create_event_record(
             session,
@@ -2205,7 +2271,9 @@ def list_entities() -> None:
     try:
         rows = list(
             session.scalars(
-                select(EntityORM).order_by(EntityORM.confidence_score.desc(), EntityORM.created_at.desc())
+                select(EntityORM).order_by(
+                    EntityORM.confidence_score.desc(), EntityORM.created_at.desc()
+                )
             )
         )
         print_banner()
@@ -2250,7 +2318,9 @@ def show_event_products(event_id: int) -> None:
         )
         print_banner()
         for row in rows:
-            typer.echo(f"{row.product_id} | {row.product_type} | {row.redaction_level} | {row.title}")
+            typer.echo(
+                f"{row.product_id} | {row.product_type} | {row.redaction_level} | {row.title}"
+            )
     finally:
         session.close()
 
@@ -2272,9 +2342,7 @@ def export_event_product(
             )
         )
         if product is None:
-            raise typer.BadParameter(
-                f"No product '{product_type}' exists for event {event_id}."
-            )
+            raise typer.BadParameter(f"No product '{product_type}' exists for event {event_id}.")
         try:
             enforce_export_redaction(product, max_redaction_level)
         except ValueError as exc:
@@ -2312,10 +2380,14 @@ def export_event_bundle(
     session = get_session_factory()()
     try:
         try:
-            bundle = build_event_export_bundle(session, event_id, max_redaction_level=max_redaction_level)
+            bundle = build_event_export_bundle(
+                session, event_id, max_redaction_level=max_redaction_level
+            )
         except ValueError as exc:
             raise typer.BadParameter(str(exc)) from exc
-        serializable = TypeAdapter(EventExportBundleRead).validate_python(bundle).model_dump(mode="json")
+        serializable = (
+            TypeAdapter(EventExportBundleRead).validate_python(bundle).model_dump(mode="json")
+        )
         write_json_export_artifact(
             session,
             payload=serializable,
@@ -2511,6 +2583,7 @@ def update_alert_command(
     finally:
         session.close()
 
+
 @app.command("list-custody")
 def list_custody(
     limit: int = 20,
@@ -2580,7 +2653,9 @@ def show_storage_report_command(limit: int = 25) -> None:
     session = get_session_factory()()
     try:
         report = build_storage_report(session, limit=limit)
-        serializable = TypeAdapter(StorageReportRead).validate_python(report).model_dump(mode="json")
+        serializable = (
+            TypeAdapter(StorageReportRead).validate_python(report).model_dump(mode="json")
+        )
         print_banner()
         typer.echo(
             "storage "
@@ -2640,7 +2715,9 @@ def add_storage_object_command(
             ),
             actor="cli_storage",
         )
-        serializable = TypeAdapter(StorageObjectRead).validate_python(record).model_dump(mode="json")
+        serializable = (
+            TypeAdapter(StorageObjectRead).validate_python(record).model_dump(mode="json")
+        )
         print_banner()
         typer.echo(
             f"storage_object={serializable['storage_object_id']} tier={serializable['storage_tier']} retention={serializable['retention_class']} status={serializable['lifecycle_status']}"
@@ -2665,7 +2742,11 @@ def run_storage_lifecycle_command(
             dry_run=dry_run,
             actor="cli_storage",
         )
-        serializable = TypeAdapter(StorageLifecycleSweepResultRead).validate_python(result).model_dump(mode="json")
+        serializable = (
+            TypeAdapter(StorageLifecycleSweepResultRead)
+            .validate_python(result)
+            .model_dump(mode="json")
+        )
         print_banner()
         typer.echo(
             f"swept_at={serializable['swept_at']} dry_run={serializable['dry_run']} candidates={serializable['expired_candidate_count']} transitioned={serializable['transitioned_count']}"
@@ -2835,13 +2916,17 @@ def show_operations_report(hours: float | None = 24.0, limit: int = 10) -> None:
 
 
 @app.command("export-operations-report")
-def export_operations_report(output_path: Path, hours: float | None = 24.0, limit: int = 25) -> None:
+def export_operations_report(
+    output_path: Path, hours: float | None = 24.0, limit: int = 25
+) -> None:
     init_db()
     session = get_session_factory()()
     try:
         since = resolve_report_since(hours)
         report = build_operations_report(session, since=since, limit=limit)
-        serializable = TypeAdapter(OperationsReportRead).validate_python(report).model_dump(mode="json")
+        serializable = (
+            TypeAdapter(OperationsReportRead).validate_python(report).model_dump(mode="json")
+        )
         write_json_export_artifact(
             session,
             payload=serializable,
@@ -2871,7 +2956,9 @@ def export_runtime_snapshot_command(output_path: Path) -> None:
     session = get_session_factory()()
     try:
         snapshot = build_runtime_snapshot(session)
-        serializable = TypeAdapter(RuntimeSnapshotRead).validate_python(snapshot).model_dump(mode="json")
+        serializable = (
+            TypeAdapter(RuntimeSnapshotRead).validate_python(snapshot).model_dump(mode="json")
+        )
         write_json_export_artifact(
             session,
             payload=serializable,
@@ -2927,7 +3014,9 @@ def restore_runtime_snapshot_command(
             )
         except ValueError as exc:
             raise typer.BadParameter(str(exc)) from exc
-        serializable = TypeAdapter(RuntimeRestoreResultRead).validate_python(result).model_dump(mode="json")
+        serializable = (
+            TypeAdapter(RuntimeRestoreResultRead).validate_python(result).model_dump(mode="json")
+        )
         print_banner()
         typer.echo(
             "restored runtime snapshot "
@@ -3353,7 +3442,11 @@ def show_scheduler_summary_command() -> None:
     session = get_session_factory()()
     try:
         summary = build_scheduler_inventory_summary(session)
-        serializable = TypeAdapter(SchedulerInventorySummaryRead).validate_python(summary).model_dump(mode="json")
+        serializable = (
+            TypeAdapter(SchedulerInventorySummaryRead)
+            .validate_python(summary)
+            .model_dump(mode="json")
+        )
         print_banner()
         typer.echo(
             f"{serializable['total_count']} enabled={serializable['enabled_count']} disabled={serializable['disabled_count']} "
@@ -3381,7 +3474,9 @@ def show_scheduler_report_index_command(limit: int = 25, overdue_task_limit: int
             limit=limit,
             overdue_task_limit=overdue_task_limit,
         )
-        serializable = TypeAdapter(SchedulerOpsReportIndexRead).validate_python(report).model_dump(mode="json")
+        serializable = (
+            TypeAdapter(SchedulerOpsReportIndexRead).validate_python(report).model_dump(mode="json")
+        )
         print_banner()
         typer.echo(
             f"task_runs={serializable['task_run_count']} failures={serializable['task_run_failure_count']} "
@@ -3433,7 +3528,11 @@ def export_scheduler_summary_command(
             report_limit=report_limit,
             overdue_task_limit=overdue_task_limit,
         )
-        serializable = TypeAdapter(SchedulerOpsExportSummaryRead).validate_python(report).model_dump(mode="json")
+        serializable = (
+            TypeAdapter(SchedulerOpsExportSummaryRead)
+            .validate_python(report)
+            .model_dump(mode="json")
+        )
         write_json_export_artifact(
             session,
             payload=serializable,
@@ -3457,7 +3556,9 @@ def list_schedules() -> None:
     init_db()
     session = get_session_factory()()
     try:
-        rows = list(session.scalars(select(ScheduledTaskORM).order_by(ScheduledTaskORM.task_id.asc())))
+        rows = list(
+            session.scalars(select(ScheduledTaskORM).order_by(ScheduledTaskORM.task_id.asc()))
+        )
         print_banner()
         for row in rows:
             parts = [
@@ -3754,9 +3855,7 @@ def update_discovery_campaign_command(
     if query_text is not None:
         payload_data["query_text"] = query_text
     if modes_json is not None:
-        payload_data["modes_json"] = parse_json_value_option(
-            modes_json, "--modes-json"
-        )
+        payload_data["modes_json"] = parse_json_value_option(modes_json, "--modes-json")
     if query_strings_json is not None:
         payload_data["query_strings_json"] = parse_json_value_option(
             query_strings_json, "--query-strings-json"
@@ -3770,9 +3869,7 @@ def update_discovery_campaign_command(
             format_targets_json, "--format-targets-json"
         )
     if seed_urls_json is not None:
-        payload_data["seed_urls_json"] = parse_json_value_option(
-            seed_urls_json, "--seed-urls-json"
-        )
+        payload_data["seed_urls_json"] = parse_json_value_option(seed_urls_json, "--seed-urls-json")
     if locale_variants_json is not None:
         payload_data["locale_variants_json"] = parse_json_value_option(
             locale_variants_json, "--locale-variants-json"
@@ -3814,9 +3911,7 @@ def update_discovery_campaign_command(
     parsed_request = parse_json_object_option(request_json, "--request-json")
     if parsed_request is not None:
         payload_data["request_json"] = parsed_request
-    parsed_crawl_policy = parse_json_object_option(
-        crawl_policy_json, "--crawl-policy-json"
-    )
+    parsed_crawl_policy = parse_json_object_option(crawl_policy_json, "--crawl-policy-json")
     if parsed_crawl_policy is not None:
         payload_data["crawl_policy_json"] = parsed_crawl_policy
     parsed_scoring_weights = parse_json_object_option(
@@ -4429,9 +4524,7 @@ def update_discovery_domain_policy_command(
         policy=policy,
         robots_mode=robots_mode,
         enabled=parse_optional_bool_option(enabled, "--enabled"),
-        allow_subdomains=parse_optional_bool_option(
-            allow_subdomains, "--allow-subdomains"
-        ),
+        allow_subdomains=parse_optional_bool_option(allow_subdomains, "--allow-subdomains"),
         crawl_delay_seconds=crawl_delay_seconds,
         max_concurrency=max_concurrency,
         max_depth=max_depth,
@@ -4502,9 +4595,7 @@ def add_discovery_schedule_command(
             ),
         )
         print_banner()
-        typer.echo(
-            f"scheduled task {task.task_id} created for discovery campaign {campaign_id}"
-        )
+        typer.echo(f"scheduled task {task.task_id} created for discovery campaign {campaign_id}")
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
     finally:
@@ -4601,6 +4692,138 @@ def add_discovery_revisit_schedule_command(
         session.close()
 
 
+@app.command("create-investigation-watch")
+def create_investigation_watch_command(
+    name: str,
+    slug: str,
+    parent_investigation_id: str,
+    instruction: str,
+    query_version: str = "1",
+    description: str = "",
+) -> None:
+    """Compile a deterministic natural-language watch and save it paused for review."""
+    init_db()
+    session = get_session_factory()()
+    try:
+        watch, compilation = create_investigation_watch_candidate(
+            session,
+            InvestigationWatchCompileRequest(
+                instruction=instruction,
+                parent_investigation_id=parent_investigation_id,
+                query_version=query_version,
+            ),
+            name=name,
+            slug=slug,
+            description=description,
+            actor="cli",
+        )
+        typer.echo(
+            json.dumps(
+                {
+                    "watch_id": watch.watch_id,
+                    "state": watch.state,
+                    "scope_preview": compilation.scope_preview_json,
+                    "rule_hash": compilation.rule_hash,
+                    "unresolved_ambiguities": compilation.unresolved_ambiguities,
+                },
+                indent=2,
+                default=str,
+            )
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.command("show-watch")
+def show_watch_command(watch_id: int) -> None:
+    """Inspect the current watch plus its immutable compiled-rule history."""
+    init_db()
+    session = get_session_factory()()
+    try:
+        watch = get_watch(session, watch_id)
+        typer.echo(
+            json.dumps(
+                {
+                    "watch": {
+                        "watch_id": watch.watch_id,
+                        "name": watch.name,
+                        "slug": watch.slug,
+                        "state": watch.state,
+                        "rule": watch.rule_json,
+                        "coverage": watch.coverage_json,
+                    },
+                    "rule_versions": [
+                        {
+                            "version": item.version_number,
+                            "status": item.status,
+                            "hash": item.rule_hash,
+                            "scope": item.scope_preview_json,
+                        }
+                        for item in list_watch_rule_versions(session, watch_id)
+                    ],
+                },
+                indent=2,
+                default=str,
+            )
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.command("pause-watch")
+def pause_watch_command(watch_id: int) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        typer.echo(f"watch {pause_watch(session, watch_id, actor='cli').watch_id} paused")
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.command("resume-watch")
+def resume_watch_command(watch_id: int) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        typer.echo(f"watch {resume_watch(session, watch_id, actor='cli').watch_id} enabled")
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.command("report-watch")
+def report_watch_command(watch_id: int) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        report = generate_watch_report(session, watch_id, actor="cli")
+        typer.echo(f"watch report {report.watch_report_id} generated")
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.command("archive-watch")
+def archive_watch_command(watch_id: int) -> None:
+    init_db()
+    session = get_session_factory()()
+    try:
+        typer.echo(
+            f"watch {archive_watch_record(session, watch_id, actor='cli').watch_id} archived"
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+
+
 if __name__ == "__main__":
     app()
-
