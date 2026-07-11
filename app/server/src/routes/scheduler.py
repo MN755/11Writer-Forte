@@ -65,7 +65,6 @@ def scheduler_export_summary(
         overdue_task_limit=overdue_task_limit,
     )
 
-
 @router.post("/tasks", response_model=ScheduledTaskRead)
 def create_task(
     payload: ScheduledTaskCreate, session: Session = Depends(get_db)

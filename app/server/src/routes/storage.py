@@ -73,7 +73,6 @@ def run_storage_sweep_route(
         dry_run=dry_run,
     )
 
-
 @router.patch("/objects/{storage_object_id}/promote", response_model=StorageObjectRead)
 def promote_storage_object_route(
     storage_object_id: int,

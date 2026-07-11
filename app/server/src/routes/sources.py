@@ -102,7 +102,6 @@ def source_ops(source_id: int, session: Session = Depends(get_db)) -> dict[str, 
     except ValueError as exc:
         raise translate_source_error(exc) from exc
 
-
 @router.post("/{source_id}/run", response_model=SourceRunRead)
 def run_source(source_id: int, session: Session = Depends(get_db)) -> object:
     try:
