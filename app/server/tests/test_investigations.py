@@ -163,7 +163,7 @@ def test_investigation_snapshot_round_trip(client: TestClient) -> None:
     snapshot_response = client.get("/api/operations/runtime/export")
     assert snapshot_response.status_code == 200, snapshot_response.text
     snapshot = snapshot_response.json()
-    assert snapshot["snapshot_version"] == 3
+    assert snapshot["snapshot_version"] == 4
     assert snapshot["investigations"]
     assert snapshot["investigation_report_versions"]
 

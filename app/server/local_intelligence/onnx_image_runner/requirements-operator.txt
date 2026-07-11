@@ -1,0 +1,5 @@
+# Install into a separately approved, offline-capable Python environment. Do not run pip
+# from production inference. Pin hashes in the operator-managed package lock/SBOM.
+numpy
+onnxruntime-gpu
+Pillow
