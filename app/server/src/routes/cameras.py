@@ -11,10 +11,7 @@ from src.schemas import (
     CameraMaterializationRequest,
     CameraMaterializationResponse,
 )
-<<<<<<< HEAD
-=======
 from src.services.camera_source_service import materialize_camera_source_inventory
->>>>>>> 05aeee6 (chore: initialize repository)
 from src.services.camera_service import (
     build_camera_ops_export_summary,
     build_camera_ops_report_index,
@@ -59,19 +56,13 @@ def materialize_cameras(
     payload: CameraMaterializationRequest,
     session: Session = Depends(get_db),
 ) -> dict[str, object]:
-<<<<<<< HEAD
-    return materialize_camera_inventory(
-=======
     result = materialize_camera_inventory(
->>>>>>> 05aeee6 (chore: initialize repository)
         session,
         layer_key=payload.layer_key,
         source_domain=payload.source_domain,
         limit=payload.limit,
         actor="api_camera_registry",
     )
-<<<<<<< HEAD
-=======
     source_result = materialize_camera_source_inventory(
         session,
         layer_key=payload.layer_key,
@@ -83,7 +74,6 @@ def materialize_cameras(
     result["source_updated_count"] = int(source_result["updated_count"])
     result["source_scanned_endpoint_count"] = int(source_result["scanned_endpoint_count"])
     return result
->>>>>>> 05aeee6 (chore: initialize repository)
 
 
 @router.get("/summary", response_model=CameraInventorySummaryRead)

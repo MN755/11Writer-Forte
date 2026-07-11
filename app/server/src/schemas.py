@@ -72,7 +72,9 @@ def validate_discovery_crawl_policy(value: dict[str, Any]) -> dict[str, Any]:
     if "user_agent" in value and (
         not isinstance(value["user_agent"], str) or len(value["user_agent"]) > 500
     ):
-        raise ValueError("Discovery crawl policy user_agent must be a string of 500 characters or fewer.")
+        raise ValueError(
+            "Discovery crawl policy user_agent must be a string of 500 characters or fewer."
+        )
     return value
 
 
@@ -220,7 +222,9 @@ class RuntimeSnapshotRead(ForteModel):
     discovery_graph_edges: list["DiscoveryGraphEdgeRead"] = Field(default_factory=list)
     candidate_health_checks: list["CandidateHealthCheckRead"] = Field(default_factory=list)
     candidate_suppressions: list["CandidateSuppressionRead"] = Field(default_factory=list)
-    candidate_promotion_decisions: list["CandidatePromotionDecisionRead"] = Field(default_factory=list)
+    candidate_promotion_decisions: list["CandidatePromotionDecisionRead"] = Field(
+        default_factory=list
+    )
     robots_observations: list["RobotsObservationRead"] = Field(default_factory=list)
     discovery_artifacts: list["DiscoveryArtifactRead"] = Field(default_factory=list)
     geofences: list["GeofenceRead"]
@@ -678,7 +682,10 @@ class SourceDefinitionCreate(ForteModel):
         "http_jsonl",
         "http_text",
         "http_xml",
+        "http_csv",
         "rss",
+        "arcgis_feature_json",
+        "ckan_package_search",
         "web_search",
         "web_crawl",
         "web_discovery",
@@ -1064,8 +1071,15 @@ class SchedulerOpsExportSummaryRead(ForteModel):
     report_index: SchedulerOpsReportIndexRead
     tasks: list[ScheduledTaskRead]
 
-WatchType = Literal["source_delta", "image_change", "observation_rule", "source_health"]
-WatchState = Literal["enabled", "paused"]
+
+WatchType = Literal[
+    "source_delta",
+    "image_change",
+    "observation_rule",
+    "source_health",
+    "investigation_watch",
+]
+WatchState = Literal["enabled", "paused", "archived"]
 WatchSeverity = Literal["info", "warning", "critical"]
 WatchRunStatus = Literal["running", "completed", "failed"]
 WatchRunOutcome = Literal["pending", "baseline", "no_change", "change", "failure"]
@@ -1087,8 +1101,177 @@ class NotificationPolicy(StrictForteModel):
     @model_validator(mode="after")
     def require_api_for_rss(self) -> "NotificationPolicy":
         if self.rss_enabled and not self.api_enabled:
-            raise ValueError("rss_enabled requires api_enabled because RSS is backed by local alerts")
+            raise ValueError(
+                "rss_enabled requires api_enabled because RSS is backed by local alerts"
+            )
         return self
+
+
+InvestigationSourceType = Literal[
+    "public_api",
+    "rss",
+    "website",
+    "news",
+    "public_social",
+    "public_video",
+    "dataset",
+    "government_record",
+    "court_record",
+    "financial_record",
+    "imagery",
+    "local_feed",
+]
+
+
+class DomainPolicySnapshot(StrictForteModel):
+    """The policy captured when a rule is compiled, rather than mutable live policy."""
+
+    policy_version: str = Field(default="local-default-v1", min_length=1, max_length=80)
+    allowed_domains: list[str] = Field(default_factory=list, max_length=500)
+    blocked_domains: list[str] = Field(default_factory=list, max_length=500)
+    allow_private_networks: bool = False
+    robots_mode: Literal["respect", "ignore"] = "respect"
+
+    @field_validator("allowed_domains", "blocked_domains")
+    @classmethod
+    def normalize_domains(cls, value: list[str]) -> list[str]:
+        normalized = sorted({item.strip().lower() for item in value if item.strip()})
+        if any("/" in item or ":" in item for item in normalized):
+            raise ValueError("domain policy entries must be hostnames, not URLs")
+        return normalized
+
+    @model_validator(mode="after")
+    def prevent_conflicting_domains(self) -> "DomainPolicySnapshot":
+        overlap = set(self.allowed_domains) & set(self.blocked_domains)
+        if overlap:
+            raise ValueError(f"domains cannot be both allowed and blocked: {sorted(overlap)}")
+        return self
+
+
+class InvestigationTimeContext(StrictForteModel):
+    start_at: datetime | None = None
+    end_at: datetime | None = None
+    relative_description: str | None = Field(default=None, max_length=240)
+
+    @model_validator(mode="after")
+    def validate_range(self) -> "InvestigationTimeContext":
+        if self.start_at and self.end_at and self.end_at < self.start_at:
+            raise ValueError("time context end_at must not be before start_at")
+        return self
+
+
+class WatchFetchBudget(StrictForteModel):
+    max_requests_per_run: int = Field(default=25, ge=1, le=1000)
+    max_bytes_per_run: int = Field(default=25_000_000, ge=1_024, le=500_000_000)
+    max_concurrency: int = Field(default=2, ge=1, le=20)
+    max_sources_per_run: int = Field(default=25, ge=1, le=500)
+
+
+class WatchSchedulePolicy(StrictForteModel):
+    interval_seconds: int = Field(default=3600, ge=60, le=2_592_000)
+    retry_attempts: int = Field(default=2, ge=0, le=10)
+    retry_backoff_seconds: float = Field(default=30.0, ge=0.0, le=86_400.0)
+    review_cadence_seconds: int = Field(default=86_400, ge=60, le=31_536_000)
+    expires_at: datetime | None = None
+
+
+class InvestigationWatchRule(StrictForteModel):
+    """A fully deterministic, policy-bound continuing-investigation instruction."""
+
+    mode: Literal["investigation_watch"] = "investigation_watch"
+    specification_version: Literal["1.0"] = "1.0"
+    parent_investigation_id: str = Field(min_length=1, max_length=160)
+    query_version: str = Field(default="1", min_length=1, max_length=80)
+    query: str = Field(min_length=1, max_length=4000)
+    target_concepts: list[str] = Field(default_factory=list, max_length=100)
+    target_entities: list[str] = Field(default_factory=list, max_length=100)
+    target_locations: list[str] = Field(default_factory=list, max_length=100)
+    time_context: InvestigationTimeContext = Field(default_factory=InvestigationTimeContext)
+    allowed_source_types: list[InvestigationSourceType] = Field(
+        default_factory=lambda: [
+            "public_api",
+            "rss",
+            "website",
+            "news",
+            "dataset",
+            "government_record",
+        ]
+    )
+    domain_policy_snapshot: DomainPolicySnapshot = Field(default_factory=DomainPolicySnapshot)
+    relevance_threshold: float = Field(default=0.6, ge=0.0, le=1.0)
+    materiality_threshold: float = Field(default=0.75, ge=0.0, le=1.0)
+    fetch_budget: WatchFetchBudget = Field(default_factory=WatchFetchBudget)
+    schedule_policy: WatchSchedulePolicy = Field(default_factory=WatchSchedulePolicy)
+    report_on_demand: bool = True
+
+    @field_validator("query")
+    @classmethod
+    def normalize_query(cls, value: str) -> str:
+        return " ".join(value.split())
+
+    @field_validator("target_concepts", "target_entities", "target_locations")
+    @classmethod
+    def normalize_targets(cls, value: list[str]) -> list[str]:
+        return sorted({" ".join(item.split()).casefold() for item in value if item.strip()})
+
+    @field_validator("allowed_source_types")
+    @classmethod
+    def dedupe_source_types(
+        cls, value: list[InvestigationSourceType]
+    ) -> list[InvestigationSourceType]:
+        if not value:
+            raise ValueError("an investigation watch needs at least one allowed source type")
+        return sorted(set(value))
+
+    @model_validator(mode="after")
+    def validate_materiality_and_scope(self) -> "InvestigationWatchRule":
+        if self.materiality_threshold < self.relevance_threshold:
+            raise ValueError("materiality_threshold must be at least relevance_threshold")
+        if not (self.target_concepts or self.target_entities or self.target_locations):
+            raise ValueError(
+                "an investigation watch needs at least one target concept, entity, or location"
+            )
+        return self
+
+
+class InvestigationWatchCompileRequest(StrictForteModel):
+    """Input to the deterministic compiler. It deliberately carries no model prompt."""
+
+    instruction: str = Field(min_length=1, max_length=4000)
+    parent_investigation_id: str = Field(min_length=1, max_length=160)
+    query_version: str = Field(default="1", min_length=1, max_length=80)
+    allowed_source_types: list[InvestigationSourceType] | None = None
+    domain_policy_snapshot: DomainPolicySnapshot = Field(default_factory=DomainPolicySnapshot)
+    relevance_threshold: float = Field(default=0.6, ge=0.0, le=1.0)
+    materiality_threshold: float = Field(default=0.75, ge=0.0, le=1.0)
+    fetch_budget: WatchFetchBudget = Field(default_factory=WatchFetchBudget)
+    schedule_policy: WatchSchedulePolicy = Field(default_factory=WatchSchedulePolicy)
+    target_concepts: list[str] = Field(default_factory=list, max_length=100)
+    target_entities: list[str] = Field(default_factory=list, max_length=100)
+    target_locations: list[str] = Field(default_factory=list, max_length=100)
+
+
+class InvestigationWatchCandidateCreate(InvestigationWatchCompileRequest):
+    """Compiler input plus the local watch identity for a reviewable candidate."""
+
+    name: str = Field(min_length=1, max_length=160)
+    slug: str = Field(
+        min_length=1,
+        max_length=160,
+        pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$",
+    )
+    description: str = ""
+    severity: WatchSeverity = "info"
+
+
+class InvestigationWatchCompilation(StrictForteModel):
+    compiler_name: str = "deterministic-investigation-watch-v1"
+    rule: InvestigationWatchRule
+    canonical_rule_json: dict[str, Any]
+    rule_hash: str = Field(min_length=64, max_length=64)
+    scope_preview_json: dict[str, Any]
+    unresolved_ambiguities: list[str] = Field(default_factory=list)
+    requires_operator_review: bool = True
 
 
 class SourceDeltaRule(StrictForteModel):
@@ -1194,7 +1377,7 @@ class SourceHealthRule(StrictForteModel):
 
 
 WatchRule = Annotated[
-    SourceDeltaRule | ImageChangeRule | ObservationRule | SourceHealthRule,
+    SourceDeltaRule | ImageChangeRule | ObservationRule | SourceHealthRule | InvestigationWatchRule,
     Field(discriminator="mode"),
 ]
 
@@ -1222,6 +1405,7 @@ class WatchCreate(StrictForteModel):
     interval_seconds: int | None = Field(default=None, ge=60)
     severity: WatchSeverity = "info"
     notification_policy_json: NotificationPolicy = Field(default_factory=NotificationPolicy)
+    coverage_json: dict[str, Any] = Field(default_factory=dict)
     metadata_json: dict[str, Any] = Field(default_factory=dict)
     provenance_json: dict[str, Any] = Field(default_factory=dict)
 
@@ -1254,6 +1438,7 @@ class WatchUpdate(StrictForteModel):
     interval_seconds: int | None = Field(default=None, ge=60)
     severity: WatchSeverity | None = None
     notification_policy_json: NotificationPolicy | None = None
+    coverage_json: dict[str, Any] | None = None
     metadata_json: dict[str, Any] | None = None
     provenance_json: dict[str, Any] | None = None
 
@@ -1268,11 +1453,40 @@ class WatchRead(WatchCreate):
     watch_id: int
     baseline_json: dict[str, Any]
     dedupe_json: dict[str, Any]
+    coverage_json: dict[str, Any]
     last_evaluated_at: datetime | None
     last_changed_at: datetime | None
     next_run_at: datetime | None
     created_at: datetime
     updated_at: datetime
+
+
+class WatchRuleVersionRead(StrictForteModel):
+    watch_rule_version_id: int
+    watch_id: int
+    version_number: int
+    query_version: str
+    status: str
+    compiler_name: str
+    original_instruction: str | None
+    rule_hash: str
+    rule_json: dict[str, Any]
+    scope_preview_json: dict[str, Any]
+    created_at: datetime
+    activated_at: datetime | None
+    superseded_at: datetime | None
+    archived_at: datetime | None
+    metadata_json: dict[str, Any]
+
+
+class WatchReportRead(StrictForteModel):
+    watch_report_id: int
+    watch_id: int
+    rule_version: int | None
+    report_hash: str
+    report_json: dict[str, Any]
+    generated_at: datetime
+    requested_by: str
 
 
 class WatchRunRead(StrictForteModel):
@@ -1314,7 +1528,6 @@ class WatchEvaluateRequest(StrictForteModel):
 class WatchEvaluateTaskPayload(StrictForteModel):
     watch_id: int = Field(gt=0)
     force: bool = False
-
 
     tasks: list[ScheduledTaskRead]
 

@@ -8,13 +8,9 @@ from fastapi import FastAPI
 from src.config import get_settings
 from src.db import init_db
 from src.routes.alerts import router as alerts_router
-<<<<<<< HEAD
-from src.routes.cameras import router as cameras_router
-=======
 from src.routes.camera_sources import router as camera_sources_router
 from src.routes.cameras import router as cameras_router
 from src.routes.clickhouse import router as clickhouse_router
->>>>>>> 05aeee6 (chore: initialize repository)
 from src.routes.custody import router as custody_router
 from src.routes.discovery import router as discovery_router
 from src.routes.entities import router as entities_router
@@ -30,6 +26,7 @@ from src.routes.storage import router as storage_router
 from src.routes.sources import router as sources_router
 from src.routes.source_trust import router as source_trust_router
 from src.routes.watches import router as watches_router
+from src.routes.watch_feed import router as watch_feed_router
 
 
 @asynccontextmanager
@@ -52,13 +49,9 @@ def create_application() -> FastAPI:
     application.include_router(layer_router, prefix=settings.api_prefix)
     application.include_router(geofences_router, prefix=settings.api_prefix)
     application.include_router(alerts_router, prefix=settings.api_prefix)
-<<<<<<< HEAD
-    application.include_router(cameras_router, prefix=settings.api_prefix)
-=======
     application.include_router(camera_sources_router, prefix=settings.api_prefix)
     application.include_router(cameras_router, prefix=settings.api_prefix)
     application.include_router(clickhouse_router, prefix=settings.api_prefix)
->>>>>>> 05aeee6 (chore: initialize repository)
     application.include_router(custody_router, prefix=settings.api_prefix)
     application.include_router(discovery_router, prefix=settings.api_prefix)
     application.include_router(imports_router, prefix=settings.api_prefix)
@@ -69,4 +62,5 @@ def create_application() -> FastAPI:
     application.include_router(sources_router, prefix=settings.api_prefix)
     application.include_router(source_trust_router, prefix=settings.api_prefix)
     application.include_router(watches_router, prefix=settings.api_prefix)
+    application.include_router(watch_feed_router, prefix=settings.api_prefix)
     return application
