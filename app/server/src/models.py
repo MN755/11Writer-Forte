@@ -44,7 +44,9 @@ class EventORM(TimestampMixin, Base):
     redaction_level: Mapped[str] = mapped_column(String(50), default="public")
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
-    observation_links: Mapped[list["EventObservationLinkORM"]] = relationship(back_populates="event")
+    observation_links: Mapped[list["EventObservationLinkORM"]] = relationship(
+        back_populates="event"
+    )
     products: Mapped[list["SituationProductORM"]] = relationship(back_populates="event")
 
 
@@ -60,7 +62,9 @@ class EntityORM(TimestampMixin, Base):
     redaction_level: Mapped[str] = mapped_column(String(50), default="public")
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
-    observation_links: Mapped[list["EntityObservationLinkORM"]] = relationship(back_populates="entity")
+    observation_links: Mapped[list["EntityObservationLinkORM"]] = relationship(
+        back_populates="entity"
+    )
 
 
 class GeofenceORM(TimestampMixin, Base):
@@ -80,7 +84,9 @@ class AlertORM(TimestampMixin, Base):
 
     alert_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     event_id: Mapped[int | None] = mapped_column(ForeignKey("events.event_id"), default=None)
-    geofence_id: Mapped[int | None] = mapped_column(ForeignKey("geofences.geofence_id"), default=None)
+    geofence_id: Mapped[int | None] = mapped_column(
+        ForeignKey("geofences.geofence_id"), default=None
+    )
     severity: Mapped[str] = mapped_column(String(30), default="info")
     status: Mapped[str] = mapped_column(String(30), default="open")
     dedupe_key: Mapped[str | None] = mapped_column(String(160), index=True, default=None)
@@ -137,8 +143,12 @@ class ObservationORM(TimestampMixin, Base):
     raw_hash: Mapped[str] = mapped_column(String(64), index=True)
 
     import_run: Mapped[LocalImportRunORM | None] = relationship(back_populates="observations")
-    event_links: Mapped[list["EventObservationLinkORM"]] = relationship(back_populates="observation")
-    entity_links: Mapped[list["EntityObservationLinkORM"]] = relationship(back_populates="observation")
+    event_links: Mapped[list["EventObservationLinkORM"]] = relationship(
+        back_populates="observation"
+    )
+    entity_links: Mapped[list["EntityObservationLinkORM"]] = relationship(
+        back_populates="observation"
+    )
 
 
 class CameraInventoryORM(TimestampMixin, Base):
@@ -146,7 +156,9 @@ class CameraInventoryORM(TimestampMixin, Base):
 
     camera_inventory_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     camera_key: Mapped[str] = mapped_column(String(160), unique=True, index=True)
-    observation_id: Mapped[int | None] = mapped_column(ForeignKey("observations.observation_id"), default=None, index=True)
+    observation_id: Mapped[int | None] = mapped_column(
+        ForeignKey("observations.observation_id"), default=None, index=True
+    )
     external_id: Mapped[str | None] = mapped_column(String(120), default=None, index=True)
     name: Mapped[str] = mapped_column(String(200))
     source_domain: Mapped[str | None] = mapped_column(String(255), default=None, index=True)
@@ -165,12 +177,12 @@ class CameraInventoryORM(TimestampMixin, Base):
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
 
-<<<<<<< HEAD
-=======
 class CameraSourceInventoryORM(TimestampMixin, Base):
     __tablename__ = "camera_source_inventory"
 
-    camera_source_inventory_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    camera_source_inventory_id: Mapped[int] = mapped_column(
+        Integer, primary_key=True, autoincrement=True
+    )
     candidate_key: Mapped[str] = mapped_column(String(200), unique=True, index=True)
     camera_inventory_id: Mapped[int | None] = mapped_column(
         ForeignKey("camera_inventory.camera_inventory_id"),
@@ -199,7 +211,6 @@ class CameraSourceInventoryORM(TimestampMixin, Base):
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
 
->>>>>>> 05aeee6 (chore: initialize repository)
 class StorageObjectORM(TimestampMixin, Base):
     __tablename__ = "storage_objects"
 
@@ -249,7 +260,9 @@ class ScheduledTaskORM(TimestampMixin, Base):
     source_id: Mapped[int | None] = mapped_column(default=None, index=True)
     target_path: Mapped[str | None] = mapped_column(Text, default=None)
     layer_key: Mapped[str | None] = mapped_column(String(80), default=None)
-    geofence_id: Mapped[int | None] = mapped_column(ForeignKey("geofences.geofence_id"), default=None)
+    geofence_id: Mapped[int | None] = mapped_column(
+        ForeignKey("geofences.geofence_id"), default=None
+    )
     notes: Mapped[str] = mapped_column(Text, default="")
     payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     last_run_at: Mapped[datetime | None] = mapped_column(default=None)
@@ -276,9 +289,13 @@ class ScheduledTaskRunORM(Base):
 class EventObservationLinkORM(Base):
     __tablename__ = "event_observation_links"
 
-    event_observation_link_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    event_observation_link_id: Mapped[int] = mapped_column(
+        Integer, primary_key=True, autoincrement=True
+    )
     event_id: Mapped[int] = mapped_column(ForeignKey("events.event_id"), index=True)
-    observation_id: Mapped[int] = mapped_column(ForeignKey("observations.observation_id"), index=True)
+    observation_id: Mapped[int] = mapped_column(
+        ForeignKey("observations.observation_id"), index=True
+    )
     relationship_type: Mapped[str] = mapped_column(String(40), default="supporting")
     confidence_contribution: Mapped[float] = mapped_column(Float, default=0.5)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
@@ -290,9 +307,13 @@ class EventObservationLinkORM(Base):
 class EntityObservationLinkORM(Base):
     __tablename__ = "entity_observation_links"
 
-    entity_observation_link_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    entity_observation_link_id: Mapped[int] = mapped_column(
+        Integer, primary_key=True, autoincrement=True
+    )
     entity_id: Mapped[int] = mapped_column(ForeignKey("entities.entity_id"), index=True)
-    observation_id: Mapped[int] = mapped_column(ForeignKey("observations.observation_id"), index=True)
+    observation_id: Mapped[int] = mapped_column(
+        ForeignKey("observations.observation_id"), index=True
+    )
     match_basis: Mapped[str] = mapped_column(String(80), default="rule_based")
     confidence_contribution: Mapped[float] = mapped_column(Float, default=0.5)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
@@ -337,7 +358,9 @@ class SourceRunORM(Base):
 
     source_run_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     source_id: Mapped[int] = mapped_column(ForeignKey("source_definitions.source_id"), index=True)
-    import_run_id: Mapped[int | None] = mapped_column(ForeignKey("local_import_runs.import_run_id"), default=None)
+    import_run_id: Mapped[int | None] = mapped_column(
+        ForeignKey("local_import_runs.import_run_id"), default=None
+    )
     status: Mapped[str] = mapped_column(String(30), default="queued")
     started_at: Mapped[datetime] = mapped_column(default=utcnow)
     finished_at: Mapped[datetime | None] = mapped_column(default=None)
@@ -545,8 +568,12 @@ class SourceCandidateRevisionORM(Base):
         Index("ix_source_candidate_revision_observed", "candidate_id", "observed_at"),
     )
 
-    candidate_revision_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    candidate_id: Mapped[int] = mapped_column(ForeignKey("source_candidates.candidate_id"), index=True)
+    candidate_revision_id: Mapped[int] = mapped_column(
+        Integer, primary_key=True, autoincrement=True
+    )
+    candidate_id: Mapped[int] = mapped_column(
+        ForeignKey("source_candidates.candidate_id"), index=True
+    )
     campaign_id: Mapped[int | None] = mapped_column(
         ForeignKey("discovery_campaigns.campaign_id"),
         default=None,
@@ -617,7 +644,9 @@ class CandidateHealthCheckORM(Base):
     )
 
     health_check_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    candidate_id: Mapped[int] = mapped_column(ForeignKey("source_candidates.candidate_id"), index=True)
+    candidate_id: Mapped[int] = mapped_column(
+        ForeignKey("source_candidates.candidate_id"), index=True
+    )
     discovery_run_id: Mapped[int | None] = mapped_column(
         ForeignKey("discovery_runs.discovery_run_id"),
         default=None,
@@ -673,8 +702,12 @@ class CandidatePromotionDecisionORM(Base):
         Index("ix_candidate_promotion_decision_decided", "decision", "decided_at"),
     )
 
-    promotion_decision_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    candidate_id: Mapped[int] = mapped_column(ForeignKey("source_candidates.candidate_id"), index=True)
+    promotion_decision_id: Mapped[int] = mapped_column(
+        Integer, primary_key=True, autoincrement=True
+    )
+    candidate_id: Mapped[int] = mapped_column(
+        ForeignKey("source_candidates.candidate_id"), index=True
+    )
     source_id: Mapped[int | None] = mapped_column(
         ForeignKey("source_definitions.source_id"),
         default=None,
@@ -686,7 +719,9 @@ class CandidatePromotionDecisionORM(Base):
         index=True,
     )
     decision: Mapped[str] = mapped_column(String(40), default="deferred", index=True)
-    recommended_source_kind: Mapped[str | None] = mapped_column(String(40), default=None, index=True)
+    recommended_source_kind: Mapped[str | None] = mapped_column(
+        String(40), default=None, index=True
+    )
     recommended_schedule_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     score: Mapped[float] = mapped_column(Float, default=0.0)
     score_bucket: Mapped[str] = mapped_column(String(40), default="keep_candidate")
@@ -734,7 +769,9 @@ class RobotsObservationORM(Base):
         Index("ix_robots_observation_domain_fetched", "normalized_domain", "fetched_at"),
     )
 
-    robots_observation_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    robots_observation_id: Mapped[int] = mapped_column(
+        Integer, primary_key=True, autoincrement=True
+    )
     domain_policy_id: Mapped[int | None] = mapped_column(
         ForeignKey("discovery_domain_policies.domain_policy_id"),
         default=None,
@@ -768,7 +805,9 @@ class DiscoveryArtifactORM(Base):
         Index("ix_discovery_artifact_run_kind", "discovery_run_id", "artifact_kind"),
     )
 
-    discovery_artifact_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    discovery_artifact_id: Mapped[int] = mapped_column(
+        Integer, primary_key=True, autoincrement=True
+    )
     candidate_id: Mapped[int | None] = mapped_column(
         ForeignKey("source_candidates.candidate_id"),
         default=None,
@@ -800,6 +839,116 @@ class DiscoveryArtifactORM(Base):
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
+class InvestigationORM(TimestampMixin, Base):
+    """A durable, operator-scoped public-information investigation."""
+
+    __tablename__ = "investigations"
+
+    investigation_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    slug: Mapped[str] = mapped_column(String(160), unique=True, index=True)
+    question: Mapped[str] = mapped_column(Text)
+    operator_scope_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    time_window_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    geography_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    source_policy_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    research_budget_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    evidence_threshold_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    state: Mapped[str] = mapped_column(String(40), default="draft", index=True)
+    stop_reason: Mapped[str | None] = mapped_column(Text, default=None)
+    stopped_at: Mapped[datetime | None] = mapped_column(default=None, index=True)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+    discovery_attempts: Mapped[list["InvestigationDiscoveryAttemptORM"]] = relationship(
+        back_populates="investigation"
+    )
+    report_versions: Mapped[list["InvestigationReportVersionORM"]] = relationship(
+        back_populates="investigation"
+    )
+    evidence_promotions: Mapped[list["InvestigationEvidencePromotionORM"]] = relationship(
+        back_populates="investigation"
+    )
+
+
+class InvestigationDiscoveryAttemptORM(Base):
+    __tablename__ = "investigation_discovery_attempts"
+    __table_args__ = (
+        Index("ix_investigation_attempt_investigation_status", "investigation_id", "status"),
+        Index("ix_investigation_attempt_investigation_created", "investigation_id", "created_at"),
+    )
+
+    investigation_attempt_id: Mapped[int] = mapped_column(
+        Integer, primary_key=True, autoincrement=True
+    )
+    investigation_id: Mapped[int] = mapped_column(
+        ForeignKey("investigations.investigation_id"), index=True
+    )
+    lead_key: Mapped[str] = mapped_column(String(200), index=True)
+    discovery_path: Mapped[str] = mapped_column(String(80), default="public_web", index=True)
+    source_uri: Mapped[str | None] = mapped_column(Text, default=None)
+    status: Mapped[str] = mapped_column(String(40), default="queued", index=True)
+    reason: Mapped[str] = mapped_column(String(40), default="dead_end", index=True)
+    attempted_at: Mapped[datetime | None] = mapped_column(default=None, index=True)
+    alternate_eligible: Mapped[bool] = mapped_column(default=False)
+    alternate_queued: Mapped[bool] = mapped_column(default=False)
+    error_text: Mapped[str | None] = mapped_column(Text, default=None)
+    details_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+    investigation: Mapped[InvestigationORM] = relationship(back_populates="discovery_attempts")
+
+
+class InvestigationReportVersionORM(Base):
+    __tablename__ = "investigation_report_versions"
+    __table_args__ = (
+        UniqueConstraint(
+            "investigation_id", "version_number", name="uq_investigation_report_version"
+        ),
+    )
+
+    investigation_report_version_id: Mapped[int] = mapped_column(
+        Integer, primary_key=True, autoincrement=True
+    )
+    investigation_id: Mapped[int] = mapped_column(
+        ForeignKey("investigations.investigation_id"), index=True
+    )
+    version_number: Mapped[int] = mapped_column(Integer)
+    report_spec_version: Mapped[str] = mapped_column(String(80), default="1")
+    report_text: Mapped[str] = mapped_column(Text, default="")
+    citations_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    storage_object_id: Mapped[int | None] = mapped_column(
+        ForeignKey("storage_objects.storage_object_id"), default=None, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(default=utcnow, index=True)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+    investigation: Mapped[InvestigationORM] = relationship(back_populates="report_versions")
+
+
+class InvestigationEvidencePromotionORM(Base):
+    __tablename__ = "investigation_evidence_promotions"
+    __table_args__ = (
+        UniqueConstraint(
+            "investigation_id", "storage_object_id", name="uq_investigation_evidence_promotion"
+        ),
+    )
+
+    investigation_evidence_promotion_id: Mapped[int] = mapped_column(
+        Integer, primary_key=True, autoincrement=True
+    )
+    investigation_id: Mapped[int] = mapped_column(
+        ForeignKey("investigations.investigation_id"), index=True
+    )
+    storage_object_id: Mapped[int] = mapped_column(
+        ForeignKey("storage_objects.storage_object_id"), index=True
+    )
+    disposition: Mapped[str] = mapped_column(String(30), default="promoted", index=True)
+    rationale: Mapped[str] = mapped_column(Text, default="")
+    promoted_at: Mapped[datetime] = mapped_column(default=utcnow, index=True)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+    investigation: Mapped[InvestigationORM] = relationship(back_populates="evidence_promotions")
+
+
 class WatchORM(TimestampMixin, Base):
     __tablename__ = "watches"
 
@@ -811,13 +960,25 @@ class WatchORM(TimestampMixin, Base):
     watch_type: Mapped[str] = mapped_column(String(40), index=True)
     state: Mapped[str] = mapped_column(String(30), default="enabled", index=True)
     rule_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
-    source_id: Mapped[int | None] = mapped_column(ForeignKey("source_definitions.source_id"), default=None, index=True)
-    camera_inventory_id: Mapped[int | None] = mapped_column(ForeignKey("camera_inventory.camera_inventory_id"), default=None, index=True)
-    camera_source_inventory_id: Mapped[int | None] = mapped_column(ForeignKey("camera_source_inventory.camera_source_inventory_id"), default=None, index=True)
+    source_id: Mapped[int | None] = mapped_column(
+        ForeignKey("source_definitions.source_id"), default=None, index=True
+    )
+    camera_inventory_id: Mapped[int | None] = mapped_column(
+        ForeignKey("camera_inventory.camera_inventory_id"), default=None, index=True
+    )
+    camera_source_inventory_id: Mapped[int | None] = mapped_column(
+        ForeignKey("camera_source_inventory.camera_source_inventory_id"), default=None, index=True
+    )
     layer_key: Mapped[str | None] = mapped_column(String(80), default=None, index=True)
-    event_id: Mapped[int | None] = mapped_column(ForeignKey("events.event_id"), default=None, index=True)
-    geofence_id: Mapped[int | None] = mapped_column(ForeignKey("geofences.geofence_id"), default=None, index=True)
-    scheduled_task_id: Mapped[int | None] = mapped_column(ForeignKey("scheduled_tasks.task_id"), default=None, index=True)
+    event_id: Mapped[int | None] = mapped_column(
+        ForeignKey("events.event_id"), default=None, index=True
+    )
+    geofence_id: Mapped[int | None] = mapped_column(
+        ForeignKey("geofences.geofence_id"), default=None, index=True
+    )
+    scheduled_task_id: Mapped[int | None] = mapped_column(
+        ForeignKey("scheduled_tasks.task_id"), default=None, index=True
+    )
     interval_seconds: Mapped[int | None] = mapped_column(Integer, default=None)
     severity: Mapped[str] = mapped_column(String(30), default="info", index=True)
     notification_policy_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
@@ -837,10 +998,18 @@ class WatchRunORM(Base):
 
     watch_run_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     watch_id: Mapped[int] = mapped_column(ForeignKey("watches.watch_id"), index=True)
-    scheduled_task_run_id: Mapped[int | None] = mapped_column(ForeignKey("scheduled_task_runs.task_run_id"), default=None, index=True)
-    source_run_id: Mapped[int | None] = mapped_column(ForeignKey("source_runs.source_run_id"), default=None, index=True)
-    alert_id: Mapped[int | None] = mapped_column(ForeignKey("alerts.alert_id"), default=None, index=True)
-    storage_object_id: Mapped[int | None] = mapped_column(ForeignKey("storage_objects.storage_object_id"), default=None, index=True)
+    scheduled_task_run_id: Mapped[int | None] = mapped_column(
+        ForeignKey("scheduled_task_runs.task_run_id"), default=None, index=True
+    )
+    source_run_id: Mapped[int | None] = mapped_column(
+        ForeignKey("source_runs.source_run_id"), default=None, index=True
+    )
+    alert_id: Mapped[int | None] = mapped_column(
+        ForeignKey("alerts.alert_id"), default=None, index=True
+    )
+    storage_object_id: Mapped[int | None] = mapped_column(
+        ForeignKey("storage_objects.storage_object_id"), default=None, index=True
+    )
     status: Mapped[str] = mapped_column(String(30), default="running", index=True)
     outcome: Mapped[str] = mapped_column(String(30), default="pending", index=True)
     started_at: Mapped[datetime] = mapped_column(default=utcnow, index=True)

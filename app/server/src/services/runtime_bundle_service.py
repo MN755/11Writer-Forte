@@ -31,12 +31,7 @@ def runtime_bundle_now() -> datetime:
 def default_runtime_bundle_output_path() -> Path:
     settings = get_settings()
     timestamp = runtime_bundle_now().strftime("%Y%m%dT%H%M%S%fZ")
-    return (
-        settings.data_dir
-        / "exports"
-        / "runtime-bundles"
-        / f"runtime-bundle-{timestamp}.zip"
-    )
+    return settings.data_dir / "exports" / "runtime-bundles" / f"runtime-bundle-{timestamp}.zip"
 
 
 def export_runtime_bundle(
@@ -49,8 +44,8 @@ def export_runtime_bundle(
     settings.ensure_runtime_dirs()
     resolved_output = output_path.expanduser().resolve()
     snapshot = build_runtime_snapshot(session)
-    serializable_snapshot = TypeAdapter(RuntimeSnapshotRead).validate_python(snapshot).model_dump(
-        mode="json"
+    serializable_snapshot = (
+        TypeAdapter(RuntimeSnapshotRead).validate_python(snapshot).model_dump(mode="json")
     )
     bundle_files = collect_bundle_files(
         settings.data_dir,
@@ -266,7 +261,9 @@ def parse_runtime_bundle_manifest(payload: bytes) -> dict[str, Any]:
         byte_size = int(entry.get("byte_size", 0))
         sha256 = str(entry.get("sha256", "")).strip().lower()
         if len(sha256) != 64:
-            raise ValueError(f"Runtime bundle manifest entry '{relative_path}' has an invalid sha256.")
+            raise ValueError(
+                f"Runtime bundle manifest entry '{relative_path}' has an invalid sha256."
+            )
         normalized_files.append(
             {
                 "relative_path": relative_path,
@@ -338,7 +335,9 @@ def clear_directory_contents(directory: Path, *, exclude_paths: set[Path]) -> No
     normalized_excludes = {path.resolve() for path in exclude_paths if path.exists()}
     for child in resolved_directory.iterdir():
         resolved_child = child.resolve()
-        if any(resolved_child == path or path in resolved_child.parents for path in normalized_excludes):
+        if any(
+            resolved_child == path or path in resolved_child.parents for path in normalized_excludes
+        ):
             continue
         if child.is_dir():
             shutil.rmtree(child)

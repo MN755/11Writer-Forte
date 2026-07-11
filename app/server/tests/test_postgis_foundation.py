@@ -37,14 +37,18 @@ def test_spatial_wkt_is_persisted_for_observations_and_geofences(
         encoding="utf-8",
     )
 
-    client.post("/api/imports/local", json={"source_path": str(fixture), "layer_key": "marine-track"})
+    client.post(
+        "/api/imports/local", json={"source_path": str(fixture), "layer_key": "marine-track"}
+    )
     geofence_response = client.post(
         "/api/geofences",
         json={
             "name": "Port polygon",
             "geometry_geojson": {
                 "type": "Polygon",
-                "coordinates": [[[-96.0, 29.0], [-94.0, 29.0], [-94.0, 31.0], [-96.0, 31.0], [-96.0, 29.0]]],
+                "coordinates": [
+                    [[-96.0, 29.0], [-94.0, 29.0], [-94.0, 31.0], [-96.0, 31.0], [-96.0, 29.0]]
+                ],
             },
         },
     )
@@ -52,7 +56,9 @@ def test_spatial_wkt_is_persisted_for_observations_and_geofences(
 
     session = get_session_factory()()
     try:
-        observation = session.scalar(select(ObservationORM).order_by(ObservationORM.observation_id.asc()))
+        observation = session.scalar(
+            select(ObservationORM).order_by(ObservationORM.observation_id.asc())
+        )
         geofence = session.scalar(select(GeofenceORM).order_by(GeofenceORM.geofence_id.asc()))
         assert observation is not None
         assert geofence is not None
@@ -199,10 +205,12 @@ def test_init_db_reconciles_additive_columns(tmp_path: Path, monkeypatch) -> Non
             row[1] for row in check_connection.execute("PRAGMA table_info(observations)").fetchall()
         }
         import_columns = {
-            row[1] for row in check_connection.execute("PRAGMA table_info(local_import_runs)").fetchall()
+            row[1]
+            for row in check_connection.execute("PRAGMA table_info(local_import_runs)").fetchall()
         }
         scheduled_task_columns = {
-            row[1] for row in check_connection.execute("PRAGMA table_info(scheduled_tasks)").fetchall()
+            row[1]
+            for row in check_connection.execute("PRAGMA table_info(scheduled_tasks)").fetchall()
         }
         alert_columns = {
             row[1] for row in check_connection.execute("PRAGMA table_info(alerts)").fetchall()

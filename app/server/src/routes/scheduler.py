@@ -5,21 +5,15 @@ from sqlalchemy.orm import Session
 from src.db import get_db
 from src.models import ScheduledTaskORM, ScheduledTaskRunORM
 from src.schemas import (
-<<<<<<< HEAD
-=======
     SchedulerOpsExportSummaryRead,
     SchedulerInventorySummaryRead,
     SchedulerOpsReportIndexRead,
->>>>>>> 05aeee6 (chore: initialize repository)
     SchedulerKickResponse,
     ScheduledTaskCreate,
     ScheduledTaskRead,
     ScheduledTaskRunRead,
     ScheduledTaskUpdate,
 )
-<<<<<<< HEAD
-from src.services.scheduler_service import create_scheduled_task, run_due_tasks, run_task, update_scheduled_task
-=======
 from src.services.scheduler_service import (
     build_scheduler_inventory_summary,
     build_scheduler_ops_export_summary,
@@ -29,7 +23,6 @@ from src.services.scheduler_service import (
     run_task,
     update_scheduled_task,
 )
->>>>>>> 05aeee6 (chore: initialize repository)
 
 router = APIRouter(prefix="/scheduler", tags=["scheduler"])
 
@@ -40,8 +33,6 @@ def list_tasks(session: Session = Depends(get_db)) -> list[ScheduledTaskORM]:
     return list(session.scalars(statement))
 
 
-<<<<<<< HEAD
-=======
 @router.get("/summary", response_model=SchedulerInventorySummaryRead)
 def scheduler_summary(session: Session = Depends(get_db)) -> dict[str, object]:
     return build_scheduler_inventory_summary(session)
@@ -75,9 +66,10 @@ def scheduler_export_summary(
     )
 
 
->>>>>>> 05aeee6 (chore: initialize repository)
 @router.post("/tasks", response_model=ScheduledTaskRead)
-def create_task(payload: ScheduledTaskCreate, session: Session = Depends(get_db)) -> ScheduledTaskORM:
+def create_task(
+    payload: ScheduledTaskCreate, session: Session = Depends(get_db)
+) -> ScheduledTaskORM:
     try:
         return create_scheduled_task(session, payload)
     except ValueError as exc:

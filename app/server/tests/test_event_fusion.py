@@ -53,8 +53,12 @@ def test_event_fusion_creates_event_links_and_products(
         encoding="utf-8",
     )
 
-    client.post("/api/imports/local", json={"source_path": str(fixture_a), "layer_key": "marine-track"})
-    client.post("/api/imports/local", json={"source_path": str(fixture_b), "layer_key": "news-track"})
+    client.post(
+        "/api/imports/local", json={"source_path": str(fixture_a), "layer_key": "marine-track"}
+    )
+    client.post(
+        "/api/imports/local", json={"source_path": str(fixture_b), "layer_key": "news-track"}
+    )
 
     response = client.post(
         "/api/events/fuse",

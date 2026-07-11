@@ -60,9 +60,7 @@ def export_runtime_bundle_archive(
     )
     response.headers["X-ElevenWriter-Storage-Object-Id"] = str(result["storage_object_id"])
     response.headers["X-ElevenWriter-Bundle-SHA256"] = str(result["bundle_sha256"])
-    response.headers["X-ElevenWriter-Bundle-Format-Version"] = str(
-        result["bundle_format_version"]
-    )
+    response.headers["X-ElevenWriter-Bundle-Format-Version"] = str(result["bundle_format_version"])
     return response
 
 

@@ -18,7 +18,9 @@ router = APIRouter(prefix="/entities", tags=["entities"])
 
 @router.get("", response_model=list[EntityRead])
 def list_entities(session: Session = Depends(get_db)) -> list[EntityORM]:
-    statement = select(EntityORM).order_by(EntityORM.confidence_score.desc(), EntityORM.created_at.desc())
+    statement = select(EntityORM).order_by(
+        EntityORM.confidence_score.desc(), EntityORM.created_at.desc()
+    )
     return list(session.scalars(statement))
 
 
@@ -54,5 +56,11 @@ def list_entity_observations(
     entity = session.get(EntityORM, entity_id)
     if entity is None:
         raise HTTPException(status_code=404, detail=f"Entity {entity_id} does not exist.")
-    statement = select(EntityObservationLinkORM).where(EntityObservationLinkORM.entity_id == entity_id)
-    return list(session.scalars(statement.order_by(EntityObservationLinkORM.entity_observation_link_id.asc())))
+    statement = select(EntityObservationLinkORM).where(
+        EntityObservationLinkORM.entity_id == entity_id
+    )
+    return list(
+        session.scalars(
+            statement.order_by(EntityObservationLinkORM.entity_observation_link_id.asc())
+        )
+    )

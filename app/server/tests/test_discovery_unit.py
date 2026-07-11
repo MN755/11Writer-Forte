@@ -45,9 +45,12 @@ def test_canonical_url_validation_and_path_patterns() -> None:
     with pytest.raises(ValueError):
         canonicalize_url("/relative")
 
-    assert normalize_path_pattern(
-        "/incidents/123/550e8400-e29b-41d4-a716-446655440000/2026-07-09.json"
-    ) == "/incidents/{id}/{uuid}/{date}.json"
+    assert (
+        normalize_path_pattern(
+            "/incidents/123/550e8400-e29b-41d4-a716-446655440000/2026-07-09.json"
+        )
+        == "/incidents/{id}/{uuid}/{date}.json"
+    )
     assert normalize_path_pattern("https://example.test/files/abcdef0123456789.csv?q=1") == (
         "/files/{hash}.csv"
     )
@@ -215,17 +218,23 @@ def test_geo_relevance_intersection_and_name_overlap() -> None:
     }
 
     assert score_geo_relevance(hints, {"bbox": [-94.0, 44.5, -93.0, 45.5]}) == 100
-    assert score_geo_relevance(
-        hints,
-        {"polygon": [[-94, 44], [-92, 44], [-92, 46], [-94, 46], [-94, 44]]},
-    ) == 100
-    assert score_geo_relevance(
-        hints,
-        {
-            "type": "Polygon",
-            "coordinates": [[[-94, 44], [-92, 44], [-92, 46], [-94, 46], [-94, 44]]],
-        },
-    ) == 100
+    assert (
+        score_geo_relevance(
+            hints,
+            {"polygon": [[-94, 44], [-92, 44], [-92, 46], [-94, 46], [-94, 44]]},
+        )
+        == 100
+    )
+    assert (
+        score_geo_relevance(
+            hints,
+            {
+                "type": "Polygon",
+                "coordinates": [[[-94, 44], [-92, 44], [-92, 46], [-94, 46], [-94, 44]]],
+            },
+        )
+        == 100
+    )
     assert score_geo_relevance(hints, {"routes": ["Interstate I-94"]}) >= 78
     assert score_geo_relevance(hints, {"places": ["Duluth"], "bbox": [-93, 46, -92, 47]}) < 20
 
@@ -342,29 +351,38 @@ def test_camera_image_stream_websocket_sse_and_webhook_mappings() -> None:
     assert recommend_source_kind(image) == "camera_image"
     assert stream.document_type == "camera_stream"
     assert recommend_source_kind(stream) == "camera_stream"
-    assert recommend_source_kind(
-        {
-            "canonical_url": "wss://stream.example.gov/events",
-            "document_type": "stream_endpoint",
-            "format_hints": {"detected_format": "stream"},
-        }
-    ) == "websocket_stream"
-    assert recommend_source_kind(
-        {
-            "canonical_url": "https://stream.example.gov/events",
-            "media_type": "text/event-stream",
-            "document_type": "stream_endpoint",
-            "format_hints": {"detected_format": "stream"},
-        }
-    ) == "sse_stream"
-    assert recommend_source_kind(
-        {
-            "canonical_url": "https://receiver.example.gov/hook",
-            "document_type": "api_docs",
-            "format_hints": {"detected_format": "html"},
-            "operational_hints": {"webhook": True},
-        }
-    ) == "webhook_ingest"
+    assert (
+        recommend_source_kind(
+            {
+                "canonical_url": "wss://stream.example.gov/events",
+                "document_type": "stream_endpoint",
+                "format_hints": {"detected_format": "stream"},
+            }
+        )
+        == "websocket_stream"
+    )
+    assert (
+        recommend_source_kind(
+            {
+                "canonical_url": "https://stream.example.gov/events",
+                "media_type": "text/event-stream",
+                "document_type": "stream_endpoint",
+                "format_hints": {"detected_format": "stream"},
+            }
+        )
+        == "sse_stream"
+    )
+    assert (
+        recommend_source_kind(
+            {
+                "canonical_url": "https://receiver.example.gov/hook",
+                "document_type": "api_docs",
+                "format_hints": {"detected_format": "html"},
+                "operational_hints": {"webhook": True},
+            }
+        )
+        == "webhook_ingest"
+    )
 
 
 def test_dataclass_serialization_contract() -> None:

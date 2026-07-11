@@ -62,7 +62,9 @@ def test_event_export_bundle_includes_evidence_products_and_runs(
         ),
         encoding="utf-8",
     )
-    client.post("/api/imports/local", json={"source_path": str(second_fixture), "layer_key": "news-track"})
+    client.post(
+        "/api/imports/local", json={"source_path": str(second_fixture), "layer_key": "news-track"}
+    )
 
     geofence_response = client.post(
         "/api/geofences",
@@ -70,7 +72,9 @@ def test_event_export_bundle_includes_evidence_products_and_runs(
             "name": "Bundle Watch",
             "geometry_geojson": {
                 "type": "Polygon",
-                "coordinates": [[[-96.0, 29.0], [-94.0, 29.0], [-94.0, 31.0], [-96.0, 31.0], [-96.0, 29.0]]],
+                "coordinates": [
+                    [[-96.0, 29.0], [-94.0, 29.0], [-94.0, 31.0], [-96.0, 31.0], [-96.0, 29.0]]
+                ],
             },
             "rule_expression": "bundle watch",
         },
@@ -209,8 +213,12 @@ def test_event_export_bundle_honors_requested_redaction_level(
         encoding="utf-8",
     )
 
-    client.post("/api/imports/local", json={"source_path": str(fixture), "layer_key": "marine-track"})
-    client.post("/api/imports/local", json={"source_path": str(corroboration), "layer_key": "news-track"})
+    client.post(
+        "/api/imports/local", json={"source_path": str(fixture), "layer_key": "marine-track"}
+    )
+    client.post(
+        "/api/imports/local", json={"source_path": str(corroboration), "layer_key": "news-track"}
+    )
 
     entity_resolution = client.post(
         "/api/entities/resolve",
@@ -318,8 +326,12 @@ def test_event_export_bundle_rejects_lower_redaction_level_than_event(
         ),
         encoding="utf-8",
     )
-    client.post("/api/imports/local", json={"source_path": str(fixture_a), "layer_key": "confidential-feed"})
-    client.post("/api/imports/local", json={"source_path": str(fixture_b), "layer_key": "confidential-news"})
+    client.post(
+        "/api/imports/local", json={"source_path": str(fixture_a), "layer_key": "confidential-feed"}
+    )
+    client.post(
+        "/api/imports/local", json={"source_path": str(fixture_b), "layer_key": "confidential-news"}
+    )
 
     fused = client.post(
         "/api/events/fuse",

@@ -36,7 +36,9 @@ def test_observation_bbox_query_filters_results(client: TestClient, tmp_path: Pa
         encoding="utf-8",
     )
 
-    client.post("/api/imports/local", json={"source_path": str(inside), "layer_key": "marine-track"})
+    client.post(
+        "/api/imports/local", json={"source_path": str(inside), "layer_key": "marine-track"}
+    )
     client.post("/api/imports/local", json={"source_path": str(outside), "layer_key": "air-track"})
 
     response = client.get(
@@ -101,8 +103,12 @@ def test_cross_verification_clusters_independent_observations(
         encoding="utf-8",
     )
 
-    client.post("/api/imports/local", json={"source_path": str(fixture_a), "layer_key": "marine-track"})
-    client.post("/api/imports/local", json={"source_path": str(fixture_b), "layer_key": "news-track"})
+    client.post(
+        "/api/imports/local", json={"source_path": str(fixture_a), "layer_key": "marine-track"}
+    )
+    client.post(
+        "/api/imports/local", json={"source_path": str(fixture_b), "layer_key": "news-track"}
+    )
 
     response = client.get(
         "/api/observations/cross-verify",

@@ -16,7 +16,15 @@ EMAIL_RE = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECAS
 PHONE_RE = re.compile(r"\+?\d[\d\-\s().]{6,}\d")
 
 SIGNAL_SPECS: dict[str, tuple[str, ...]] = {
-    "person": ("email", "phone", "handle", "username", "passport_number", "full_name", "person_name"),
+    "person": (
+        "email",
+        "phone",
+        "handle",
+        "username",
+        "passport_number",
+        "full_name",
+        "person_name",
+    ),
     "organization": ("organization", "org_name", "company", "employer"),
     "vessel": ("vessel_name", "ship_name", "imo", "mmsi", "callsign"),
     "vehicle": ("tail_number", "registration"),
@@ -151,7 +159,9 @@ def materialize_entities(
             entity.redaction_level = request.redaction_level
             entity.metadata_json = metadata
 
-        log_entity_resolution(session, entity, component, confidence_score, created_new, actor=actor)
+        log_entity_resolution(
+            session, entity, component, confidence_score, created_new, actor=actor
+        )
         ensure_entity_links(session, entity, component, confidence_score, actor=actor)
         results.append(
             MaterializedEntity(
@@ -356,7 +366,9 @@ def compute_entity_confidence(component: dict[str, object]) -> float:
     return round(min(score, 0.99), 2)
 
 
-def build_entity_metadata(component: dict[str, object], confidence_score: float) -> dict[str, object]:
+def build_entity_metadata(
+    component: dict[str, object], confidence_score: float
+) -> dict[str, object]:
     observations: list[ObservationORM] = component["observations"]
     signals: list[EntitySignal] = component["signals"]
     return {
@@ -398,7 +410,9 @@ def log_entity_resolution(
         CustodyLogORM(
             object_type="entity",
             object_id=str(entity.entity_id),
-            action="entity_created_from_resolution" if created_new else "entity_updated_from_resolution",
+            action="entity_created_from_resolution"
+            if created_new
+            else "entity_updated_from_resolution",
             actor=actor,
             details_json=details,
         )
@@ -426,7 +440,9 @@ def ensure_entity_links(
     existing_ids = {
         link.observation_id
         for link in session.scalars(
-            select(EntityObservationLinkORM).where(EntityObservationLinkORM.entity_id == entity.entity_id)
+            select(EntityObservationLinkORM).where(
+                EntityObservationLinkORM.entity_id == entity.entity_id
+            )
         )
     }
     match_basis = f"{entity.entity_type}:{component['signal_keys'][0]}"

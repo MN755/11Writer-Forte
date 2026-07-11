@@ -95,7 +95,9 @@ def configure_fake_clickhouse(monkeypatch, *, row_count: int = 1) -> list[dict[s
         if request.full_url.endswith("/ping"):
             return FakeClickHouseResponse("Ok.\n")
         if "SELECT version()" in body:
-            return FakeClickHouseResponse('{"version":"26.6.1","current_database":"elevenwriter"}\n')
+            return FakeClickHouseResponse(
+                '{"version":"26.6.1","current_database":"elevenwriter"}\n'
+            )
         if "SELECT count(*) AS row_count" in body:
             return FakeClickHouseResponse(f'{{"row_count":{row_count}}}\n')
         return FakeClickHouseResponse("")
@@ -115,7 +117,9 @@ def test_geofence_schedule_creates_alert_and_custody_log(
             "description": "Simple polygon around a port.",
             "geometry_geojson": {
                 "type": "Polygon",
-                "coordinates": [[[-96.0, 29.0], [-94.0, 29.0], [-94.0, 31.0], [-96.0, 31.0], [-96.0, 29.0]]],
+                "coordinates": [
+                    [[-96.0, 29.0], [-94.0, 29.0], [-94.0, 31.0], [-96.0, 31.0], [-96.0, 29.0]]
+                ],
             },
             "rule_expression": "observation enters polygon",
         },
@@ -181,7 +185,9 @@ def test_geofence_schedule_creates_alert_and_custody_log(
     assert update_response.json()["severity"] == "warning"
     assert update_response.json()["disposition_note"] == "Reviewed by operator"
 
-    filtered_alerts = client.get("/api/alerts", params={"status": "acknowledged", "geofence_id": geofence_id})
+    filtered_alerts = client.get(
+        "/api/alerts", params={"status": "acknowledged", "geofence_id": geofence_id}
+    )
     assert filtered_alerts.status_code == 200
     filtered_payload = filtered_alerts.json()
     assert len(filtered_payload) == 1
@@ -202,13 +208,11 @@ def test_geofence_schedule_creates_alert_and_custody_log(
         for row in custody_rows
     )
     assert any(
-        row["object_type"] == "scheduled_task_run"
-        and row["action"] == "task_run_started"
+        row["object_type"] == "scheduled_task_run" and row["action"] == "task_run_started"
         for row in custody_rows
     )
     assert any(
-        row["object_type"] == "scheduled_task_run"
-        and row["action"] == "task_run_completed"
+        row["object_type"] == "scheduled_task_run" and row["action"] == "task_run_completed"
         for row in custody_rows
     )
 
@@ -451,8 +455,14 @@ def test_clickhouse_sync_schedule_mirrors_runtime_facts(
         for row in custody_rows
     )
 
-    assert any("INSERT INTO elevenwriter.observation_facts FORMAT JSONEachRow" in str(item["body"]) for item in requests)
-    assert any("INSERT INTO elevenwriter.storage_object_facts FORMAT JSONEachRow" in str(item["body"]) for item in requests)
+    assert any(
+        "INSERT INTO elevenwriter.observation_facts FORMAT JSONEachRow" in str(item["body"])
+        for item in requests
+    )
+    assert any(
+        "INSERT INTO elevenwriter.storage_object_facts FORMAT JSONEachRow" in str(item["body"])
+        for item in requests
+    )
     reset_settings_cache()
 
 
@@ -652,8 +662,12 @@ def test_entity_resolution_refresh_schedule_materializes_entities(
         encoding="utf-8",
     )
 
-    client.post("/api/imports/local", json={"source_path": str(fixture_a), "layer_key": "marine-track"})
-    client.post("/api/imports/local", json={"source_path": str(fixture_b), "layer_key": "news-track"})
+    client.post(
+        "/api/imports/local", json={"source_path": str(fixture_a), "layer_key": "marine-track"}
+    )
+    client.post(
+        "/api/imports/local", json={"source_path": str(fixture_b), "layer_key": "news-track"}
+    )
 
     schedule_response = client.post(
         "/api/scheduler/tasks",
@@ -737,8 +751,12 @@ def test_event_fusion_refresh_schedule_materializes_events(
         encoding="utf-8",
     )
 
-    client.post("/api/imports/local", json={"source_path": str(fixture_a), "layer_key": "marine-track"})
-    client.post("/api/imports/local", json={"source_path": str(fixture_b), "layer_key": "news-track"})
+    client.post(
+        "/api/imports/local", json={"source_path": str(fixture_a), "layer_key": "marine-track"}
+    )
+    client.post(
+        "/api/imports/local", json={"source_path": str(fixture_b), "layer_key": "news-track"}
+    )
 
     schedule_response = client.post(
         "/api/scheduler/tasks",
@@ -835,8 +853,7 @@ def test_source_sync_schedule_skips_unchanged_payloads(client: TestClient, tmp_p
     custody_response = client.get("/api/custody/logs")
     assert custody_response.status_code == 200
     assert any(
-        row["object_type"] == "source_run"
-        and row["action"] == "source_run_skipped"
+        row["object_type"] == "source_run" and row["action"] == "source_run_skipped"
         for row in custody_response.json()
     )
 
@@ -904,13 +921,11 @@ def test_source_sync_schedule_retries_transient_failure(client: TestClient) -> N
         assert custody_response.status_code == 200
         custody_rows = custody_response.json()
         assert any(
-            row["object_type"] == "scheduled_task_run"
-            and row["action"] == "task_attempt_failed"
+            row["object_type"] == "scheduled_task_run" and row["action"] == "task_attempt_failed"
             for row in custody_rows
         )
         assert any(
-            row["object_type"] == "scheduled_task_run"
-            and row["action"] == "task_retry_scheduled"
+            row["object_type"] == "scheduled_task_run" and row["action"] == "task_retry_scheduled"
             for row in custody_rows
         )
         assert any(
@@ -1285,7 +1300,9 @@ def test_scheduler_summary_and_report_index_capture_overdue_failing_and_maintena
     assert any(bucket["key"] == "storage_lifecycle" for bucket in summary["task_type_counts"])
     assert any(bucket["key"] == "failed" for bucket in summary["latest_status_counts"])
 
-    report_response = client.get("/api/scheduler/report-index", params={"limit": 10, "overdue_task_limit": 10})
+    report_response = client.get(
+        "/api/scheduler/report-index", params={"limit": 10, "overdue_task_limit": 10}
+    )
     assert report_response.status_code == 200
     report = report_response.json()
     assert report["task_run_count"] == 2
@@ -1296,7 +1313,10 @@ def test_scheduler_summary_and_report_index_capture_overdue_failing_and_maintena
     assert any(row["task"]["task_id"] == maintenance_task_id for row in report["overdue_tasks"])
     assert any(row["task"]["task_id"] == failing_task_id for row in report["failing_tasks"])
     assert any(row["task"]["task_id"] == maintenance_task_id for row in report["maintenance_tasks"])
-    assert any(bucket["key"] == "source_sync" and bucket["failure_count"] == 1 for bucket in report["task_type_run_counts"])
+    assert any(
+        bucket["key"] == "source_sync" and bucket["failure_count"] == 1
+        for bucket in report["task_type_run_counts"]
+    )
 
     export_response = client.get(
         "/api/scheduler/export/summary",

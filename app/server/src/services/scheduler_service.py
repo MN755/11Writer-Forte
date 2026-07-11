@@ -15,13 +15,25 @@ from src.models import (
     ScheduledTaskORM,
     ScheduledTaskRunORM,
 )
-from src.schemas import EntityResolutionRequest, EventFusionRequest, ScheduledTaskCreate, ScheduledTaskUpdate
+from src.schemas import (
+    EntityResolutionRequest,
+    EventFusionRequest,
+    ScheduledTaskCreate,
+    ScheduledTaskUpdate,
+)
 from src.services.camera_source_service import materialize_camera_source_inventory
 from src.services.camera_service import materialize_camera_inventory
-from src.services.clickhouse_service import archive_clickhouse_observations_to_r2, sync_runtime_to_clickhouse
+from src.services.clickhouse_service import (
+    archive_clickhouse_observations_to_r2,
+    sync_runtime_to_clickhouse,
+)
 from src.services.entity_resolution_service import materialize_entities
 from src.services.event_fusion_service import materialize_fused_events
-from src.services.geospatial_service import build_contains_geometry_sql_filter, point_in_geometry, uses_postgis
+from src.services.geospatial_service import (
+    build_contains_geometry_sql_filter,
+    point_in_geometry,
+    uses_postgis,
+)
 from src.services.import_service import import_local_path
 from src.services.layer_service import ensure_data_layer
 from src.services.storage_service import sweep_expired_storage_objects
@@ -130,7 +142,9 @@ def build_scheduler_ops_report_index(
     statuses = collect_scheduled_task_statuses(session, reference_time=now)
     all_runs = list(
         session.scalars(
-            select(ScheduledTaskRunORM).order_by(ScheduledTaskRunORM.started_at.desc(), ScheduledTaskRunORM.task_run_id.desc())
+            select(ScheduledTaskRunORM).order_by(
+                ScheduledTaskRunORM.started_at.desc(), ScheduledTaskRunORM.task_run_id.desc()
+            )
         )
     )
     recent_runs = all_runs[:limit]
@@ -152,8 +166,12 @@ def build_scheduler_ops_report_index(
         ),
         "task_type_run_counts": build_scheduler_run_buckets(all_runs),
         "recent_runs": recent_runs,
-        "overdue_tasks": [status for status in statuses if status["is_overdue"]][:overdue_task_limit],
-        "failing_tasks": [status for status in statuses if status["is_failing"]][:overdue_task_limit],
+        "overdue_tasks": [status for status in statuses if status["is_overdue"]][
+            :overdue_task_limit
+        ],
+        "failing_tasks": [status for status in statuses if status["is_failing"]][
+            :overdue_task_limit
+        ],
         "maintenance_tasks": [
             status for status in statuses if status["task"].task_type in MAINTENANCE_TASK_TYPES
         ][:overdue_task_limit],
@@ -170,9 +188,7 @@ def build_scheduler_ops_export_summary(
     generated_at = scheduler_now()
     tasks = list(
         session.scalars(
-            select(ScheduledTaskORM)
-            .order_by(ScheduledTaskORM.task_id.asc())
-            .limit(task_limit)
+            select(ScheduledTaskORM).order_by(ScheduledTaskORM.task_id.asc()).limit(task_limit)
         )
     )
     return {
@@ -210,23 +226,29 @@ def update_scheduled_task(
         ensure_unique_task_name(session, str(changes["name"]), task_id=task_id)
 
     task_type = record.task_type
-    source_id = int(changes["source_id"]) if "source_id" in changes and changes["source_id"] is not None else (
-        None if "source_id" in changes else record.source_id
+    source_id = (
+        int(changes["source_id"])
+        if "source_id" in changes and changes["source_id"] is not None
+        else (None if "source_id" in changes else record.source_id)
     )
-    target_path = str(changes["target_path"]) if "target_path" in changes and changes["target_path"] is not None else (
-        None if "target_path" in changes else record.target_path
+    target_path = (
+        str(changes["target_path"])
+        if "target_path" in changes and changes["target_path"] is not None
+        else (None if "target_path" in changes else record.target_path)
     )
-    geofence_id = int(changes["geofence_id"]) if "geofence_id" in changes and changes["geofence_id"] is not None else (
-        None if "geofence_id" in changes else record.geofence_id
+    geofence_id = (
+        int(changes["geofence_id"])
+        if "geofence_id" in changes and changes["geofence_id"] is not None
+        else (None if "geofence_id" in changes else record.geofence_id)
     )
     validate_task_configuration(
         task_type,
         source_id=source_id,
         target_path=target_path,
         geofence_id=geofence_id,
-        layer_key=str(changes["layer_key"]) if "layer_key" in changes and changes["layer_key"] is not None else (
-            None if "layer_key" in changes else record.layer_key
-        ),
+        layer_key=str(changes["layer_key"])
+        if "layer_key" in changes and changes["layer_key"] is not None
+        else (None if "layer_key" in changes else record.layer_key),
         payload_json=changes["payload_json"] if "payload_json" in changes else record.payload_json,
     )
 
@@ -487,7 +509,11 @@ def execute_task(
         watch_run = evaluate_watch(session, watch_id, actor=actor)
         return (
             1 if watch_run.change_detected else 0,
-            {"watch_id": watch_id, "watch_run_id": watch_run.watch_run_id, "outcome": watch_run.outcome},
+            {
+                "watch_id": watch_id,
+                "watch_run_id": watch_run.watch_run_id,
+                "outcome": watch_run.outcome,
+            },
         )
     if task.task_type == "discovery_campaign":
         from src.schemas import DiscoveryRunRequest
@@ -656,7 +682,9 @@ def execute_task(
             },
         )
     if task.task_type == "entity_resolution_refresh":
-        request = build_entity_resolution_request(layer_key=task.layer_key, payload_json=task.payload_json)
+        request = build_entity_resolution_request(
+            layer_key=task.layer_key, payload_json=task.payload_json
+        )
         results = materialize_entities(session, request, actor=actor)
         return (
             len(results),
@@ -670,7 +698,9 @@ def execute_task(
             },
         )
     if task.task_type == "event_fusion_refresh":
-        request = build_event_fusion_request(layer_key=task.layer_key, payload_json=task.payload_json)
+        request = build_event_fusion_request(
+            layer_key=task.layer_key, payload_json=task.payload_json
+        )
         results = materialize_fused_events(session, request, actor=actor)
         return (
             len(results),
@@ -855,19 +885,29 @@ def validate_task_configuration(
             build_discovery_health_scan_request(payload_json)
         else:
             build_discovery_revisit_request(payload_json)
-    if task_type == "integrity_seed" and any(value is not None for value in (source_id, target_path, geofence_id)):
-        raise ValueError("Integrity seed task does not accept source_id, target_path, or geofence_id.")
+    if task_type == "integrity_seed" and any(
+        value is not None for value in (source_id, target_path, geofence_id)
+    ):
+        raise ValueError(
+            "Integrity seed task does not accept source_id, target_path, or geofence_id."
+        )
     if task_type == "storage_lifecycle":
         if any(value is not None for value in (source_id, target_path, geofence_id)):
-            raise ValueError("Storage lifecycle task does not accept source_id, target_path, or geofence_id.")
+            raise ValueError(
+                "Storage lifecycle task does not accept source_id, target_path, or geofence_id."
+            )
         resolve_storage_lifecycle_payload(payload_json)
     if task_type == "clickhouse_sync":
         if any(value is not None for value in (source_id, target_path, geofence_id)):
-            raise ValueError("ClickHouse sync task does not accept source_id, target_path, or geofence_id.")
+            raise ValueError(
+                "ClickHouse sync task does not accept source_id, target_path, or geofence_id."
+            )
         resolve_clickhouse_sync_payload(payload_json)
     if task_type == "clickhouse_archive":
         if any(value is not None for value in (source_id, target_path, geofence_id)):
-            raise ValueError("ClickHouse archive task does not accept source_id, target_path, or geofence_id.")
+            raise ValueError(
+                "ClickHouse archive task does not accept source_id, target_path, or geofence_id."
+            )
         resolve_clickhouse_archive_payload(payload_json)
     if task_type == "camera_inventory_refresh":
         if any(value is not None for value in (source_id, target_path, geofence_id)):
@@ -1028,7 +1068,9 @@ def resolve_storage_lifecycle_payload(
     retention_class_value = payload.get("retention_class")
     if retention_class_value is not None and not isinstance(retention_class_value, str):
         raise ValueError("Storage lifecycle payload retention_class must be a string.")
-    retention_class = retention_class_value.strip() if isinstance(retention_class_value, str) else None
+    retention_class = (
+        retention_class_value.strip() if isinstance(retention_class_value, str) else None
+    )
     if retention_class == "":
         retention_class = None
     if retention_class is not None and retention_class not in {
@@ -1153,7 +1195,9 @@ def collect_scheduled_task_statuses(
     for task in tasks:
         latest_run = latest_runs_by_task_id.get(task.task_id)
         next_run_at = normalize_scheduler_timestamp(task.next_run_at)
-        is_due = bool(task.enabled and next_run_at is not None and next_run_at <= normalized_reference_time)
+        is_due = bool(
+            task.enabled and next_run_at is not None and next_run_at <= normalized_reference_time
+        )
         overdue_threshold = (
             next_run_at + timedelta(seconds=max(task.interval_seconds, 60))
             if next_run_at is not None
