@@ -149,6 +149,13 @@ class InferenceRequest(ForteModel):
     prefer_gpu: bool = True
 
 
+class OnnxImageEmbeddingRequest(ForteModel):
+    artifact_id: str = Field(min_length=1, max_length=200)
+    image_path: str = Field(min_length=1, max_length=4096)
+    approval_path: str = Field(min_length=1, max_length=4096)
+    prefer_gpu: bool = True
+
+
 class VisualChangeRequest(ForteModel):
     observation: dict[str, Any]
     baseline: dict[str, Any] | None = None

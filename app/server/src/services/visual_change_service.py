@@ -142,28 +142,20 @@ class LocalProcessor(Protocol):
     def __call__(self, payload: Mapping[str, Any], device: str) -> Mapping[str, Any]: ...
 
 
-def _default_processor(payload: Mapping[str, Any], device: str) -> Mapping[str, Any]:
-    """Deterministic fixture processor, useful until a security-gated model is installed."""
-
-    # The caller controls supplied local features.  This deliberately does not pretend
-    # it performed detection, OCR, or embedding inference.
-    return {"features": dict(payload), "processor": "deterministic_contract", "device": device}
-
-
 class LocalInferenceAdapter:
     """A versioned, local-only adapter with bounded GPU-to-CPU degradation."""
 
     def __init__(
         self,
         manifest: ModelManifest,
-        processor: LocalProcessor | None = None,
+        processor: LocalProcessor,
         *,
         gpu_available: Callable[[], bool] | None = None,
     ) -> None:
         if not manifest.security_gate_passed:
             raise ValueError("Model did not pass the local security gate.")
         self.manifest = manifest
-        self._processor = processor or _default_processor
+        self._processor = processor
         self._gpu_available = gpu_available or (lambda: False)
 
     def infer(

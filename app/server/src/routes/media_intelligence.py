@@ -19,6 +19,7 @@ from src.schemas import (
     MediaDerivativeRequest,
     MediaIntakeRequest,
     OfflineTranscriptionRequest,
+    OnnxImageEmbeddingRequest,
     TesseractOcrRequest,
     VisualChangeRequest,
     WebImageReferenceRequest,
@@ -32,14 +33,14 @@ from src.services.local_media_runtime_service import (
     transcribe_offline,
     tesseract_ocr_offline,
 )
+from src.services.local_vision_runtime_service import (
+    LocalVisionRuntimeError,
+    extract_onnx_image_embedding,
+    list_onnx_embedding_approvals,
+)
 from src.services.media_intake_service import MediaIntakeService
 from src.services.storage_service import register_storage_object
-from src.services.visual_change_service import (
-    LocalInferenceAdapter,
-    MaterialVisualChangePipeline,
-    ModelManifest,
-    VisualObservation,
-)
+from src.services.visual_change_service import MaterialVisualChangePipeline, VisualObservation
 
 router = APIRouter(prefix="/media-intelligence", tags=["media-intelligence"])
 
@@ -227,19 +228,40 @@ def validate_web_image_reference(payload: WebImageReferenceRequest) -> dict[str,
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
-@router.post("/inference")
-def run_local_inference(payload: InferenceRequest) -> dict[str, Any]:
-    """Run a security-gated local adapter contract. Runtime model downloads are impossible here."""
+@router.post("/inference", deprecated=True)
+def retired_generic_inference(_: InferenceRequest) -> None:
+    """Reject the former fixture pass-through instead of presenting it as a model."""
+    raise HTTPException(
+        status_code=410,
+        detail="Generic inference is retired; use an approved local model endpoint such as /embeddings.",
+    )
+
+
+@router.get("/models")
+def list_local_models() -> dict[str, Any]:
+    """Inventory local ONNX approvals without exposing paths, tokens, or model bytes."""
+    return {"models": list_onnx_embedding_approvals()}
+
+
+@router.post("/embeddings")
+def extract_local_image_embedding(payload: OnnxImageEmbeddingRequest) -> dict[str, Any]:
+    """Run a checksum-approved local ONNX image encoder; runtime download is impossible."""
     try:
-        manifest = ModelManifest(**payload.model_manifest)
-        record = LocalInferenceAdapter(manifest).infer(
-            artifact_id=payload.artifact_id,
-            input_features=payload.input_features,
-            prefer_gpu=payload.prefer_gpu,
+        return asdict(
+            extract_onnx_image_embedding(
+                artifact_id=payload.artifact_id,
+                image_path=payload.image_path,
+                approval_path=payload.approval_path,
+                prefer_gpu=payload.prefer_gpu,
+            )
         )
-        return asdict(record)
-    except (TypeError, ValueError) as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except LocalVisionRuntimeError:
+        # Model/runtime exceptions may include a local path, provider internals, or an
+        # implementation stack. Keep that operator-only detail out of the API response.
+        raise HTTPException(
+            status_code=422,
+            detail="Local image embedding request was rejected by the approved runtime.",
+        )
 
 
 @router.post("/visual-change")
