@@ -680,6 +680,40 @@ class SourceRunORM(Base):
     source: Mapped[SourceDefinitionORM] = relationship(back_populates="runs")
 
 
+class ResearchProviderORM(TimestampMixin, Base):
+    """A policy-bound public-source provider; credentials never belong in this record."""
+
+    __tablename__ = "research_providers"
+    __table_args__ = (
+        Index("ix_research_providers_enabled_health", "enabled", "health_status"),
+        Index("ix_research_providers_kind_enabled", "provider_kind", "enabled"),
+    )
+
+    provider_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    provider_key: Mapped[str] = mapped_column(String(120), unique=True, index=True)
+    display_name: Mapped[str] = mapped_column(String(200))
+    provider_kind: Mapped[str] = mapped_column(String(40), index=True)
+    capabilities_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+    base_urls_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+    access_mode: Mapped[str] = mapped_column(String(50))
+    terms_url: Mapped[str] = mapped_column(Text)
+    license_note: Mapped[str] = mapped_column(Text)
+    robots_mode: Mapped[str] = mapped_column(String(50))
+    jurisdictions_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+    languages_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+    request_budget_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    artifact_capture_mode: Mapped[str] = mapped_column(String(50))
+    health_status: Mapped[str] = mapped_column(String(40), default="unknown", index=True)
+    health_reason: Mapped[str | None] = mapped_column(Text, default=None)
+    schema_version: Mapped[int] = mapped_column(Integer, default=1)
+    last_checked_at: Mapped[datetime | None] = mapped_column(default=None, index=True)
+    enabled: Mapped[bool] = mapped_column(default=False, index=True)
+    paused_at: Mapped[datetime | None] = mapped_column(default=None, index=True)
+    disabled_reason: Mapped[str | None] = mapped_column(Text, default=None)
+    created_by: Mapped[str] = mapped_column(String(120), default="operator")
+    approved_by: Mapped[str | None] = mapped_column(String(120), default=None)
+
+
 class DiscoveryCampaignORM(TimestampMixin, Base):
     __tablename__ = "discovery_campaigns"
 
