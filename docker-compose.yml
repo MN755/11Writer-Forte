@@ -74,6 +74,51 @@ services:
       - db
     command: elevenwriter scheduler-worker
 
+  # This is deliberately a one-shot, stdin/stdout worker rather than a network
+  # service. Run it with `docker compose --profile local-intelligence run -T
+  # local-intelligence-worker`; it has no network namespace to expose.
+  local-intelligence-worker:
+    profiles: ["local-intelligence"]
+    build:
+      context: ./app/server
+      dockerfile: local_intelligence_worker/Dockerfile
+    image: elevenwriter-local-intelligence-worker:local
+    network_mode: "none"
+    read_only: true
+    user: "65532:65532"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      ELEVENWRITER_LOCAL_INTELLIGENCE_OFFLINE: "1"
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+      NO_PROXY: "*"
+      PYTHONDONTWRITEBYTECODE: "1"
+      # Image-pinned ONNX runner; the operator supplies its verified source hash.
+      ELEVENWRITER_LOCAL_INTELLIGENCE_MODEL_RUNNER: ${ELEVENWRITER_LOCAL_INTELLIGENCE_MODEL_RUNNER:-/opt/runner/onnx_image_runner.py}
+      ELEVENWRITER_LOCAL_INTELLIGENCE_MODEL_RUNNER_SHA256: ${ELEVENWRITER_LOCAL_INTELLIGENCE_MODEL_RUNNER_SHA256:-}
+      ELEVENWRITER_APPROVED_MODEL_PATH: ${ELEVENWRITER_APPROVED_MODEL_PATH:-}
+      ELEVENWRITER_APPROVED_MODEL_SHA256: ${ELEVENWRITER_APPROVED_MODEL_SHA256:-}
+      ELEVENWRITER_LOCAL_INTELLIGENCE_TIMEOUT_SECONDS: ${ELEVENWRITER_LOCAL_INTELLIGENCE_TIMEOUT_SECONDS:-60}
+    volumes:
+      # Artifact ledger/input bytes and models are both immutable to this worker.
+      - type: bind
+        source: ${ELEVENWRITER_LOCAL_INTELLIGENCE_DATA_DIR:-./var}
+        target: /data
+        read_only: true
+      - type: bind
+        source: ${ELEVENWRITER_LOCAL_INTELLIGENCE_MODELS_DIR:-./var/models}
+        target: /models
+        read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777
+      - /output:rw,noexec,nosuid,nodev,size=64m,mode=0700,uid=65532,gid=65532
+    stdin_open: true
+    tty: false
+    restart: "no"
+
   clickhouse:
     image: clickhouse/clickhouse-server:26.6
     profiles: ["clickhouse"]
