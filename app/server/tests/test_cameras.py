@@ -120,7 +120,6 @@ def test_camera_inventory_materialization_and_update(client: TestClient, tmp_pat
         source_report_index["recent_materializations"][0]["action"]
         == "camera_source_materialization_completed"
     )
-
     bbox_response = client.get(
         "/api/cameras",
         params={
@@ -267,7 +266,6 @@ def test_camera_inventory_materialization_and_update(client: TestClient, tmp_pat
         == second_payload["cameras"][0]["observation_id"]
     )
     assert any(log["action"] == "camera_source_updated" for log in source_ops["custody_logs"])
-
     export_summary_response = client.get(
         "/api/cameras/export/summary",
         params={"layer_key": "traffic-camera-feed", "camera_limit": 10, "report_limit": 10},
@@ -287,7 +285,6 @@ def test_camera_inventory_materialization_and_update(client: TestClient, tmp_pat
     assert source_export_summary["filters_json"]["layer_key"] == "traffic-camera-feed"
     assert len(source_export_summary["sources"]) == 5
     assert source_export_summary["report_index"]["inventory_summary"]["total_count"] == 5
-
     custody_response = client.get("/api/custody/logs")
     assert custody_response.status_code == 200
     custody_rows = custody_response.json()

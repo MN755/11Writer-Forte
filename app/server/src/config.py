@@ -113,7 +113,6 @@ class Settings(BaseSettings):
             return self.clickhouse_r2_storage_policy
         return None
 
-
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     return Settings()
