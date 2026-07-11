@@ -149,14 +149,13 @@ def build_event_slug(summary: dict[str, object]) -> str:
 
 def build_event_title(summary: dict[str, object]) -> str:
     centroid = summary["centroid_geojson"]["coordinates"]
-    return (
-        f"Fused Event near {round(float(centroid[1]), 3)}, "
-        f"{round(float(centroid[0]), 3)}"
-    )
+    return f"Fused Event near {round(float(centroid[1]), 3)}, {round(float(centroid[0]), 3)}"
 
 
 def build_event_summary(summary: dict[str, object], observations: list[ObservationORM]) -> str:
-    domains = sorted({observation.source_domain for observation in observations if observation.source_domain})
+    domains = sorted(
+        {observation.source_domain for observation in observations if observation.source_domain}
+    )
     layers = sorted({observation.layer_key for observation in observations})
     citations = ", ".join(domains) if domains else "uncited local imports"
     layer_phrase = ", ".join(layers)
@@ -181,7 +180,9 @@ def ensure_event_links(
     existing_ids = {
         link.observation_id
         for link in session.scalars(
-            select(EventObservationLinkORM).where(EventObservationLinkORM.event_id == event.event_id)
+            select(EventObservationLinkORM).where(
+                EventObservationLinkORM.event_id == event.event_id
+            )
         )
     }
     for observation in observations:

@@ -15,7 +15,13 @@ DEFAULT_INTEGRITY_SOURCES = (
     ("npr.org", "trusted", "auto_approve_stable", True, "Seeded starter integrity source."),
     ("bbc.com", "trusted", "auto_approve_stable", True, "Seeded starter integrity source."),
     ("bbc.co.uk", "trusted", "auto_approve_stable", True, "Seeded starter integrity source."),
-    ("smithsonianmag.com", "trusted", "auto_approve_stable", True, "Seeded starter integrity source."),
+    (
+        "smithsonianmag.com",
+        "trusted",
+        "auto_approve_stable",
+        True,
+        "Seeded starter integrity source.",
+    ),
     ("smithsonian.org", "trusted", "auto_approve_stable", True, "Seeded starter integrity source."),
 )
 
@@ -36,7 +42,7 @@ def normalize_domain(value: str | None) -> str | None:
     if "@" in candidate:
         candidate = candidate.rsplit("@", 1)[-1]
     if candidate.startswith("[") and "]" in candidate:
-        candidate = candidate[1:candidate.index("]")]
+        candidate = candidate[1 : candidate.index("]")]
     elif ":" in candidate and candidate.count(":") == 1:
         candidate = candidate.split(":", 1)[0]
     candidate = candidate.split("/")[0]
@@ -131,7 +137,9 @@ def update_source_trust_profile(
 
     change_log: dict[str, dict[str, object]] = {}
     if "domain" in changes and changes["domain"] is not None:
-        normalized_domain = normalize_domain(str(changes["domain"])) or str(changes["domain"]).lower()
+        normalized_domain = (
+            normalize_domain(str(changes["domain"])) or str(changes["domain"]).lower()
+        )
         existing = session.scalar(
             select(SourceTrustProfileORM).where(
                 SourceTrustProfileORM.domain == normalized_domain,
@@ -139,7 +147,9 @@ def update_source_trust_profile(
             )
         )
         if existing is not None:
-            raise ValueError(f"Source trust profile for domain '{normalized_domain}' already exists.")
+            raise ValueError(
+                f"Source trust profile for domain '{normalized_domain}' already exists."
+            )
         if normalized_domain != record.domain:
             change_log["domain"] = {"old": record.domain, "new": normalized_domain}
             record.domain = normalized_domain

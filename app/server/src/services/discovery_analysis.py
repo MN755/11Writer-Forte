@@ -65,9 +65,7 @@ _TRACKING_PARAMETERS = {
     "_hsenc",
     "_hsmi",
 }
-_UNRESERVED = frozenset(
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"
-)
+_UNRESERVED = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
 _URL_RE = re.compile(r"(?i)\b(?:https?|wss?)://[^\s<>\"'{}|\\^`]+")
 _PERCENT_ESCAPE_RE = re.compile(r"%([0-9a-fA-F]{2})")
 _ISO_DATE_RE = re.compile(
@@ -76,7 +74,9 @@ _ISO_DATE_RE = re.compile(
 _UUID_RE = re.compile(
     r"(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
 )
-_DATE_SEGMENT_RE = re.compile(r"^(?:19|20)\d{2}[-_/](?:0?[1-9]|1[0-2])[-_/](?:0?[1-9]|[12]\d|3[01])$")
+_DATE_SEGMENT_RE = re.compile(
+    r"^(?:19|20)\d{2}[-_/](?:0?[1-9]|1[0-2])[-_/](?:0?[1-9]|[12]\d|3[01])$"
+)
 _COMPACT_DATE_RE = re.compile(r"^(?:19|20)\d{6}$")
 _HEX_RE = re.compile(r"(?i)^[0-9a-f]{16,}$")
 _TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{24,}$")
@@ -242,7 +242,7 @@ def canonicalize_url(url: str, base_url: str | None = None) -> str:
         explicit_scheme = re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", raw)
         if explicit_scheme:
             raise ValueError(f"unsupported URL scheme: {raw.split(':', 1)[0]}")
-        if raw.startswith(('/', './', '../', '?', '#')):
+        if raw.startswith(("/", "./", "../", "?", "#")):
             raise ValueError("relative URL requires base_url")
         raw = "https://" + raw
 
@@ -473,9 +473,7 @@ def analyze_document(
                 structural_hints["api_path_count"] = _mapping_length(data, "paths")
         extracted_text = _json_search_text(data)[:MAX_EXTRACTED_TEXT] if data is not None else ""
         operational_hints["likely_auth_required"] = _json_auth_required(data)
-        operational_hints["camera"] = _has_camera_signal(
-            canonical, title or "", extracted_text
-        )
+        operational_hints["camera"] = _has_camera_signal(canonical, title or "", extracted_text)
         canonical_for_links = canonical
         if _archive_signal(canonical, title or "", extracted_text):
             document_type = "archive_dataset"
@@ -498,10 +496,10 @@ def analyze_document(
                 }
             )
             format_hints["root_tag"] = _local_name(root.tag)
-        extracted_text = _clean_text(" ".join(root.itertext()))[:MAX_EXTRACTED_TEXT] if root is not None else ""
-        operational_hints["camera"] = _has_camera_signal(
-            canonical, title or "", extracted_text
+        extracted_text = (
+            _clean_text(" ".join(root.itertext()))[:MAX_EXTRACTED_TEXT] if root is not None else ""
         )
+        operational_hints["camera"] = _has_camera_signal(canonical, title or "", extracted_text)
         canonical_for_links = canonical
         if _archive_signal(canonical, title or "", extracted_text):
             document_type = "archive_dataset"
@@ -523,14 +521,19 @@ def analyze_document(
         )
         _extract_csv_signals(rows, headers_row, raw_links, geo_hints, temporal_hints)
         title = _title_from_url(canonical)
-        extracted_text = _clean_text(" ".join(" ".join(row) for row in rows[:50]))[:MAX_EXTRACTED_TEXT]
+        extracted_text = _clean_text(" ".join(" ".join(row) for row in rows[:50]))[
+            :MAX_EXTRACTED_TEXT
+        ]
         schema_shape = {"format": "csv", "columns": [_normalise_field_name(x) for x in headers_row]}
         canonical_for_links = canonical
         if _archive_signal(canonical, title or "", extracted_text):
             document_type = "archive_dataset"
     elif detected == "pdf":
         latin_text = bounded.decode("latin-1", errors="ignore")
-        raw_links.extend((match, "pdf_url", "reference", None, False, None) for match in _URL_RE.findall(latin_text))
+        raw_links.extend(
+            (match, "pdf_url", "reference", None, False, None)
+            for match in _URL_RE.findall(latin_text)
+        )
         title_match = re.search(r"/Title\s*\((.{1,500}?)\)", latin_text, re.DOTALL)
         title = _clean_text(title_match.group(1)) if title_match else _title_from_url(canonical)
         extracted_text = ""
@@ -564,9 +567,7 @@ def analyze_document(
         _extract_text_temporal(text, temporal_hints)
         schema_shape = {"format": "text", "line_shapes": _text_line_shapes(text)}
         structural_hints["machine_readable"] = False
-        operational_hints["camera"] = _has_camera_signal(
-            canonical, title or "", extracted_text
-        )
+        operational_hints["camera"] = _has_camera_signal(canonical, title or "", extracted_text)
         canonical_for_links = canonical
         if _archive_signal(canonical, title or "", extracted_text):
             document_type = "archive_document"
@@ -592,7 +593,9 @@ def analyze_document(
         "social_reference": _is_social_domain(host),
         "publisher": _publisher_hint(canonical, title, extracted_text),
         "integrity_headers": sorted(
-            key for key in ("content-security-policy", "digest", "etag", "last-modified") if header_map.get(key)
+            key
+            for key in ("content-security-policy", "digest", "etag", "last-modified")
+            if header_map.get(key)
         ),
     }
     if trust_hints["social_reference"]:
@@ -705,7 +708,9 @@ def score_geo_relevance(
             )
         )
         return round(min(100.0, max(scores) + max(0, overlap_types - 1) * 3.0), 2)
-    if footprint == "nationwide" and (target_places or target_jurisdictions or target_bbox or polygon):
+    if footprint == "nationwide" and (
+        target_places or target_jurisdictions or target_bbox or polygon
+    ):
         return 45.0
     if footprint == "global":
         return 30.0
@@ -747,9 +752,7 @@ def compute_candidate_score(
         "trust": _score_trust(view) if trust is None else _clamp(trust),
         "operational_cost": _score_operational_cost(view, health_map),
         "novelty": 70.0 if novelty is None else _clamp(novelty),
-        "redundancy_penalty": 0.0
-        if redundancy_penalty is None
-        else _clamp(redundancy_penalty),
+        "redundancy_penalty": 0.0 if redundancy_penalty is None else _clamp(redundancy_penalty),
     }
     for key, value in (component_overrides or {}).items():
         if key in components:
@@ -906,16 +909,22 @@ class _DiscoveryHTMLParser(HTMLParser):
         if tag == "base" and attr.get("href") and not self.base_href:
             self.base_href = attr["href"]
         if tag == "meta":
-            name = (attr.get("name") or attr.get("property") or attr.get("http-equiv") or "").casefold()
+            name = (
+                attr.get("name") or attr.get("property") or attr.get("http-equiv") or ""
+            ).casefold()
             content = attr.get("content", "").strip()
             if name and content:
                 self.meta.setdefault(name, []).append(content)
             if name == "refresh" and content:
                 match = re.search(r"(?i)\burl\s*=\s*['\"]?(.+?)['\"]?\s*$", content)
                 if match:
-                    self.raw_links.append((match.group(1), "html_meta", "refresh", None, False, None))
+                    self.raw_links.append(
+                        (match.group(1), "html_meta", "refresh", None, False, None)
+                    )
             elif content and (name.endswith(":url") or name.endswith("_url")):
-                self.raw_links.append((content, "html_meta", name or "reference", None, False, None))
+                self.raw_links.append(
+                    (content, "html_meta", name or "reference", None, False, None)
+                )
         if tag == "a" and attr.get("href"):
             rel_tokens = set(attr.get("rel", "").casefold().split())
             relation = "nofollow" if "nofollow" in rel_tokens else "outbound"
@@ -1034,9 +1043,9 @@ def _payload_bytes(
     if isinstance(payload, Mapping) or (
         isinstance(payload, Sequence) and not isinstance(payload, (str, bytes, bytearray))
     ):
-        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode(
-            "utf-8"
-        )
+        encoded = json.dumps(
+            payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        ).encode("utf-8")
         return encoded, payload
     raise TypeError("payload must be bytes, str, mapping, or sequence")
 
@@ -1066,27 +1075,37 @@ def _detect_format(
     structured_payload: Any,
 ) -> str:
     scheme = urlsplit(url).scheme.casefold()
-    if scheme in {"ws", "wss"} or media_type in {
-        "application/vnd.apple.mpegurl",
-        "application/x-mpegurl",
-        "application/dash+xml",
-        "multipart/x-mixed-replace",
-        "text/event-stream",
-        "video/mp2t",
-    } or extension in {"m3u8", "mpd", "mjpg", "mjpeg"}:
+    if (
+        scheme in {"ws", "wss"}
+        or media_type
+        in {
+            "application/vnd.apple.mpegurl",
+            "application/x-mpegurl",
+            "application/dash+xml",
+            "multipart/x-mixed-replace",
+            "text/event-stream",
+            "video/mp2t",
+        }
+        or extension in {"m3u8", "mpd", "mjpg", "mjpeg"}
+    ):
         return "stream"
     if payload.startswith(b"%PDF-") or media_type == "application/pdf" or extension == "pdf":
         return "pdf"
-    if media_type.startswith("image/") or extension in {
-        "avif",
-        "bmp",
-        "gif",
-        "jpeg",
-        "jpg",
-        "png",
-        "svg",
-        "webp",
-    } or payload.startswith((b"\x89PNG", b"GIF8", b"\xff\xd8\xff")):
+    if (
+        media_type.startswith("image/")
+        or extension
+        in {
+            "avif",
+            "bmp",
+            "gif",
+            "jpeg",
+            "jpg",
+            "png",
+            "svg",
+            "webp",
+        }
+        or payload.startswith((b"\x89PNG", b"GIF8", b"\xff\xd8\xff"))
+    ):
         return "image"
 
     stripped = text.lstrip("\ufeff\x00 \t\r\n")
@@ -1139,7 +1158,10 @@ def _detect_format(
         if xml_declared:
             return "xml"
 
-    if media_type in {"text/csv", "application/csv", "application/vnd.ms-excel"} or extension == "csv":
+    if (
+        media_type in {"text/csv", "application/csv", "application/vnd.ms-excel"}
+        or extension == "csv"
+    ):
         return "csv"
     if _looks_like_csv(stripped):
         return "csv"
@@ -1185,7 +1207,10 @@ def _base_document_type(detected: str, url: str) -> str:
         "text": "text_document",
         "xml": "xml_endpoint",
     }
-    if "search" in (urlsplit(url).path + "?" + urlsplit(url).query).casefold() and detected == "html":
+    if (
+        "search" in (urlsplit(url).path + "?" + urlsplit(url).query).casefold()
+        and detected == "html"
+    ):
         return "search_results"
     return mapping[detected]
 
@@ -1207,14 +1232,33 @@ def _classify_html(
         return "api_docs"
     if _archive_signal(url, title or "", text):
         return "archive_dataset"
-    if any(term in haystack for term in ("open data", "data catalog", "download dataset", "ckan", "socrata", "arcgis hub")):
+    if any(
+        term in haystack
+        for term in (
+            "open data",
+            "data catalog",
+            "download dataset",
+            "ckan",
+            "socrata",
+            "arcgis hub",
+        )
+    ):
         return "open_data_portal"
     if _notice_signal(url, title or "", text) or (
         _is_official_domain(host)
         and any(term in haystack for term in ("bulletin", "notice", "advisory", "press release"))
     ):
         return "government_notice"
-    if any(term in haystack for term in ("current status", "incident status", "service alert", "results updated", "road conditions")):
+    if any(
+        term in haystack
+        for term in (
+            "current status",
+            "incident status",
+            "service alert",
+            "results updated",
+            "road conditions",
+        )
+    ):
         return "repeating_status_page"
     og_type = " ".join(parser.meta.get("og:type", [])).casefold()
     if parser.tags.get("article") or "article" in og_type or "newsarticle" in haystack:
@@ -1236,7 +1280,9 @@ def _normalise_links(
         if len(result) >= MAX_LINKS:
             break
         candidate = html.unescape(str(raw_url)).strip().strip("\"'")
-        if not candidate or candidate.startswith(("#", "data:", "javascript:", "mailto:", "tel:", "file:")):
+        if not candidate or candidate.startswith(
+            ("#", "data:", "javascript:", "mailto:", "tel:", "file:")
+        ):
             continue
         try:
             canonical = canonicalize_url(candidate, base_url=base_url)
@@ -1360,13 +1406,17 @@ def _extract_geojson_coordinates(coordinates: Any, geo_type: str, geo: dict[str,
         geo["routes"].append("GeoJSON route")
 
 
-def _extract_xml_links(root: ElementTree.Element) -> list[tuple[str, str, str, str | None, bool, str | None]]:
+def _extract_xml_links(
+    root: ElementTree.Element,
+) -> list[tuple[str, str, str, str | None, bool, str | None]]:
     links: list[tuple[str, str, str, str | None, bool, str | None]] = []
     for element in root.iter():
         name = _local_name(element.tag).casefold()
         href = element.attrib.get("href") or element.attrib.get("url")
         if href:
-            links.append((href, "xml_attribute", element.attrib.get("rel", name), None, False, None))
+            links.append(
+                (href, "xml_attribute", element.attrib.get("rel", name), None, False, None)
+            )
         value = (element.text or "").strip()
         if value and (name in {"loc", "link", "url", "uri", "guid"} or _looks_like_url(value)):
             links.append((value, "xml_loc", name, None, False, None))
@@ -1388,7 +1438,9 @@ def _extract_xml_geo(root: ElementTree.Element, geo: dict[str, Any]) -> None:
             _append_unique(geo["jurisdictions"], value)
         if name in {"route", "corridor", "line"} and value:
             _append_unique(geo["routes"], value)
-        children = {_local_name(child.tag).casefold(): (child.text or "").strip() for child in element}
+        children = {
+            _local_name(child.tag).casefold(): (child.text or "").strip() for child in element
+        }
         lat = _first_numeric(children, "latitude", "lat")
         lon = _first_numeric(children, "longitude", "lon", "lng", "long")
         _add_point(geo, lat, lon, "xml")
@@ -1467,7 +1519,11 @@ def _extract_csv_signals(
     normalised = [_normalise_field_name(value) for value in headers]
     lat_index = _first_index(normalised, "latitude", "lat")
     lon_index = _first_index(normalised, "longitude", "lon", "lng", "long")
-    url_indexes = [index for index, name in enumerate(normalised) if name in {"url", "uri", "link", "endpoint", "downloadurl"}]
+    url_indexes = [
+        index
+        for index, name in enumerate(normalised)
+        if name in {"url", "uri", "link", "endpoint", "downloadurl"}
+    ]
     for row in rows[1:201]:
         if lat_index is not None and lon_index is not None:
             if lat_index < len(row) and lon_index < len(row):
@@ -1494,9 +1550,7 @@ def _empty_geo_hints() -> dict[str, Any]:
     }
 
 
-def _add_point(
-    geo: dict[str, Any], lat: float | None, lon: float | None, source: str
-) -> None:
+def _add_point(geo: dict[str, Any], lat: float | None, lon: float | None, source: str) -> None:
     if lat is None or lon is None or not (-90 <= lat <= 90 and -180 <= lon <= 180):
         return
     point = {"lat": round(lat, 7), "lon": round(lon, 7), "source": source}
@@ -1555,7 +1609,9 @@ def _finalise_geo_hints(geo: dict[str, Any], text: str, url: str) -> None:
         footprint = "local_area"
     elif geo["jurisdictions"]:
         footprint = "jurisdiction"
-    elif any(term in haystack for term in ("nationwide", "national coverage", "across the country")):
+    elif any(
+        term in haystack for term in ("nationwide", "national coverage", "across the country")
+    ):
         footprint = "nationwide"
     elif any(term in haystack for term in ("worldwide", "global coverage", "international")):
         footprint = "global"
@@ -1586,7 +1642,19 @@ def _base_temporal_hints(headers: Mapping[str, str]) -> dict[str, Any]:
 
 def _add_temporal_value(temporal: dict[str, Any], key: str, value: str) -> None:
     key = key.casefold()
-    if not any(token in key for token in ("date", "time", "publish", "modified", "updated", "created", "issued", "valid")):
+    if not any(
+        token in key
+        for token in (
+            "date",
+            "time",
+            "publish",
+            "modified",
+            "updated",
+            "created",
+            "issued",
+            "valid",
+        )
+    ):
         return
     normalised = _normalise_datetime(value)
     if not normalised:
@@ -1606,7 +1674,9 @@ def _add_temporal_value(temporal: dict[str, Any], key: str, value: str) -> None:
 
 def _finalise_temporal_hints(temporal: dict[str, Any], text: str, detected: str) -> None:
     haystack = text[:50_000].casefold()
-    if detected == "stream" or any(term in haystack for term in ("live feed", "real-time", "realtime", "updated every minute")):
+    if detected == "stream" or any(
+        term in haystack for term in ("live feed", "real-time", "realtime", "updated every minute")
+    ):
         temporal["cadence_hint"] = "live"
         temporal["live"] = True
     elif any(term in haystack for term in ("hourly", "every hour")):
@@ -1982,7 +2052,10 @@ def _json_search_text(data: Any) -> str:
 
 def _xml_title(root: ElementTree.Element) -> str | None:
     for element in root.iter():
-        if _local_name(element.tag).casefold() in {"title", "name"} and (element.text or "").strip():
+        if (
+            _local_name(element.tag).casefold() in {"title", "name"}
+            and (element.text or "").strip()
+        ):
             return _clean_text(element.text or "")[:500]
     return None
 
@@ -2110,7 +2183,9 @@ def _mapping_value(data: Any, *keys: str) -> Any:
 
 def _mapping_length(data: Any, key: str) -> int:
     value = _mapping_value(data, key)
-    return len(value) if isinstance(value, (Mapping, Sequence)) and not isinstance(value, str) else 0
+    return (
+        len(value) if isinstance(value, (Mapping, Sequence)) and not isinstance(value, str) else 0
+    )
 
 
 def _json_auth_required(data: Any) -> bool:
@@ -2132,7 +2207,15 @@ def _requires_javascript(parser: _DiscoveryHTMLParser, text: str) -> bool:
 
 def _likely_auth(text: str, url: str) -> bool:
     haystack = (url + " " + text[:20_000]).casefold()
-    return any(term in haystack for term in ("sign in to continue", "login required", "authentication required", "oauth authorize"))
+    return any(
+        term in haystack
+        for term in (
+            "sign in to continue",
+            "login required",
+            "authentication required",
+            "oauth authorize",
+        )
+    )
 
 
 def _has_camera_signal(*values: str) -> bool:
@@ -2142,12 +2225,24 @@ def _has_camera_signal(*values: str) -> bool:
 
 def _archive_signal(*values: str) -> bool:
     haystack = " ".join(values).casefold()
-    return any(term in haystack for term in ("/archive", "historical data", "data archive", "back catalog", "backfile"))
+    return any(
+        term in haystack
+        for term in ("/archive", "historical data", "data archive", "back catalog", "backfile")
+    )
 
 
 def _notice_signal(*values: str) -> bool:
     haystack = " ".join(values).casefold()
-    return any(term in haystack for term in ("government notice", "official notice", "public notice", "bulletin", "advisory"))
+    return any(
+        term in haystack
+        for term in (
+            "government notice",
+            "official notice",
+            "public notice",
+            "bulletin",
+            "advisory",
+        )
+    )
 
 
 def _is_social_domain(host: str) -> bool:
@@ -2168,7 +2263,9 @@ def _is_official_domain(host: str) -> bool:
 
 def _is_private_target(url: str) -> bool:
     host = (urlsplit(url).hostname or "").casefold().rstrip(".")
-    if host in {"localhost", "localhost.localdomain"} or host.endswith((".local", ".internal", ".localhost")):
+    if host in {"localhost", "localhost.localdomain"} or host.endswith(
+        (".local", ".internal", ".localhost")
+    ):
         return True
     try:
         address = ipaddress.ip_address(host.split("%", 1)[0])
@@ -2213,9 +2310,17 @@ def _coerce_points(value: Any) -> list[tuple[float, float]]:
             lat = _as_float(item.get("lat", item.get("latitude")))
             lon = _as_float(item.get("lon", item.get("lng", item.get("longitude"))))
             coordinates = item.get("coordinates")
-            if (lat is None or lon is None) and isinstance(coordinates, Sequence) and len(coordinates) >= 2:
+            if (
+                (lat is None or lon is None)
+                and isinstance(coordinates, Sequence)
+                and len(coordinates) >= 2
+            ):
                 lon, lat = _as_float(coordinates[0]), _as_float(coordinates[1])
-        elif isinstance(item, Sequence) and not isinstance(item, (str, bytes, bytearray)) and len(item) >= 2:
+        elif (
+            isinstance(item, Sequence)
+            and not isinstance(item, (str, bytes, bytearray))
+            and len(item) >= 2
+        ):
             lon, lat = _as_float(item[0]), _as_float(item[1])
         if lat is not None and lon is not None and -90 <= lat <= 90 and -180 <= lon <= 180:
             result.append((lon, lat))
@@ -2230,7 +2335,11 @@ def _coerce_bbox(value: Any) -> tuple[float, float, float, float] | None:
             value.get("max_lon", value.get("east")),
             value.get("max_lat", value.get("north")),
         )
-    elif isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)) and len(value) >= 4:
+    elif (
+        isinstance(value, Sequence)
+        and not isinstance(value, (str, bytes, bytearray))
+        and len(value) >= 4
+    ):
         values = value[:4]
     else:
         return None
@@ -2274,10 +2383,7 @@ def _bbox_intersects(
     first: tuple[float, float, float, float], second: tuple[float, float, float, float]
 ) -> bool:
     return not (
-        first[2] < second[0]
-        or first[0] > second[2]
-        or first[3] < second[1]
-        or first[1] > second[3]
+        first[2] < second[0] or first[0] > second[2] or first[3] < second[1] or first[1] > second[3]
     )
 
 
@@ -2322,8 +2428,10 @@ def _label_overlap_scores(
         for target in targets:
             if candidate == target:
                 result.append(exact)
-            elif len(candidate) >= 4 and len(target) >= 4 and (
-                candidate in target or target in candidate
+            elif (
+                len(candidate) >= 4
+                and len(target) >= 4
+                and (candidate in target or target in candidate)
             ):
                 result.append(partial)
     return result

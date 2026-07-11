@@ -61,7 +61,9 @@ STRUCTURED_HTTP_SOURCE_KINDS = {
 }
 PAGINATED_STRUCTURED_HTTP_SOURCE_KINDS = {"arcgis_feature_json", "ckan_package_search"}
 DISCOVERY_HTTP_SOURCE_KINDS = {"web_search", "web_crawl", "web_discovery"}
-HTTP_SOURCE_KINDS = RAW_HTTP_SOURCE_KINDS | STRUCTURED_HTTP_SOURCE_KINDS | DISCOVERY_HTTP_SOURCE_KINDS
+HTTP_SOURCE_KINDS = (
+    RAW_HTTP_SOURCE_KINDS | STRUCTURED_HTTP_SOURCE_KINDS | DISCOVERY_HTTP_SOURCE_KINDS
+)
 
 
 @dataclass(frozen=True)
@@ -193,12 +195,18 @@ def build_source_ops_detail(session: Session, source_id: int) -> dict[str, objec
         else []
     )
     storage_object_ids = [str(row.storage_object_id) for row in storage_objects]
-    custody_filters = [(CustodyLogORM.object_type == "source_definition") & (CustodyLogORM.object_id == str(source.source_id))]
+    custody_filters = [
+        (CustodyLogORM.object_type == "source_definition")
+        & (CustodyLogORM.object_id == str(source.source_id))
+    ]
     if run_ids:
-        custody_filters.append((CustodyLogORM.object_type == "source_run") & CustodyLogORM.object_id.in_(run_ids))
+        custody_filters.append(
+            (CustodyLogORM.object_type == "source_run") & CustodyLogORM.object_id.in_(run_ids)
+        )
     if storage_object_ids:
         custody_filters.append(
-            (CustodyLogORM.object_type == "storage_object") & CustodyLogORM.object_id.in_(storage_object_ids)
+            (CustodyLogORM.object_type == "storage_object")
+            & CustodyLogORM.object_id.in_(storage_object_ids)
         )
     custody_logs = list(
         session.scalars(
@@ -244,7 +252,9 @@ def build_source_inventory_summary(
         ),
         "latest_status_counts": build_source_summary_buckets(
             statuses,
-            lambda status: status["latest_run"].status if status["latest_run"] is not None else "never_run",
+            lambda status: (
+                status["latest_run"].status if status["latest_run"] is not None else "never_run"
+            ),
         ),
     }
 
@@ -271,9 +281,7 @@ def build_source_ops_report_index(
     sync_runs = (
         list(
             session.scalars(
-                select(SourceRunORM)
-                .order_by(SourceRunORM.source_run_id.desc())
-                .limit(limit)
+                select(SourceRunORM).order_by(SourceRunORM.source_run_id.desc()).limit(limit)
             )
         )
         if statuses
@@ -295,8 +303,12 @@ def build_source_ops_report_index(
         "sync_tasks": sync_tasks,
         "recent_runs": sync_runs,
         "stale_sources": [status for status in statuses if status["is_stale"]][:stale_source_limit],
-        "failing_sources": [status for status in statuses if status["is_failing"]][:stale_source_limit],
-        "unscheduled_sources": [status for status in statuses if not status["has_schedule"]][:stale_source_limit],
+        "failing_sources": [status for status in statuses if status["is_failing"]][
+            :stale_source_limit
+        ],
+        "unscheduled_sources": [status for status in statuses if not status["has_schedule"]][
+            :stale_source_limit
+        ],
     }
 
 
@@ -345,7 +357,9 @@ def collect_source_ops_statuses(
             latest_run=latest_runs_by_source.get(source.source_id),
             latest_success_at=latest_success_at_by_source.get(source.source_id),
             sync_tasks=sync_tasks_by_source.get(source.source_id, []),
-            storage_stats=storage_stats_by_source.get(source.source_id, {"count": 0, "latest_observed_at": None}),
+            storage_stats=storage_stats_by_source.get(
+                source.source_id, {"count": 0, "latest_observed_at": None}
+            ),
             stale_before=stale_before,
         )
         for source in sources
@@ -363,8 +377,9 @@ def collect_source_ops_statuses(
 def build_latest_runs_by_source(session: Session) -> dict[int, SourceRunORM]:
     runs = list(
         session.scalars(
-            select(SourceRunORM)
-            .order_by(SourceRunORM.source_id.asc(), SourceRunORM.source_run_id.desc())
+            select(SourceRunORM).order_by(
+                SourceRunORM.source_id.asc(), SourceRunORM.source_run_id.desc()
+            )
         )
     )
     latest: dict[int, SourceRunORM] = {}
@@ -527,7 +542,9 @@ def first_timestamp(values: Any) -> datetime | None:
     return None
 
 
-def run_source_definition(session: Session, source_id: int, actor: str = "source_runner") -> SourceRunORM:
+def run_source_definition(
+    session: Session, source_id: int, actor: str = "source_runner"
+) -> SourceRunORM:
     source = session.get(SourceDefinitionORM, source_id)
     if source is None:
         raise ValueError(f"Source {source_id} does not exist.")
@@ -775,7 +792,9 @@ def parse_fetch_config(source: SourceDefinitionORM) -> SourceFetchConfig:
     retry_backoff_seconds = max(0.0, float(metadata.get("retry_backoff_seconds", 0.0)))
     user_headers = metadata.get("headers", {})
     headers = {
-        "User-Agent": str(metadata.get("user_agent", "11Writer-Forte/0.1 (+headless-source-fetch)")),
+        "User-Agent": str(
+            metadata.get("user_agent", "11Writer-Forte/0.1 (+headless-source-fetch)")
+        ),
         "Accept": resolve_source_accept_header(source.source_kind),
     }
     if isinstance(user_headers, dict):
@@ -872,7 +891,9 @@ def fetch_http_source(
     request_uri = target_uri or source.target_uri
     max_response_bytes = max(1024, int(metadata.get("max_response_bytes", 20 * 1024 * 1024)))
     discovery_managed = isinstance(metadata.get("discovery"), dict)
-    block_private_networks = bool(metadata.get("block_private_networks", False)) or discovery_managed
+    block_private_networks = (
+        bool(metadata.get("block_private_networks", False)) or discovery_managed
+    )
     allow_private_networks = bool(metadata.get("allow_private_networks", False)) and bool(
         get_settings().discovery_allow_private_networks
     )
@@ -916,7 +937,9 @@ def fetch_http_source(
             with urlopen(request, timeout=fetch_config.timeout_seconds) as response:
                 payload = read_bounded(response, max_response_bytes)
                 content_type = response.headers.get("Content-Type")
-                status_code = getattr(response, "status", None) or getattr(response, "code", None) or 200
+                status_code = (
+                    getattr(response, "status", None) or getattr(response, "code", None) or 200
+                )
                 return payload, {
                     "attempt_count": attempt,
                     "http_status": int(status_code),
@@ -1076,7 +1099,9 @@ def materialize_paginated_http_source_payload(
         total_byte_count += len(payload)
         page_item_counts.append(page.item_count)
         page_record_counts.append(unique_record_count)
-        total_available = page.total_available if page.total_available is not None else total_available
+        total_available = (
+            page.total_available if page.total_available is not None else total_available
+        )
         payload_hasher.update(page_url.encode("utf-8"))
         payload_hasher.update(b"\0")
         payload_hasher.update(payload)
@@ -1109,7 +1134,9 @@ def materialize_paginated_http_source_payload(
         "cached_record_count": len(records),
         "materialized_content_type": "application/json",
         "original_content_type": (
-            base_fetch_metadata.get("content_type") if isinstance(base_fetch_metadata, dict) else None
+            base_fetch_metadata.get("content_type")
+            if isinstance(base_fetch_metadata, dict)
+            else None
         ),
         **(base_fetch_metadata or {}),
         "attempt_count": total_attempt_count,
@@ -1182,7 +1209,9 @@ def resolve_raw_http_source_suffix(source: SourceDefinitionORM) -> str:
     if source.source_kind == "http_text":
         metadata = source.metadata_json if isinstance(source.metadata_json, dict) else {}
         discovery_metadata = metadata.get("discovery", {})
-        format_hint = discovery_metadata.get("format_hint") if isinstance(discovery_metadata, dict) else None
+        format_hint = (
+            discovery_metadata.get("format_hint") if isinstance(discovery_metadata, dict) else None
+        )
         return ".csv" if format_hint == "csv" else ".txt"
     raise ValueError(f"Unsupported raw HTTP source kind: {source.source_kind}")
 
@@ -1270,7 +1299,11 @@ def build_paginated_source_request_url(
 
 
 def strip_payload_hash(metadata: dict[str, Any]) -> dict[str, Any]:
-    return {key: value for key, value in metadata.items() if key not in {"payload_sha256", "byte_count", "attempt_count"}}
+    return {
+        key: value
+        for key, value in metadata.items()
+        if key not in {"payload_sha256", "byte_count", "attempt_count"}
+    }
 
 
 def stable_record_signature(record: dict[str, Any]) -> str:
@@ -1356,12 +1389,15 @@ def parse_http_csv_payload(payload: bytes, source_uri: str) -> list[dict[str, An
         if not normalized:
             continue
         normalize_numeric_coordinates(normalized)
-        title = first_present_string(
-            normalized.get("title"),
-            normalized.get("name"),
-            normalized.get("id"),
-            normalized.get("external_id"),
-        ) or f"csv-record-{index}"
+        title = (
+            first_present_string(
+                normalized.get("title"),
+                normalized.get("name"),
+                normalized.get("id"),
+                normalized.get("external_id"),
+            )
+            or f"csv-record-{index}"
+        )
         record = {
             **normalized,
             "source_url": source_uri,
@@ -1380,13 +1416,19 @@ def parse_rss_payload(payload: bytes, source_uri: str) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
 
     if root_tag == "feed":
-        entries = [child for child in root if isinstance(child.tag, str) and strip_xml_namespace(child.tag) == "entry"]
+        entries = [
+            child
+            for child in root
+            if isinstance(child.tag, str) and strip_xml_namespace(child.tag) == "entry"
+        ]
         for index, entry in enumerate(entries, start=1):
             payload_json = xml_element_to_data(entry)
             if not isinstance(payload_json, dict):
                 payload_json = {"value": payload_json}
             title = first_nested_value(payload_json, "title") or f"atom-entry-{index}"
-            summary = first_nested_value(payload_json, "summary") or first_nested_value(payload_json, "content")
+            summary = first_nested_value(payload_json, "summary") or first_nested_value(
+                payload_json, "content"
+            )
             record = {
                 "source_url": source_uri,
                 "feed_type": "atom",
@@ -1398,17 +1440,26 @@ def parse_rss_payload(payload: bytes, source_uri: str) -> list[dict[str, Any]]:
                 "published_at": first_nested_value(payload_json, "updated")
                 or first_nested_value(payload_json, "published"),
                 "entry_id": first_nested_value(payload_json, "id"),
-                "author": first_nested_value(payload_json, "name") or first_nested_value(payload_json, "author"),
+                "author": first_nested_value(payload_json, "name")
+                or first_nested_value(payload_json, "author"),
                 "raw_feed_entry": payload_json,
             }
             records.append(record)
         return records
 
     channel = next(
-        (child for child in root if isinstance(child.tag, str) and strip_xml_namespace(child.tag) == "channel"),
+        (
+            child
+            for child in root
+            if isinstance(child.tag, str) and strip_xml_namespace(child.tag) == "channel"
+        ),
         root,
     )
-    items = [child for child in channel if isinstance(child.tag, str) and strip_xml_namespace(child.tag) == "item"]
+    items = [
+        child
+        for child in channel
+        if isinstance(child.tag, str) and strip_xml_namespace(child.tag) == "item"
+    ]
     for index, item in enumerate(items, start=1):
         payload_json = xml_element_to_data(item)
         if not isinstance(payload_json, dict):
@@ -1438,7 +1489,9 @@ def parse_arcgis_feature_payload(payload: bytes, source_uri: str) -> list[dict[s
     return parse_arcgis_feature_document(document, source_uri)
 
 
-def parse_arcgis_feature_document(document: dict[str, Any], source_uri: str) -> list[dict[str, Any]]:
+def parse_arcgis_feature_document(
+    document: dict[str, Any], source_uri: str
+) -> list[dict[str, Any]]:
     features = document.get("features")
     if not isinstance(features, list):
         raise RuntimeError("ArcGIS feature payload did not contain a features list.")
@@ -1464,14 +1517,17 @@ def parse_arcgis_feature_document(document: dict[str, Any], source_uri: str) -> 
                     record["longitude"] = float(coordinates[0])
                     record["latitude"] = float(coordinates[1])
             record["geometry"] = geojson
-        title = first_present_string(
-            record.get("title"),
-            record.get("name"),
-            record.get("site_name"),
-            record.get("camera_name"),
-            record.get("OBJECTID"),
-            record.get("objectid"),
-        ) or f"arcgis-feature-{index}"
+        title = (
+            first_present_string(
+                record.get("title"),
+                record.get("name"),
+                record.get("site_name"),
+                record.get("camera_name"),
+                record.get("OBJECTID"),
+                record.get("objectid"),
+            )
+            or f"arcgis-feature-{index}"
+        )
         record.update(
             {
                 "source_url": source_uri,
@@ -1505,18 +1561,24 @@ def parse_ckan_package_search_document(
     for package in packages:
         if not isinstance(package, dict):
             continue
-        package_title = first_present_string(package.get("title"), package.get("name"), package.get("id")) or "ckan-package"
+        package_title = (
+            first_present_string(package.get("title"), package.get("name"), package.get("id"))
+            or "ckan-package"
+        )
         package_url = first_present_string(package.get("url"), package.get("notes"))
         resources = package.get("resources")
         if isinstance(resources, list) and resources:
             for index, resource in enumerate(resources, start=1):
                 if not isinstance(resource, dict):
                     continue
-                resource_title = first_present_string(
-                    resource.get("name"),
-                    resource.get("description"),
-                    resource.get("id"),
-                ) or f"{package_title}-resource-{index}"
+                resource_title = (
+                    first_present_string(
+                        resource.get("name"),
+                        resource.get("description"),
+                        resource.get("id"),
+                    )
+                    or f"{package_title}-resource-{index}"
+                )
                 records.append(
                     {
                         "source_url": source_uri,
@@ -1541,7 +1603,9 @@ def parse_ckan_package_search_document(
                         "resource_mimetype": resource.get("mimetype"),
                         "resource_created": resource.get("created"),
                         "resource_last_modified": resource.get("last_modified"),
-                        "organization_title": nested_dict_value(package.get("organization"), "title"),
+                        "organization_title": nested_dict_value(
+                            package.get("organization"), "title"
+                        ),
                         "organization_name": nested_dict_value(package.get("organization"), "name"),
                         "license_title": package.get("license_title"),
                         "tags": extract_named_values(package.get("tags")),
@@ -1641,7 +1705,9 @@ def extract_xml_headline(payload: dict[str, Any]) -> str | None:
     headline_payload = payload.get("headline")
     if headline_payload is None:
         return None
-    parts = [part for part in collect_scalar_strings(headline_payload, limit=4) if not part.isdigit()]
+    parts = [
+        part for part in collect_scalar_strings(headline_payload, limit=4) if not part.isdigit()
+    ]
     if not parts:
         return None
     return " | ".join(parts)
@@ -1808,7 +1874,12 @@ def transform_arcgis_point_list(point: Any, wkid: int | None) -> list[float] | N
 def transform_arcgis_path(points: Any, wkid: int | None) -> list[list[float]]:
     if not isinstance(points, list):
         return []
-    transformed = [value for point in points for value in [transform_arcgis_point_list(point, wkid)] if value is not None]
+    transformed = [
+        value
+        for point in points
+        for value in [transform_arcgis_point_list(point, wkid)]
+        if value is not None
+    ]
     return transformed
 
 
@@ -1887,7 +1958,9 @@ def extract_named_values(value: Any) -> list[str]:
     names: list[str] = []
     for item in value:
         if isinstance(item, dict):
-            name = first_present_string(item.get("display_name"), item.get("title"), item.get("name"))
+            name = first_present_string(
+                item.get("display_name"), item.get("title"), item.get("name")
+            )
             if name:
                 names.append(name)
     return names
@@ -1899,7 +1972,9 @@ def find_timestamp_in_payload(payload: Any) -> str | None:
         time_value = payload.get("time")
         offset_value = payload.get("utc-offset")
         if isinstance(date_value, str) and isinstance(time_value, str):
-            return format_feu_timestamp(date_value, time_value, offset_value if isinstance(offset_value, str) else None)
+            return format_feu_timestamp(
+                date_value, time_value, offset_value if isinstance(offset_value, str) else None
+            )
         for value in payload.values():
             timestamp = find_timestamp_in_payload(value)
             if timestamp:
@@ -1957,7 +2032,9 @@ def ensure_unique_source_name(
     raise ValueError(f"Source name '{name}' already exists.")
 
 
-def apply_changes(record: SourceDefinitionORM, changes: dict[str, Any]) -> dict[str, dict[str, Any]]:
+def apply_changes(
+    record: SourceDefinitionORM, changes: dict[str, Any]
+) -> dict[str, dict[str, Any]]:
     details: dict[str, dict[str, Any]] = {}
     for field_name, new_value in changes.items():
         old_value = getattr(record, field_name)

@@ -143,7 +143,9 @@ def dynamic_http_server(responder):
         thread.join(timeout=5)
 
 
-def test_source_definition_run_creates_import_and_history(client: TestClient, tmp_path: Path) -> None:
+def test_source_definition_run_creates_import_and_history(
+    client: TestClient, tmp_path: Path
+) -> None:
     fixture = tmp_path / "source-file.json"
     fixture.write_text(
         json.dumps(
@@ -195,7 +197,10 @@ def test_source_definition_run_creates_import_and_history(client: TestClient, tm
     assert len(ops_payload["storage_objects"]) == 1
     assert ops_payload["storage_objects"][0]["object_kind"] == "source_local_payload"
     assert ops_payload["storage_objects"][0]["source_uri"] == str(fixture)
-    assert ops_payload["storage_objects"][0]["metadata_json"]["import_run_id"] == payload["import_run_id"]
+    assert (
+        ops_payload["storage_objects"][0]["metadata_json"]["import_run_id"]
+        == payload["import_run_id"]
+    )
 
     layers_response = client.get("/api/layers")
     assert layers_response.status_code == 200
@@ -211,13 +216,11 @@ def test_source_definition_run_creates_import_and_history(client: TestClient, tm
         for row in custody_rows
     )
     assert any(
-        row["object_type"] == "source_run"
-        and row["action"] == "source_run_started"
+        row["object_type"] == "source_run" and row["action"] == "source_run_started"
         for row in custody_rows
     )
     assert any(
-        row["object_type"] == "source_run"
-        and row["action"] == "source_run_completed"
+        row["object_type"] == "source_run" and row["action"] == "source_run_completed"
         for row in custody_rows
     )
     assert any(
@@ -414,8 +417,7 @@ def test_source_run_skips_unchanged_payloads(client: TestClient, tmp_path: Path)
     custody_response = client.get("/api/custody/logs")
     assert custody_response.status_code == 200
     assert any(
-        row["object_type"] == "source_run"
-        and row["action"] == "source_run_skipped"
+        row["object_type"] == "source_run" and row["action"] == "source_run_skipped"
         for row in custody_response.json()
     )
 
@@ -557,7 +559,9 @@ def test_http_xml_source_uses_env_basic_auth_and_parses_records(
         assert run_payload["output_json"]["cached_record_count"] == 1
         assert run_payload["output_json"]["cached_path"].endswith(".json")
 
-        observations_response = client.get("/api/observations", params={"layer_key": "mndot-loop-feed"})
+        observations_response = client.get(
+            "/api/observations", params={"layer_key": "mndot-loop-feed"}
+        )
         assert observations_response.status_code == 200
         observations = observations_response.json()
         assert len(observations) == 1
@@ -707,7 +711,9 @@ def test_source_summary_and_report_index_capture_stale_failing_and_unscheduled_s
     assert report["inventory_summary"]["total_count"] == 4
     assert any(row["source"]["source_id"] == failing_source_id for row in report["failing_sources"])
     assert any(row["source"]["source_id"] == failing_source_id for row in report["stale_sources"])
-    assert any(row["source"]["source_id"] == unscheduled_source_id for row in report["unscheduled_sources"])
+    assert any(
+        row["source"]["source_id"] == unscheduled_source_id for row in report["unscheduled_sources"]
+    )
     healthy_status = next(
         row for row in report["recent_runs"] if row["source_id"] == healthy_source_id
     )
@@ -715,7 +721,12 @@ def test_source_summary_and_report_index_capture_stale_failing_and_unscheduled_s
 
     export_response = client.get(
         "/api/sources/export/summary",
-        params={"stale_after_hours": 24, "source_limit": 10, "report_limit": 10, "stale_source_limit": 10},
+        params={
+            "stale_after_hours": 24,
+            "source_limit": 10,
+            "report_limit": 10,
+            "stale_source_limit": 10,
+        },
     )
     assert export_response.status_code == 200
     export_payload = export_response.json()
@@ -731,7 +742,10 @@ def test_source_summary_and_report_index_capture_stale_failing_and_unscheduled_s
 
 def test_http_jsonl_source_imports_multiple_records(client: TestClient) -> None:
     payload = b'{"title":"ndjson one","url":"https://ndjson.example.com/1","lat":44.98,"lon":-93.26}\n{"title":"ndjson two","url":"https://ndjson.example.com/2","lat":44.99,"lon":-93.25}\n'
-    with static_http_server(payload, content_type="application/x-ndjson", path="/feed.jsonl") as (target_uri, state):
+    with static_http_server(payload, content_type="application/x-ndjson", path="/feed.jsonl") as (
+        target_uri,
+        state,
+    ):
         source_response = client.post(
             "/api/sources",
             json={
@@ -761,7 +775,10 @@ def test_http_jsonl_source_imports_multiple_records(client: TestClient) -> None:
         assert observations_response.status_code == 200
         observations = observations_response.json()
         assert len(observations) == 2
-        assert {row["content_json"]["title"] for row in observations} == {"ndjson one", "ndjson two"}
+        assert {row["content_json"]["title"] for row in observations} == {
+            "ndjson one",
+            "ndjson two",
+        }
 
 
 def test_http_csv_source_materializes_rows_as_json_records(client: TestClient) -> None:
@@ -769,7 +786,10 @@ def test_http_csv_source_materializes_rows_as_json_records(client: TestClient) -
         "camera_id,name,image_url,latitude,longitude\n"
         "mn-1,Port Camera,https://cams.example.com/port.jpg,44.95,-93.09\n"
     ).encode("utf-8")
-    with static_http_server(csv_payload, content_type="text/csv", path="/cameras.csv") as (target_uri, state):
+    with static_http_server(csv_payload, content_type="text/csv", path="/cameras.csv") as (
+        target_uri,
+        state,
+    ):
         source_response = client.post(
             "/api/sources",
             json={
@@ -818,7 +838,10 @@ def test_rss_source_parses_feed_items(client: TestClient) -> None:
   </channel>
 </rss>
 """.encode("utf-8")
-    with static_http_server(rss_payload, content_type="application/rss+xml", path="/feed.xml") as (target_uri, state):
+    with static_http_server(rss_payload, content_type="application/rss+xml", path="/feed.xml") as (
+        target_uri,
+        state,
+    ):
         source_response = client.post(
             "/api/sources",
             json={
@@ -912,8 +935,14 @@ def test_arcgis_feature_json_source_paginates_bounded_results(client: TestClient
         "spatialReference": {"wkid": 4326},
         "exceededTransferLimit": True,
         "features": [
-            {"attributes": {"OBJECTID": 1, "name": "Camera One"}, "geometry": {"x": -93.1, "y": 44.9}},
-            {"attributes": {"OBJECTID": 2, "name": "Camera Two"}, "geometry": {"x": -93.2, "y": 45.0}},
+            {
+                "attributes": {"OBJECTID": 1, "name": "Camera One"},
+                "geometry": {"x": -93.1, "y": 44.9},
+            },
+            {
+                "attributes": {"OBJECTID": 2, "name": "Camera Two"},
+                "geometry": {"x": -93.2, "y": 45.0},
+            },
         ],
     }
     page_two = {
@@ -921,7 +950,10 @@ def test_arcgis_feature_json_source_paginates_bounded_results(client: TestClient
         "spatialReference": {"wkid": 4326},
         "exceededTransferLimit": False,
         "features": [
-            {"attributes": {"OBJECTID": 3, "name": "Camera Three"}, "geometry": {"x": -93.3, "y": 45.1}}
+            {
+                "attributes": {"OBJECTID": 3, "name": "Camera Three"},
+                "geometry": {"x": -93.3, "y": 45.1},
+            }
         ],
     }
 
@@ -1026,7 +1058,9 @@ def test_ckan_package_search_source_expands_resource_records(client: TestClient)
         assert run_payload["status"] == "completed"
         assert run_payload["records_imported"] == 1
 
-        observations_response = client.get("/api/observations", params={"layer_key": "catalog-feed"})
+        observations_response = client.get(
+            "/api/observations", params={"layer_key": "catalog-feed"}
+        )
         assert observations_response.status_code == 200
         observations = observations_response.json()
         assert len(observations) == 1

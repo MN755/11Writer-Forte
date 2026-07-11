@@ -34,7 +34,9 @@ def configure_fake_clickhouse(monkeypatch, *, row_count: int = 1) -> None:  # ty
     monkeypatch.setenv("ELEVENWRITER_CLICKHOUSE_DATABASE", "elevenwriter")
     monkeypatch.setenv("ELEVENWRITER_CLICKHOUSE_USER", "forte")
     monkeypatch.setenv("ELEVENWRITER_CLICKHOUSE_PASSWORD", "secret")
-    monkeypatch.setenv("ELEVENWRITER_CLICKHOUSE_R2_ENDPOINT", "https://acct.r2.cloudflarestorage.com")
+    monkeypatch.setenv(
+        "ELEVENWRITER_CLICKHOUSE_R2_ENDPOINT", "https://acct.r2.cloudflarestorage.com"
+    )
     monkeypatch.setenv("ELEVENWRITER_CLICKHOUSE_R2_BUCKET", "11writer-archive")
     monkeypatch.setenv("ELEVENWRITER_CLICKHOUSE_R2_ACCESS_KEY_ID", "r2-key")
     monkeypatch.setenv("ELEVENWRITER_CLICKHOUSE_R2_SECRET_ACCESS_KEY", "r2-secret")
@@ -46,7 +48,9 @@ def configure_fake_clickhouse(monkeypatch, *, row_count: int = 1) -> None:  # ty
         if request.full_url.endswith("/ping"):
             return FakeClickHouseResponse("Ok.\n")
         if "SELECT version()" in body:
-            return FakeClickHouseResponse('{"version":"26.6.1","current_database":"elevenwriter"}\n')
+            return FakeClickHouseResponse(
+                '{"version":"26.6.1","current_database":"elevenwriter"}\n'
+            )
         if "SELECT count(*) AS row_count" in body:
             return FakeClickHouseResponse(f'{{"row_count":{row_count}}}\n')
         return FakeClickHouseResponse("")
@@ -163,7 +167,9 @@ def seed_runtime_state(client: TestClient, tmp_path: Path, monkeypatch) -> None:
             "name": "Snapshot Watch",
             "geometry_geojson": {
                 "type": "Polygon",
-                "coordinates": [[[-96.0, 29.0], [-94.0, 29.0], [-94.0, 31.0], [-96.0, 31.0], [-96.0, 29.0]]],
+                "coordinates": [
+                    [[-96.0, 29.0], [-94.0, 29.0], [-94.0, 31.0], [-96.0, 31.0], [-96.0, 29.0]]
+                ],
             },
             "rule_expression": "snapshot watch",
         },
@@ -334,7 +340,9 @@ def seed_runtime_state(client: TestClient, tmp_path: Path, monkeypatch) -> None:
     assert fused.status_code == 200
 
 
-def test_runtime_snapshot_export_and_restore_round_trip(client: TestClient, tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_runtime_snapshot_export_and_restore_round_trip(
+    client: TestClient, tmp_path: Path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
     seed_runtime_state(client, tmp_path, monkeypatch)
 
     export_response = client.get("/api/operations/runtime/export")
@@ -354,11 +362,22 @@ def test_runtime_snapshot_export_and_restore_round_trip(client: TestClient, tmp_
     assert snapshot["source_runs"]
     assert snapshot["situation_products"]
     task_types = {row["task_type"] for row in snapshot["scheduled_tasks"]}
-    assert {"geofence_scan", "source_sync", "storage_lifecycle", "camera_inventory_refresh"}.issubset(task_types)
-    assert {"clickhouse_sync", "clickhouse_archive", "entity_resolution_refresh", "event_fusion_refresh"}.issubset(
-        task_types
+    assert {
+        "geofence_scan",
+        "source_sync",
+        "storage_lifecycle",
+        "camera_inventory_refresh",
+    }.issubset(task_types)
+    assert {
+        "clickhouse_sync",
+        "clickhouse_archive",
+        "entity_resolution_refresh",
+        "event_fusion_refresh",
+    }.issubset(task_types)
+    assert any(
+        run["output_json"].get("clickhouse_database") == "elevenwriter"
+        for run in snapshot["scheduled_task_runs"]
     )
-    assert any(run["output_json"].get("clickhouse_database") == "elevenwriter" for run in snapshot["scheduled_task_runs"])
     assert any(log["action"] == "runtime_exported" for log in snapshot["custody_logs"])
     assert any(log["action"] == "clickhouse_synced" for log in snapshot["custody_logs"])
     assert any(log["action"] == "clickhouse_archived_to_r2" for log in snapshot["custody_logs"])
@@ -394,16 +413,25 @@ def test_runtime_snapshot_export_and_restore_round_trip(client: TestClient, tmp_
     assert len(restored_snapshot["events"]) >= len(snapshot["events"])
     assert len(restored_snapshot["entities"]) >= len(snapshot["entities"])
     assert len(restored_snapshot["camera_inventory"]) >= len(snapshot["camera_inventory"])
-    assert len(restored_snapshot["camera_source_inventory"]) >= len(snapshot["camera_source_inventory"])
+    assert len(restored_snapshot["camera_source_inventory"]) >= len(
+        snapshot["camera_source_inventory"]
+    )
     assert len(restored_snapshot["storage_objects"]) >= len(snapshot["storage_objects"])
     restored_task_types = {row["task_type"] for row in restored_snapshot["scheduled_tasks"]}
     assert task_types.issubset(restored_task_types)
-    restored_scheduler_report = client.get("/api/scheduler/report-index", params={"limit": 25, "overdue_task_limit": 25})
+    restored_scheduler_report = client.get(
+        "/api/scheduler/report-index", params={"limit": 25, "overdue_task_limit": 25}
+    )
     assert restored_scheduler_report.status_code == 200
     report_payload = restored_scheduler_report.json()
     assert report_payload["inventory_summary"]["maintenance_task_count"] >= 3
-    assert any(row["task"]["task_type"] == "clickhouse_sync" for row in report_payload["maintenance_tasks"])
-    assert any(row["task"]["task_type"] == "clickhouse_archive" for row in report_payload["maintenance_tasks"])
+    assert any(
+        row["task"]["task_type"] == "clickhouse_sync" for row in report_payload["maintenance_tasks"]
+    )
+    assert any(
+        row["task"]["task_type"] == "clickhouse_archive"
+        for row in report_payload["maintenance_tasks"]
+    )
     assert any(log["action"] == "runtime_restored" for log in restored_snapshot["custody_logs"])
     restore_default_clickhouse_settings()
 
@@ -475,7 +503,10 @@ def test_runtime_bundle_export_and_restore_round_trip(
     assert rows[0]["object_uri"] == managed_file.resolve().as_uri()
     restored_snapshot = client.get("/api/operations/runtime/export")
     assert restored_snapshot.status_code == 200
-    assert any(log["action"] == "runtime_bundle_restored" for log in restored_snapshot.json()["custody_logs"])
+    assert any(
+        log["action"] == "runtime_bundle_restored"
+        for log in restored_snapshot.json()["custody_logs"]
+    )
     restore_default_clickhouse_settings()
 
 
@@ -530,10 +561,7 @@ def test_runtime_bundle_api_export_and_restore_round_trip(
         params={"owner_type": "runtime_bundle"},
     )
     assert stored_exports.status_code == 200
-    assert any(
-        row["object_kind"] == "runtime_bundle_export"
-        for row in stored_exports.json()
-    )
+    assert any(row["object_kind"] == "runtime_bundle_export" for row in stored_exports.json())
 
     managed_file.unlink()
     junk_file = settings.data_dir / "bundle-api-junk.txt"

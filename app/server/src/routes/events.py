@@ -20,7 +20,10 @@ from src.services.event_export_service import build_event_export_bundle
 from src.services.event_fusion_service import materialize_fused_events
 from src.services.event_service import create_event, list_events
 from src.services.layer_service import create_data_layer, list_data_layers
-from src.services.redaction_service import enforce_export_redaction, filter_records_by_redaction_level
+from src.services.redaction_service import (
+    enforce_export_redaction,
+    filter_records_by_redaction_level,
+)
 
 router = APIRouter(prefix="/events", tags=["events"])
 layer_router = APIRouter(prefix="/layers", tags=["layers"])
@@ -40,7 +43,9 @@ def post_event(payload: EventCreate, session: Session = Depends(get_db)) -> Even
 
 
 @router.post("/fuse", response_model=EventFusionResponse)
-def fuse_events(payload: EventFusionRequest, session: Session = Depends(get_db)) -> EventFusionResponse:
+def fuse_events(
+    payload: EventFusionRequest, session: Session = Depends(get_db)
+) -> EventFusionResponse:
     results = materialize_fused_events(session, payload)
     return EventFusionResponse(
         created_event_count=sum(1 for result in results if result.created_new),
@@ -59,12 +64,16 @@ def fuse_events(payload: EventFusionRequest, session: Session = Depends(get_db))
 
 
 @router.get("/{event_id}/observations", response_model=list[EventObservationLinkRead])
-def list_event_observations(event_id: int, session: Session = Depends(get_db)) -> list[EventObservationLinkORM]:
+def list_event_observations(
+    event_id: int, session: Session = Depends(get_db)
+) -> list[EventObservationLinkORM]:
     event = session.get(EventORM, event_id)
     if event is None:
         raise HTTPException(status_code=404, detail=f"Event {event_id} does not exist.")
     statement = select(EventObservationLinkORM).where(EventObservationLinkORM.event_id == event_id)
-    return list(session.scalars(statement.order_by(EventObservationLinkORM.event_observation_link_id.asc())))
+    return list(
+        session.scalars(statement.order_by(EventObservationLinkORM.event_observation_link_id.asc()))
+    )
 
 
 @router.get("/{event_id}/products", response_model=list[SituationProductRead])

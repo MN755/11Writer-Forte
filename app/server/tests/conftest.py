@@ -28,4 +28,3 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
 
     reset_db_state()
     reset_settings_cache()
-

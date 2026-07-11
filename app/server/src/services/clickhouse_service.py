@@ -58,12 +58,18 @@ def build_clickhouse_diagnostics() -> dict[str, object]:
     if not settings.clickhouse_r2_configured:
         warnings.append("ClickHouse is enabled, but Cloudflare R2 archive settings are incomplete.")
     if settings.clickhouse_r2_storage_mode == "hybrid":
-        notes.append("Hybrid mode keeps hot ClickHouse tables local and expects R2 for archive query/rehydration.")
+        notes.append(
+            "Hybrid mode keeps hot ClickHouse tables local and expects R2 for archive query/rehydration."
+        )
     if settings.clickhouse_r2_storage_mode == "r2_disk":
         if settings.clickhouse_r2_storage_configured:
-            notes.append("R2 disk mode will provision ClickHouse tables against the configured remote storage policy.")
+            notes.append(
+                "R2 disk mode will provision ClickHouse tables against the configured remote storage policy."
+            )
         else:
-            warnings.append("ClickHouse R2 disk mode is selected, but the R2 storage settings are incomplete.")
+            warnings.append(
+                "ClickHouse R2 disk mode is selected, but the R2 storage settings are incomplete."
+            )
 
     try:
         ping_clickhouse()
@@ -671,8 +677,12 @@ def query_storage_objects_for_clickhouse(session: Session, *, limit: int) -> lis
 
 def serialize_observation_row(row: ObservationORM) -> dict[str, Any]:
     coordinates = (row.location_geojson or {}).get("coordinates")
-    longitude = float(coordinates[0]) if isinstance(coordinates, list) and len(coordinates) >= 2 else None
-    latitude = float(coordinates[1]) if isinstance(coordinates, list) and len(coordinates) >= 2 else None
+    longitude = (
+        float(coordinates[0]) if isinstance(coordinates, list) and len(coordinates) >= 2 else None
+    )
+    latitude = (
+        float(coordinates[1]) if isinstance(coordinates, list) and len(coordinates) >= 2 else None
+    )
     observed_at = extract_observation_timestamp(row) or row.created_at
     return {
         "observation_id": row.observation_id,
@@ -812,7 +822,10 @@ def validate_r2_archive_glob_url(archive_glob_url: str) -> None:
 
 def ensure_clickhouse_storage_mode_ready() -> None:
     settings = get_settings()
-    if settings.clickhouse_r2_storage_mode == "r2_disk" and not settings.clickhouse_r2_storage_configured:
+    if (
+        settings.clickhouse_r2_storage_mode == "r2_disk"
+        and not settings.clickhouse_r2_storage_configured
+    ):
         raise ValueError("ClickHouse R2 disk mode requires complete R2 storage settings.")
 
 
@@ -838,7 +851,11 @@ def deserialize_clickhouse_observation_row(row: dict[str, Any]) -> ObservationQu
         location_geojson = {"type": "Point", "coordinates": [longitude, latitude]}
 
     raw_content_json = row.get("content_json_json")
-    content_json = json.loads(raw_content_json) if isinstance(raw_content_json, str) and raw_content_json else {}
+    content_json = (
+        json.loads(raw_content_json)
+        if isinstance(raw_content_json, str) and raw_content_json
+        else {}
+    )
     if not isinstance(content_json, dict):
         content_json = {}
 

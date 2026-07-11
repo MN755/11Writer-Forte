@@ -13,6 +13,29 @@ RetentionClass = Literal["ephemeral", "operational", "investigative", "permanent
 StorageLifecycleStatus = Literal["active", "promoted", "degraded", "archived", "expired"]
 CameraSourceStatus = Literal["candidate", "review", "ready", "graduated", "ignored", "retired"]
 CameraSourceVerificationState = Literal["unknown", "observed", "reachable", "failed"]
+InvestigationState = Literal[
+    "draft",
+    "planning",
+    "collecting",
+    "normalizing",
+    "corroborating",
+    "reporting",
+    "ready",
+    "monitoring",
+    "archived",
+    "insufficient_evidence",
+    "failed",
+]
+InvestigationAttemptStatus = Literal["queued", "completed"]
+InvestigationAttemptReason = Literal[
+    "confirmed",
+    "corroborating",
+    "conflicting",
+    "low_quality",
+    "unavailable",
+    "blocked_by_policy",
+    "dead_end",
+]
 
 
 class ForteModel(BaseModel):
@@ -32,6 +55,13 @@ DISCOVERY_SNAPSHOT_ROW_SCHEMAS = {
     "candidate_promotion_decisions": "CandidatePromotionDecisionRead",
     "robots_observations": "RobotsObservationRead",
     "discovery_artifacts": "DiscoveryArtifactRead",
+}
+
+INVESTIGATION_SNAPSHOT_ROW_SCHEMAS = {
+    "investigations": "InvestigationRead",
+    "investigation_discovery_attempts": "InvestigationDiscoveryAttemptRead",
+    "investigation_report_versions": "InvestigationReportVersionRead",
+    "investigation_evidence_promotions": "InvestigationEvidencePromotionRead",
 }
 
 
@@ -72,7 +102,9 @@ def validate_discovery_crawl_policy(value: dict[str, Any]) -> dict[str, Any]:
     if "user_agent" in value and (
         not isinstance(value["user_agent"], str) or len(value["user_agent"]) > 500
     ):
-        raise ValueError("Discovery crawl policy user_agent must be a string of 500 characters or fewer.")
+        raise ValueError(
+            "Discovery crawl policy user_agent must be a string of 500 characters or fewer."
+        )
     return value
 
 
@@ -220,9 +252,21 @@ class RuntimeSnapshotRead(ForteModel):
     discovery_graph_edges: list["DiscoveryGraphEdgeRead"] = Field(default_factory=list)
     candidate_health_checks: list["CandidateHealthCheckRead"] = Field(default_factory=list)
     candidate_suppressions: list["CandidateSuppressionRead"] = Field(default_factory=list)
-    candidate_promotion_decisions: list["CandidatePromotionDecisionRead"] = Field(default_factory=list)
+    candidate_promotion_decisions: list["CandidatePromotionDecisionRead"] = Field(
+        default_factory=list
+    )
     robots_observations: list["RobotsObservationRead"] = Field(default_factory=list)
     discovery_artifacts: list["DiscoveryArtifactRead"] = Field(default_factory=list)
+    investigations: list["InvestigationRead"] = Field(default_factory=list)
+    investigation_discovery_attempts: list["InvestigationDiscoveryAttemptRead"] = Field(
+        default_factory=list
+    )
+    investigation_report_versions: list["InvestigationReportVersionRead"] = Field(
+        default_factory=list
+    )
+    investigation_evidence_promotions: list["InvestigationEvidencePromotionRead"] = Field(
+        default_factory=list
+    )
     geofences: list["GeofenceRead"]
     source_definitions: list["SourceDefinitionRead"]
     local_import_runs: list["LocalImportRunSummaryRead"]
@@ -247,7 +291,7 @@ class RuntimeSnapshotRead(ForteModel):
         if not isinstance(value, dict):
             return value
         version = int(value.get("snapshot_version", 1))
-        if version not in {1, 2}:
+        if version not in {1, 2, 3}:
             raise ValueError(f"Unsupported runtime snapshot version: {version}.")
         if version < 2:
             return value
@@ -258,7 +302,10 @@ class RuntimeSnapshotRead(ForteModel):
             for item in raw_counts
             if isinstance(item, dict) and item.get("table_name") is not None
         }
-        for section_name, schema_name in DISCOVERY_SNAPSHOT_ROW_SCHEMAS.items():
+        for section_name, schema_name in {
+            **DISCOVERY_SNAPSHOT_ROW_SCHEMAS,
+            **INVESTIGATION_SNAPSHOT_ROW_SCHEMAS,
+        }.items():
             if section_name in row_counts and section_name not in value:
                 raise ValueError(
                     f"Runtime snapshot section '{section_name}' is missing despite row_counts metadata."
@@ -678,7 +725,10 @@ class SourceDefinitionCreate(ForteModel):
         "http_jsonl",
         "http_text",
         "http_xml",
+        "http_csv",
         "rss",
+        "arcgis_feature_json",
+        "ckan_package_search",
         "web_search",
         "web_crawl",
         "web_discovery",
@@ -1064,6 +1114,97 @@ class SchedulerOpsExportSummaryRead(ForteModel):
     report_index: SchedulerOpsReportIndexRead
     tasks: list[ScheduledTaskRead]
 
+
+class InvestigationCreate(ForteModel):
+    slug: str = Field(min_length=1, max_length=160, pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+    question: str = Field(min_length=1, max_length=20_000)
+    operator_scope_json: dict[str, Any] = Field(default_factory=dict)
+    time_window_json: dict[str, Any] = Field(default_factory=dict)
+    geography_json: dict[str, Any] = Field(default_factory=dict)
+    source_policy_snapshot_json: dict[str, Any] = Field(default_factory=dict)
+    research_budget_json: dict[str, Any] = Field(default_factory=dict)
+    evidence_threshold_json: dict[str, Any] = Field(default_factory=dict)
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+
+
+class InvestigationRead(InvestigationCreate):
+    investigation_id: int
+    state: InvestigationState
+    stop_reason: str | None
+    stopped_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class InvestigationTransitionRequest(ForteModel):
+    state: InvestigationState
+    stop_reason: str | None = Field(default=None, max_length=10_000)
+
+
+class InvestigationDiscoveryAttemptCreate(ForteModel):
+    lead_key: str = Field(min_length=1, max_length=200)
+    discovery_path: str = Field(default="public_web", min_length=1, max_length=80)
+    source_uri: str | None = Field(default=None, max_length=10_000)
+    status: InvestigationAttemptStatus = "completed"
+    reason: InvestigationAttemptReason
+    alternate_eligible: bool = False
+    alternate_discovery_path: str | None = Field(default=None, min_length=1, max_length=80)
+    alternate_source_uri: str | None = Field(default=None, max_length=10_000)
+    error_text: str | None = Field(default=None, max_length=10_000)
+    details_json: dict[str, Any] = Field(default_factory=dict)
+
+
+class InvestigationDiscoveryAttemptRead(ForteModel):
+    investigation_attempt_id: int
+    investigation_id: int
+    lead_key: str
+    discovery_path: str
+    source_uri: str | None
+    status: InvestigationAttemptStatus
+    reason: InvestigationAttemptReason
+    attempted_at: datetime | None
+    alternate_eligible: bool
+    alternate_queued: bool
+    error_text: str | None
+    details_json: dict[str, Any]
+    created_at: datetime
+
+
+class InvestigationReportVersionCreate(ForteModel):
+    report_spec_version: str = Field(default="1", min_length=1, max_length=80)
+    report_text: str = Field(min_length=1, max_length=2_000_000)
+    citations_json: list[dict[str, Any]] = Field(default_factory=list)
+    storage_object_id: int | None = Field(default=None, gt=0)
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+
+
+class InvestigationReportVersionRead(InvestigationReportVersionCreate):
+    investigation_report_version_id: int
+    investigation_id: int
+    version_number: int
+    created_at: datetime
+
+
+class InvestigationEvidencePromotionCreate(ForteModel):
+    storage_object_id: int = Field(gt=0)
+    disposition: Literal["promoted", "rejected"] = "promoted"
+    rationale: str = Field(default="", max_length=10_000)
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+
+
+class InvestigationEvidencePromotionRead(InvestigationEvidencePromotionCreate):
+    investigation_evidence_promotion_id: int
+    investigation_id: int
+    promoted_at: datetime
+
+
+class InvestigationArchiveResultRead(ForteModel):
+    investigation: InvestigationRead
+    retained_report_count: int
+    retained_evidence_count: int
+    archived_raw_storage_object_ids: list[int]
+
+
 WatchType = Literal["source_delta", "image_change", "observation_rule", "source_health"]
 WatchState = Literal["enabled", "paused"]
 WatchSeverity = Literal["info", "warning", "critical"]
@@ -1087,7 +1228,9 @@ class NotificationPolicy(StrictForteModel):
     @model_validator(mode="after")
     def require_api_for_rss(self) -> "NotificationPolicy":
         if self.rss_enabled and not self.api_enabled:
-            raise ValueError("rss_enabled requires api_enabled because RSS is backed by local alerts")
+            raise ValueError(
+                "rss_enabled requires api_enabled because RSS is backed by local alerts"
+            )
         return self
 
 
@@ -1314,7 +1457,6 @@ class WatchEvaluateRequest(StrictForteModel):
 class WatchEvaluateTaskPayload(StrictForteModel):
     watch_id: int = Field(gt=0)
     force: bool = False
-
 
     tasks: list[ScheduledTaskRead]
 

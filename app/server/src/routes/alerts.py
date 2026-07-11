@@ -34,7 +34,9 @@ def post_alert(payload: AlertCreate, session: Session = Depends(get_db)) -> Aler
 
 
 @router.patch("/{alert_id}", response_model=AlertRead)
-def patch_alert(alert_id: int, payload: AlertUpdate, session: Session = Depends(get_db)) -> AlertORM:
+def patch_alert(
+    alert_id: int, payload: AlertUpdate, session: Session = Depends(get_db)
+) -> AlertORM:
     try:
         return update_alert_record(session, alert_id, payload, actor="api_alert")
     except ValueError as exc:

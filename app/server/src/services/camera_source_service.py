@@ -16,7 +16,11 @@ from src.models import (
     ScheduledTaskORM,
     ScheduledTaskRunORM,
 )
-from src.services.camera_service import query_camera_inventory, refresh_task_matches_scope, serialize_refresh_run
+from src.services.camera_service import (
+    query_camera_inventory,
+    refresh_task_matches_scope,
+    serialize_refresh_run,
+)
 from src.services.trust_service import normalize_domain
 
 
@@ -70,7 +74,9 @@ def list_camera_sources(
     if status:
         statement = statement.where(CameraSourceInventoryORM.status == status)
     if verification_state:
-        statement = statement.where(CameraSourceInventoryORM.verification_state == verification_state)
+        statement = statement.where(
+            CameraSourceInventoryORM.verification_state == verification_state
+        )
     if active is not None:
         statement = statement.where(CameraSourceInventoryORM.active == active)
     if limit is not None:
@@ -269,7 +275,9 @@ def build_camera_source_inventory_ops_detail(
 ) -> dict[str, object]:
     source = session.get(CameraSourceInventoryORM, camera_source_inventory_id)
     if source is None:
-        raise ValueError(f"Camera source inventory record {camera_source_inventory_id} does not exist.")
+        raise ValueError(
+            f"Camera source inventory record {camera_source_inventory_id} does not exist."
+        )
     camera = (
         session.get(CameraInventoryORM, source.camera_inventory_id)
         if source.camera_inventory_id is not None
@@ -334,9 +342,7 @@ def build_camera_source_ops_report_index(
         limit=None,
     )
     stale_sources = [
-        source
-        for source in scoped_sources
-        if is_stale_camera_source(source, stale_before)
+        source for source in scoped_sources if is_stale_camera_source(source, stale_before)
     ][:stale_source_limit]
 
     refresh_tasks = list(
@@ -381,9 +387,13 @@ def build_camera_source_ops_report_index(
     recent_materializations = [
         log
         for log in materialization_logs
-        if camera_source_materialization_matches_scope(log, layer_key=layer_key, source_domain=source_domain)
+        if camera_source_materialization_matches_scope(
+            log, layer_key=layer_key, source_domain=source_domain
+        )
     ][:limit]
-    latest_materialization_at = recent_materializations[0].created_at if recent_materializations else None
+    latest_materialization_at = (
+        recent_materializations[0].created_at if recent_materializations else None
+    )
 
     return {
         "generated_at": generated_at,
@@ -513,7 +523,10 @@ def build_camera_source_key(
     )
     digest = hashlib.sha256(raw_key.encode("utf-8")).hexdigest()[:16]
     prefix = camera.external_id or camera.camera_key or "camera-source"
-    prefix = "".join(ch for ch in prefix.lower() if ch.isalnum() or ch in {"-", "_"})[:48] or "camera-source"
+    prefix = (
+        "".join(ch for ch in prefix.lower() if ch.isalnum() or ch in {"-", "_"})[:48]
+        or "camera-source"
+    )
     return f"{prefix}-{endpoint_kind}-{digest}"
 
 
@@ -563,9 +576,7 @@ def apply_camera_source_candidate(
 ) -> dict[str, dict[str, object]]:
     changes: dict[str, dict[str, object]] = {}
     status = (
-        record.status
-        if record.status in {"graduated", "ignored", "retired"}
-        else candidate.status
+        record.status if record.status in {"graduated", "ignored", "retired"} else candidate.status
     )
     preserve_verified_state = (
         candidate.verification_state == "observed"

@@ -62,11 +62,11 @@ def discovery_site(
                 if mode == "error":
                     self._send(503, "text/plain", b"robots temporarily unavailable")
                     return
-                disallow = "/" if mode == "deny_all" else "/blocked" if mode == "deny_blocked" else ""
+                disallow = (
+                    "/" if mode == "deny_all" else "/blocked" if mode == "deny_blocked" else ""
+                )
                 body = (
-                    "User-agent: *\n"
-                    f"Disallow: {disallow}\n"
-                    f"Sitemap: {base_url}/sitemap.xml\n"
+                    f"User-agent: *\nDisallow: {disallow}\nSitemap: {base_url}/sitemap.xml\n"
                 ).encode()
                 self._send(200, "text/plain", body)
                 return
@@ -329,10 +329,7 @@ def run_campaign(
 def candidates_by_path(client: TestClient) -> dict[str, dict[str, Any]]:
     response = client.get("/api/discovery/candidates", params={"limit": 500})
     assert response.status_code == 200
-    return {
-        urlsplit(candidate["canonical_url"]).path: candidate
-        for candidate in response.json()
-    }
+    return {urlsplit(candidate["canonical_url"]).path: candidate for candidate in response.json()}
 
 
 def make_candidate_promotable(candidate_id: int) -> None:
@@ -690,7 +687,10 @@ def test_campaign_run_lease_blocks_overlap_and_recovers_stale_holder(
         payload = resumed.json()
         assert payload["run"]["status"] == "completed"
         assert "active_lease" not in payload["run"]["metadata_json"]
-        assert payload["run"]["metadata_json"]["last_released_lease"]["release_reason"] == "run_finished"
+        assert (
+            payload["run"]["metadata_json"]["last_released_lease"]["release_reason"]
+            == "run_finished"
+        )
 
         campaign_detail = client.get(f"/api/discovery/campaigns/{campaign['campaign_id']}")
         assert campaign_detail.status_code == 200
@@ -713,7 +713,14 @@ def test_campaign_honors_bounded_fetch_concurrency(client: TestClient) -> None:
         )
         patch_response = client.patch(
             f"/api/discovery/campaigns/{campaign['campaign_id']}",
-            json={"crawl_policy_json": {"robots_aware": False, "crawl_delay_seconds": 0, "max_concurrency": 2, "store_artifacts": False}},
+            json={
+                "crawl_policy_json": {
+                    "robots_aware": False,
+                    "crawl_delay_seconds": 0,
+                    "max_concurrency": 2,
+                    "store_artifacts": False,
+                }
+            },
         )
         assert patch_response.status_code == 200, patch_response.text
 
@@ -751,17 +758,12 @@ def test_resume_preserves_run_page_and_domain_budgets(client: TestClient) -> Non
         resumed = resumed_response.json()
         assert resumed["run"]["pages_fetched"] == 2
         assert resumed["run"]["status"] == "completed"
-        detail = client.get(
-            f"/api/discovery/runs/{resumed['run']['discovery_run_id']}"
-        ).json()
+        detail = client.get(f"/api/discovery/runs/{resumed['run']['discovery_run_id']}").json()
         assert any(
-            entry["state"] == "deferred"
-            and entry["last_error_text"] == "run_page_limit"
+            entry["state"] == "deferred" and entry["last_error_text"] == "run_page_limit"
             for entry in detail["frontier"]
         )
-        fetched_paths = [
-            path for path in state["requests"] if urlsplit(path).path != "/robots.txt"
-        ]
+        fetched_paths = [path for path in state["requests"] if urlsplit(path).path != "/robots.txt"]
         assert len(fetched_paths) == 2
 
         domain_limited = client.post(
@@ -802,8 +804,7 @@ def test_resume_preserves_run_page_and_domain_budgets(client: TestClient) -> Non
         ).json()
         assert domain_detail["run"]["pages_fetched"] == 2
         assert any(
-            entry["state"] == "deferred"
-            and entry["last_error_text"] == "per_domain_page_limit"
+            entry["state"] == "deferred" and entry["last_error_text"] == "per_domain_page_limit"
             for entry in domain_detail["frontier"]
         )
 
@@ -882,10 +883,14 @@ def test_resume_recovers_stale_fetch_claim_and_honors_candidate_cap(
         try:
             run = session.get(DiscoveryRunORM, capped_run_id)
             assert run is not None
-            deferred = session.query(DiscoveryFrontierEntryORM).filter(
-                DiscoveryFrontierEntryORM.discovery_run_id == capped_run_id,
-                DiscoveryFrontierEntryORM.state == "deferred",
-            ).first()
+            deferred = (
+                session.query(DiscoveryFrontierEntryORM)
+                .filter(
+                    DiscoveryFrontierEntryORM.discovery_run_id == capped_run_id,
+                    DiscoveryFrontierEntryORM.state == "deferred",
+                )
+                .first()
+            )
             assert deferred is not None
             deferred.state = "queued"
             deferred.completed_at = None
@@ -925,9 +930,7 @@ def test_robots_denial_blocks_target_and_is_visible_in_health(client: TestClient
         assert result["run"]["pages_fetched"] == 0
         assert result["candidate_ids"] == []
         assert state["counts"].get("/blocked", 0) == 0
-        detail = client.get(
-            f"/api/discovery/runs/{result['run']['discovery_run_id']}"
-        ).json()
+        detail = client.get(f"/api/discovery/runs/{result['run']['discovery_run_id']}").json()
         assert detail["frontier"][0]["state"] == "robots_blocked"
         health = client.get("/api/discovery/health").json()
         assert health["robots_block_count"] == 1
@@ -950,9 +953,7 @@ def test_robots_server_failure_fails_closed_and_persists_observation(
         assert result["run"]["pages_fetched"] == 0
         assert state["counts"]["/robots.txt"] == 1
         assert state["counts"].get("/data.json", 0) == 0
-        detail = client.get(
-            f"/api/discovery/runs/{result['run']['discovery_run_id']}"
-        ).json()
+        detail = client.get(f"/api/discovery/runs/{result['run']['discovery_run_id']}").json()
         assert detail["frontier"][0]["state"] == "robots_blocked"
         snapshot = client.get("/api/operations/runtime/export").json()
         observation = snapshot["robots_observations"][0]
@@ -1063,9 +1064,7 @@ def test_response_size_limit_dead_letters_oversized_document(client: TestClient)
         assert result["run"]["error_count"] == 1
         assert result["candidate_ids"] == []
         assert state["counts"]["/large"] == 1
-        detail = client.get(
-            f"/api/discovery/runs/{result['run']['discovery_run_id']}"
-        ).json()
+        detail = client.get(f"/api/discovery/runs/{result['run']['discovery_run_id']}").json()
         frontier = detail["frontier"][0]
         assert frontier["state"] == "dead_letter"
         assert "exceeds limit 1024" in frontier["last_error_text"]
@@ -1120,9 +1119,7 @@ def test_promotion_is_idempotent_and_reference_sources_never_schedule(
         assert promoted_metadata["operator_metadata"]["headers"]
         assert first_payload["scheduled_task"]["task_type"] == "source_sync"
         assert first_payload["scheduled_task"]["interval_seconds"] == 120
-        source_run = client.post(
-            f"/api/sources/{first_payload['source']['source_id']}/run"
-        )
+        source_run = client.post(f"/api/sources/{first_payload['source']['source_id']}/run")
         assert source_run.status_code == 200, source_run.text
         assert source_run.json()["status"] == "completed"
         assert source_run.json()["records_imported"] == 1
@@ -1134,8 +1131,9 @@ def test_promotion_is_idempotent_and_reference_sources_never_schedule(
         assert second.status_code == 200, second.text
         second_payload = second.json()
         assert second_payload["source"]["source_id"] == first_payload["source"]["source_id"]
-        assert second_payload["scheduled_task"]["task_id"] == (
-            first_payload["scheduled_task"]["task_id"]
+        assert (
+            second_payload["scheduled_task"]["task_id"]
+            == (first_payload["scheduled_task"]["task_id"])
         )
 
         reference = client.post(
@@ -1159,8 +1157,26 @@ def test_promotion_is_idempotent_and_reference_sources_never_schedule(
 
         sources = client.get("/api/sources").json()
         tasks = client.get("/api/scheduler/tasks").json()
-        assert len([source for source in sources if source["source_id"] == first_payload["source"]["source_id"]]) == 1
-        assert len([task for task in tasks if task["source_id"] == first_payload["source"]["source_id"]]) == 1
+        assert (
+            len(
+                [
+                    source
+                    for source in sources
+                    if source["source_id"] == first_payload["source"]["source_id"]
+                ]
+            )
+            == 1
+        )
+        assert (
+            len(
+                [
+                    task
+                    for task in tasks
+                    if task["source_id"] == first_payload["source"]["source_id"]
+                ]
+            )
+            == 1
+        )
         custody = client.get("/api/custody/logs").json()
         assert any(
             row["object_id"] == str(json_id) and row["action"] == "candidate_promoted"
@@ -1251,9 +1267,7 @@ def test_suppression_blocks_rediscovery_and_promotion(client: TestClient) -> Non
 
         second = run_campaign(client, campaign["campaign_id"], max_pages=1)
         assert state["counts"]["/data.json"] == requests_before
-        detail = client.get(
-            f"/api/discovery/runs/{second['run']['discovery_run_id']}"
-        ).json()
+        detail = client.get(f"/api/discovery/runs/{second['run']['discovery_run_id']}").json()
         assert detail["frontier"][0]["state"] == "blocked"
         candidate_detail = client.get(
             f"/api/discovery/candidates/{candidate['candidate_id']}"
@@ -1351,12 +1365,8 @@ def test_domain_suppression_covers_subdomains_and_expiry_releases_candidate(
         },
     )
     assert suppressed.status_code == 200, suppressed.text
-    child_detail = client.get(
-        f"/api/discovery/candidates/{subdomain_candidate_id}"
-    ).json()
-    assert child_detail["suppressions"][0]["suppression_id"] == suppressed.json()[
-        "suppression_id"
-    ]
+    child_detail = client.get(f"/api/discovery/candidates/{subdomain_candidate_id}").json()
+    assert child_detail["suppressions"][0]["suppression_id"] == suppressed.json()["suppression_id"]
     session = get_session_factory()()
     try:
         root = session.get(SourceCandidateORM, root_candidate_id)
@@ -1381,8 +1391,7 @@ def test_domain_suppression_covers_subdomains_and_expiry_releases_candidate(
     detail = client.get(f"/api/discovery/candidates/{expiring_candidate_id}").json()
     assert detail["suppressions"][0]["status"] == "expired"
     assert any(
-        revision["revision_kind"] == "suppression_expired"
-        for revision in detail["revisions"]
+        revision["revision_kind"] == "suppression_expired" for revision in detail["revisions"]
     )
 
 
@@ -1425,9 +1434,7 @@ def test_unrelated_campaign_preserves_global_best_score_and_revision_observation
         assert patched.status_code == 200, patched.text
         second_run = run_campaign(client, distant_campaign["campaign_id"], max_pages=1)
 
-        refreshed = client.get(
-            f"/api/discovery/candidates/{candidate['candidate_id']}"
-        ).json()
+        refreshed = client.get(f"/api/discovery/candidates/{candidate['candidate_id']}").json()
         current = refreshed["candidate"]
         assert current["score"] == best_score
         assert current["score_breakdown_json"]["components"] == best_breakdown["components"]
@@ -1437,12 +1444,18 @@ def test_unrelated_campaign_preserves_global_best_score_and_revision_observation
         assert newest_revision["discovery_run_id"] == second_run["run"]["discovery_run_id"]
         assert newest_revision["campaign_id"] == distant_campaign["campaign_id"]
         assert newest_revision["score"] < best_score
-        assert client.get(
-            f"/api/discovery/campaigns/{local_campaign['campaign_id']}"
-        ).json()["candidate_count"] == 1
-        assert client.get(
-            f"/api/discovery/campaigns/{distant_campaign['campaign_id']}"
-        ).json()["candidate_count"] == 1
+        assert (
+            client.get(f"/api/discovery/campaigns/{local_campaign['campaign_id']}").json()[
+                "candidate_count"
+            ]
+            == 1
+        )
+        assert (
+            client.get(f"/api/discovery/campaigns/{distant_campaign['campaign_id']}").json()[
+                "candidate_count"
+            ]
+            == 1
+        )
 
 
 def test_scheduler_runs_discovery_campaign_and_persists_output(client: TestClient) -> None:
@@ -1484,8 +1497,7 @@ def test_scheduler_runs_discovery_campaign_and_persists_output(client: TestClien
         assert run_detail.status_code == 200
         custody = client.get("/api/custody/logs").json()
         assert any(
-            row["object_type"] == "scheduled_task_run"
-            and row["action"] == "task_run_completed"
+            row["object_type"] == "scheduled_task_run" and row["action"] == "task_run_completed"
             for row in custody
         )
 
@@ -1659,9 +1671,7 @@ def test_health_check_honors_new_robots_denial(client: TestClient) -> None:
         )
         assert policy.status_code == 200, policy.text
 
-        health = client.post(
-            f"/api/discovery/candidates/{candidate['candidate_id']}/health"
-        )
+        health = client.post(f"/api/discovery/candidates/{candidate['candidate_id']}/health")
         assert health.status_code == 200, health.text
         assert health.json()["status"] == "robots_blocked"
         assert health.json()["robots_allowed"] is False
@@ -1713,12 +1723,10 @@ def test_runtime_snapshot_round_trips_discovery_state(client: TestClient) -> Non
         verify = client.get("/api/operations/runtime/export")
         assert verify.status_code == 200
         restored_snapshot = verify.json()
-        assert restored_snapshot["source_candidates"][0]["candidate_id"] == (
-            candidate["candidate_id"]
+        assert (
+            restored_snapshot["source_candidates"][0]["candidate_id"] == (candidate["candidate_id"])
         )
-        assert restored_snapshot["candidate_suppressions"][0]["reason"] == (
-            "snapshot suppression"
-        )
+        assert restored_snapshot["candidate_suppressions"][0]["reason"] == ("snapshot suppression")
 
 
 def test_real_typer_discovery_campaign_dry_run(client: TestClient) -> None:
@@ -1773,7 +1781,7 @@ def test_real_typer_update_discovery_campaign(client: TestClient) -> None:
             "--max-pages",
             "5",
             "--policy-json",
-            "{\"allow_private_networks\": true, \"robots_aware\": false, \"max_concurrency\": 1}",
+            '{"allow_private_networks": true, "robots_aware": false, "max_concurrency": 1}',
         ],
     )
     assert create.exit_code == 0, create.output
@@ -1791,16 +1799,16 @@ def test_real_typer_update_discovery_campaign(client: TestClient) -> None:
             "--enabled",
             "false",
             "--seed-urls-json",
-            "[\"https://example.com/updated.json\"]",
+            '["https://example.com/updated.json"]',
             "--crawl-policy-json",
-            "{\"max_concurrency\": 4, \"crawl_delay_seconds\": 0}",
+            '{"max_concurrency": 4, "crawl_delay_seconds": 0}',
             "--metadata-json",
-            "{\"owner\": \"cli\"}",
+            '{"owner": "cli"}',
         ],
     )
     assert update.exit_code == 0, update.output
-    assert "\"status\": \"paused\"" in update.output
-    assert "\"enabled\": false" in update.output
+    assert '"status": "paused"' in update.output
+    assert '"enabled": false' in update.output
 
     detail = client.get(f"/api/discovery/campaigns/{campaign_id}")
     assert detail.status_code == 200, detail.text
@@ -1957,7 +1965,7 @@ def test_real_typer_discovery_domain_policy_commands(client: TestClient) -> None
             "--max-concurrency",
             "2",
             "--allowed-content-types-json",
-            "[\"application/json\"]",
+            '["application/json"]',
             "--notes",
             "cli-created",
         ],
@@ -1983,8 +1991,8 @@ def test_real_typer_discovery_domain_policy_commands(client: TestClient) -> None
         ],
     )
     assert update.exit_code == 0, update.output
-    assert "\"policy\": \"deny\"" in update.output
-    assert "\"robots_mode\": \"ignore\"" in update.output
+    assert '"policy": "deny"' in update.output
+    assert '"robots_mode": "ignore"' in update.output
 
     listed = runner.invoke(
         cli_app,

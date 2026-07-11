@@ -51,7 +51,9 @@ def test_database_diagnostics_marks_missing_postgis_prerequisites(monkeypatch) -
     monkeypatch.setattr(
         database_diagnostics_service,
         "collect_required_column_statuses",
-        lambda _engine: [{"table_name": "observations", "column_name": "location_wkt", "present": True}],
+        lambda _engine: [
+            {"table_name": "observations", "column_name": "location_wkt", "present": True}
+        ],
     )
     monkeypatch.setattr(
         database_diagnostics_service,
