@@ -6,7 +6,6 @@ import base64
 import binascii
 from dataclasses import asdict
 from datetime import datetime
-from pathlib import Path
 import shutil
 from typing import Any
 
@@ -29,6 +28,7 @@ from src.services.local_media_runtime_service import (
     LocalMediaRuntimeError,
     generate_image_derivatives,
     generate_video_derivatives,
+    resolve_data_dir_path,
     transcribe_offline,
     tesseract_ocr_offline,
 )
@@ -90,9 +90,9 @@ def generate_derivatives(payload: MediaDerivativeRequest) -> dict[str, Any]:
         source = store.root / parent.blob_path
         output_dir = store.root / "transforms" / parent.artifact_uid / payload.derivative_kind
         paths = (
-            generate_image_derivatives(source, output_dir)
+            generate_image_derivatives(source, output_dir, data_root=store.root)
             if payload.derivative_kind == "image"
-            else generate_video_derivatives(source, output_dir)
+            else generate_video_derivatives(source, output_dir, data_root=store.root)
         )
         derivatives = {
             name: asdict(
@@ -120,12 +120,12 @@ def generate_derivatives(payload: MediaDerivativeRequest) -> dict[str, Any]:
 def transcribe_local_audio(payload: OfflineTranscriptionRequest) -> dict[str, Any]:
     """Run a checksum-approved local Whisper model with runtime networking disabled."""
     try:
-        _assert_under_data_dir(payload.audio_path)
-        _assert_under_data_dir(payload.approval_path)
+        audio_path = resolve_data_dir_path(payload.audio_path, label="Audio input")
+        approval_path = resolve_data_dir_path(payload.approval_path, label="Model approval record")
         return asdict(
             transcribe_offline(
-                payload.audio_path,
-                approval_path=payload.approval_path,
+                audio_path,
+                approval_path=approval_path,
                 prefer_gpu=payload.prefer_gpu,
             )
         )
@@ -137,12 +137,12 @@ def transcribe_local_audio(payload: OfflineTranscriptionRequest) -> dict[str, An
 def ocr_local_image(payload: TesseractOcrRequest) -> dict[str, Any]:
     """Run the approved local Tesseract LSTM engine over a data-dir image."""
     try:
-        _assert_under_data_dir(payload.image_path)
-        _assert_under_data_dir(payload.approval_path)
+        image_path = resolve_data_dir_path(payload.image_path, label="OCR image input")
+        approval_path = resolve_data_dir_path(payload.approval_path, label="Tesseract approval record")
         return asdict(
             tesseract_ocr_offline(
-                payload.image_path,
-                approval_path=payload.approval_path,
+                image_path,
+                approval_path=approval_path,
                 language=payload.language,
                 page_segmentation_mode=payload.page_segmentation_mode,
             )
@@ -276,11 +276,3 @@ def _visual_observation(value: dict[str, Any]) -> VisualObservation:
         if key in normalized and isinstance(normalized[key], list):
             normalized[key] = tuple(normalized[key])
     return VisualObservation(**normalized)
-
-
-def _assert_under_data_dir(value: str) -> None:
-    path, root = Path(value).resolve(), get_settings().data_dir.resolve()
-    try:
-        path.relative_to(root)
-    except ValueError as exc:
-        raise LocalMediaRuntimeError("Local model and audio paths must be inside data_dir.") from exc

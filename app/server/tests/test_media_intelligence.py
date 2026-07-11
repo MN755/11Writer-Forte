@@ -160,3 +160,19 @@ def test_tesseract_endpoint_uses_approved_local_engine(client: TestClient) -> No
     payload = response.json()
     assert "RIVER BRIDGE UPDATE" in payload["text"]
     assert payload["engine_version"].startswith("tesseract v5.4.0")
+
+
+def test_local_media_endpoints_reject_paths_outside_data_dir(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    response = client.post(
+        "/api/media-intelligence/transcribe",
+        json={
+            "audio_path": str(tmp_path.parent / "outside-data-dir.wav"),
+            "approval_path": str(tmp_path / "models" / "approval.json"),
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "Audio input must be inside the configured data_dir."

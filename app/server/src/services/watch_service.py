@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 from datetime import datetime, timezone
 from email.utils import format_datetime
 from urllib.parse import urlparse
@@ -152,31 +151,21 @@ def compile_investigation_watch_instruction(
     """Compile without a model call so identical input always has identical scope."""
     instruction = " ".join(payload.instruction.split())
     lowered = instruction.casefold()
-    quoted = re.findall(r'["“]([^"”]+)["”]', instruction)
+    quoted = _extract_quoted_phrases(instruction)
     target_concepts = list(payload.target_concepts) + quoted
     target_locations = list(payload.target_locations)
     target_entities = list(payload.target_entities)
 
     # Keep extraction intentionally modest. Ambiguous wording is surfaced for review,
     # never delegated to an opaque model before the rule is enforced.
-    subject = re.search(
-        r"\b(?:watch|monitor|track|follow|investigate)\s+(?:for\s+)?(.+?)(?=\s+\b(?:in|near|around|at|from|within|during|since|after|before)\b|$)",
-        instruction,
-        flags=re.IGNORECASE,
-    )
+    subject = _extract_subject(instruction)
     if subject:
-        value = re.sub(
-            r"\b(?:about|related to)\b", "", subject.group(1), flags=re.IGNORECASE
-        ).strip(" ,.;:")
+        value = subject.strip(" ,.;:")
         if value:
             target_concepts.append(value)
-    location = re.search(
-        r"\b(?:in|near|around|at|within)\s+([^,.;]+?)(?=\s+\b(?:during|since|after|before|from|for)\b|[,.;]|$)",
-        instruction,
-        flags=re.IGNORECASE,
-    )
+    location = _extract_location(instruction)
     if location:
-        target_locations.append(location.group(1).strip())
+        target_locations.append(location)
     # A quoted phrase is a deliberate entity reference when the caller did not provide one.
     if quoted and not target_entities:
         target_entities.extend(quoted)
@@ -217,6 +206,73 @@ def compile_investigation_watch_instruction(
         scope_preview_json=_scope_preview(canonical),
         unresolved_ambiguities=ambiguities,
     )
+
+
+def _extract_quoted_phrases(value: str) -> list[str]:
+    phrases: list[str] = []
+    open_quote: str | None = None
+    start = 0
+    closing_quotes = {'"': '"', '“': '”'}
+    for index, character in enumerate(value):
+        if open_quote is None and character in closing_quotes:
+            open_quote, start = character, index + 1
+        elif open_quote is not None and character == closing_quotes[open_quote]:
+            phrase = value[start:index].strip()
+            if phrase:
+                phrases.append(phrase)
+            open_quote = None
+    return phrases
+
+
+def _extract_subject(value: str) -> str | None:
+    lowered = value.casefold()
+    for verb in ("watch", "monitor", "track", "follow", "investigate"):
+        marker = f"{verb} "
+        position = lowered.find(marker)
+        if position < 0:
+            continue
+        start = position + len(marker)
+        if lowered[start:].startswith("for "):
+            start += len("for ")
+        subject = _trim_watch_clause(
+            value[start:],
+            ("in", "near", "around", "at", "from", "within", "during", "since", "after", "before"),
+        )
+        normalized = subject.casefold()
+        for prefix in ("about ", "related to "):
+            if normalized.startswith(prefix):
+                return subject[len(prefix) :]
+        return subject
+    return None
+
+
+def _extract_location(value: str) -> str | None:
+    lowered = value.casefold()
+    matches = [
+        (lowered.find(f" {marker} "), marker)
+        for marker in ("in", "near", "around", "at", "within")
+    ]
+    positions = [(position, marker) for position, marker in matches if position >= 0]
+    if not positions:
+        return None
+    position, marker = min(positions)
+    start = position + len(marker) + 2
+    location = _trim_watch_clause(value[start:], ("during", "since", "after", "before", "from", "for"))
+    return location.strip() or None
+
+
+def _trim_watch_clause(value: str, stop_words: tuple[str, ...]) -> str:
+    lowered = value.casefold()
+    boundaries = [len(value)]
+    for punctuation in (",", ".", ";"):
+        position = value.find(punctuation)
+        if position >= 0:
+            boundaries.append(position)
+    for word in stop_words:
+        position = lowered.find(f" {word} ")
+        if position >= 0:
+            boundaries.append(position)
+    return value[: min(boundaries)].strip()
 
 
 def create_investigation_watch_candidate(

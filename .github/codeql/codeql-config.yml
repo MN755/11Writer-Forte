@@ -1,0 +1,7 @@
+name: "11Writer Forte CodeQL configuration"
+
+# Test fixtures deliberately exercise malformed URLs, local loopback servers, and raw
+# HTTP headers. They are not shipped as runtime code, so scanning them creates alerts
+# that cannot represent a production execution path.
+paths-ignore:
+  - app/server/tests/**

@@ -132,3 +132,19 @@ def test_local_import_skips_duplicate_observations(client: TestClient, tmp_path:
         )
         >= 2
     )
+
+
+def test_local_import_rejects_paths_outside_configured_data_dir(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    response = client.post(
+        "/api/imports/local",
+        json={
+            "source_path": str(tmp_path.parent / "outside-data-dir.json"),
+            "layer_key": "test-layer",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Local import paths must be staged inside the configured data_dir."

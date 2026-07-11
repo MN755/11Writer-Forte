@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,8 @@ from sqlalchemy.orm import Session
 from src.config import get_settings
 from src.models import CustodyLogORM, ObservationORM, StorageObjectORM
 from src.services.observation_service import ObservationQueryRecord, extract_observation_timestamp
+
+logger = logging.getLogger(__name__)
 
 
 def clickhouse_now() -> datetime:
@@ -81,7 +84,8 @@ def build_clickhouse_diagnostics() -> dict[str, object]:
             version = str(metadata_rows[0].get("version") or "")
             current_database = str(metadata_rows[0].get("current_database") or "")
     except RuntimeError as exc:
-        warnings.append(str(exc))
+        logger.warning("ClickHouse diagnostics request failed: %s", exc)
+        warnings.append("ClickHouse endpoint is unreachable or returned an invalid response.")
 
     return {
         "status": "ok" if reachable else "degraded",

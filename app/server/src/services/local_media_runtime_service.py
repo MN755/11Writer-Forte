@@ -13,6 +13,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+from src.config import get_settings
+
 
 class LocalMediaRuntimeError(RuntimeError):
     pass
@@ -70,6 +72,17 @@ class TesseractOcrResult:
     engine_version: str
     executable_sha256: str
     tessdata_tree_sha256: str
+
+
+def resolve_data_dir_path(value: str | Path, *, label: str) -> Path:
+    """Resolve a runtime path and reject escapes from the configured local data root."""
+    root = get_settings().data_dir.resolve()
+    path = Path(value).expanduser().resolve()
+    try:
+        path.relative_to(root)
+    except ValueError as exc:
+        raise LocalMediaRuntimeError(f"{label} must be inside the configured data_dir.") from exc
+    return path
 
 
 def build_model_approval(
@@ -162,14 +175,15 @@ def tesseract_ocr_offline(
     if not language.replace("+", "").replace("_", "").isalnum() or not 0 <= page_segmentation_mode <= 13:
         raise LocalMediaRuntimeError("Invalid Tesseract language or page segmentation mode.")
     try:
-        raw = json.loads(Path(approval_path).read_text(encoding="utf-8"))
+        approval_file = resolve_data_dir_path(approval_path, label="Tesseract approval record")
+        raw = json.loads(approval_file.read_text(encoding="utf-8"))
         approval = TesseractApproval(**raw)
     except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
         raise LocalMediaRuntimeError(f"Invalid Tesseract approval record: {exc}") from exc
     executable, tessdata, image = (
         Path(approval.executable_path).resolve(),
         Path(approval.tessdata_path).resolve(),
-        Path(image_path).resolve(),
+        resolve_data_dir_path(image_path, label="OCR image input"),
     )
     if not approval.network_disabled or hash_file(executable) != approval.executable_sha256:
         raise LocalMediaRuntimeError("Tesseract executable is not approved or has changed.")
@@ -207,10 +221,10 @@ def transcribe_offline(
 ) -> TranscriptResult:
     """Transcribe a local file with a verified model; network access is disabled first."""
     approval = load_model_approval(approval_path)
-    model_path = Path(approval.model_path).resolve()
+    model_path = resolve_data_dir_path(approval.model_path, label="Approved model directory")
     if hash_tree(model_path) != approval.model_tree_sha256:
         raise LocalMediaRuntimeError("Local model checksum differs from its approval record.")
-    audio = Path(audio_path).resolve()
+    audio = resolve_data_dir_path(audio_path, label="Audio input")
     if not audio.is_file():
         raise LocalMediaRuntimeError(f"Audio input does not exist: {audio}")
     os.environ["HF_HUB_OFFLINE"] = "1"
@@ -247,13 +261,20 @@ def transcribe_offline(
     )
 
 
-def generate_image_derivatives(source: str | Path, output_dir: str | Path) -> dict[str, str]:
+def generate_image_derivatives(
+    source: str | Path,
+    output_dir: str | Path,
+    *,
+    data_root: str | Path,
+) -> dict[str, str]:
     """Create bounded JPEG thumbnail/proxy derivatives from an already accepted image."""
     try:
         from PIL import Image, ImageOps
     except ImportError as exc:
         raise LocalMediaRuntimeError("Pillow is required for image derivatives.") from exc
-    source_path, root = Path(source).resolve(), Path(output_dir).resolve()
+    approved_root = Path(data_root).resolve()
+    source_path = _resolve_under_root(source, approved_root, label="Derivative source")
+    root = _resolve_under_root(output_dir, approved_root, label="Derivative output directory")
     root.mkdir(parents=True, exist_ok=True)
     with Image.open(source_path) as image:
         normalized = ImageOps.exif_transpose(image).convert("RGB")
@@ -267,10 +288,17 @@ def generate_image_derivatives(source: str | Path, output_dir: str | Path) -> di
     return {"thumbnail": str(thumbnail_path), "proxy": str(proxy_path)}
 
 
-def generate_video_derivatives(source: str | Path, output_dir: str | Path) -> dict[str, str]:
+def generate_video_derivatives(
+    source: str | Path,
+    output_dir: str | Path,
+    *,
+    data_root: str | Path,
+) -> dict[str, str]:
     """Use the explicitly provisioned local FFmpeg binary for keyframe/proxy/waveform."""
     ffmpeg = resolve_ffmpeg()
-    source_path, root = Path(source).resolve(), Path(output_dir).resolve()
+    approved_root = Path(data_root).resolve()
+    source_path = _resolve_under_root(source, approved_root, label="Derivative source")
+    root = _resolve_under_root(output_dir, approved_root, label="Derivative output directory")
     root.mkdir(parents=True, exist_ok=True)
     proxy, keyframe, wav, waveform = root / "proxy.mp4", root / "keyframe.jpg", root / "audio.wav", root / "waveform.json"
     _run_ffmpeg(ffmpeg, "-i", str(source_path), "-vf", "scale='min(1280,iw)':-2", "-an", "-movflags", "+faststart", str(proxy))
@@ -294,13 +322,23 @@ def resolve_ffmpeg() -> str:
 
 def load_model_approval(path: str | Path) -> LocalModelApproval:
     try:
-        raw = json.loads(Path(path).read_text(encoding="utf-8"))
+        approval_file = resolve_data_dir_path(path, label="Model approval record")
+        raw = json.loads(approval_file.read_text(encoding="utf-8"))
         approval = LocalModelApproval(**raw)
     except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
         raise LocalMediaRuntimeError(f"Invalid model approval record: {exc}") from exc
     if not approval.network_disabled:
         raise LocalMediaRuntimeError("Network-enabled models are forbidden.")
     return approval
+
+
+def _resolve_under_root(value: str | Path, root: Path, *, label: str) -> Path:
+    path = Path(value).resolve()
+    try:
+        path.relative_to(root)
+    except ValueError as exc:
+        raise LocalMediaRuntimeError(f"{label} must be inside the approved artifact root.") from exc
+    return path
 
 
 def hash_file(path: str | Path) -> str:
