@@ -37,8 +37,13 @@ def import_local_path(
     actor: str = "system",
 ) -> LocalImportRunORM:
     path = Path(source_path).expanduser().resolve()
-    if not path.exists():
-        raise FileNotFoundError(f"Input path does not exist: {path}")
+    data_dir = get_settings().data_dir.resolve()
+    try:
+        path.relative_to(data_dir)
+    except ValueError as exc:
+        raise ValueError("Local import paths must be staged inside the configured data_dir.") from exc
+    if not path.is_file():
+        raise FileNotFoundError("Input file does not exist.")
 
     ensure_data_layer(session, layer_key, actor=actor)
     source_format = infer_source_format(path)
