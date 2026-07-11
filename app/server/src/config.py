@@ -1,11 +1,22 @@
 from __future__ import annotations
 
 from functools import lru_cache
+import ipaddress
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field
+from pydantic import BaseModel, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+OperatorScope = Literal["read", "operate", "admin"]
+
+
+class OperatorTokenConfig(BaseModel):
+    """One operator credential supplied through the deployment secret store."""
+
+    token: SecretStr
+    scopes: set[OperatorScope] = Field(default_factory=lambda: {"admin"})
 
 
 class Settings(BaseSettings):
@@ -26,8 +37,11 @@ class Settings(BaseSettings):
     codex_timeout_seconds: float = 900.0
     codex_report_max_chars: int = 30000
     allowed_origins: list[str] = Field(default_factory=list)
-    # This feed deliberately has no multi-user authentication boundary.  It remains
-    # loopback-only unless the deployment owner deliberately supplies trusted CIDRs.
+    # Unauthenticated mode is reserved for a local loopback developer process.
+    auth_mode: Literal["disabled", "token"] = "disabled"
+    operator_api_token: SecretStr | None = None
+    operator_api_token_scopes: set[OperatorScope] = Field(default_factory=lambda: {"admin"})
+    operator_api_tokens: dict[str, OperatorTokenConfig] = Field(default_factory=dict)
     local_api_trusted_networks: list[str] = Field(
         default_factory=lambda: ["127.0.0.0/8", "::1/128"]
     )
@@ -64,6 +78,55 @@ class Settings(BaseSettings):
 
     def ensure_runtime_dirs(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
+
+    def configured_operator_tokens(self) -> dict[str, OperatorTokenConfig]:
+        """Return configured credentials without rendering their secret values."""
+        credentials = dict(self.operator_api_tokens)
+        if self.operator_api_token is not None:
+            credentials.setdefault(
+                "local-operator",
+                OperatorTokenConfig(
+                    token=self.operator_api_token,
+                    scopes=self.operator_api_token_scopes,
+                ),
+            )
+        return credentials
+
+    def validate_runtime_security(self) -> None:
+        """Fail closed before binding a deployment with operator capabilities."""
+        try:
+            trusted_networks = [
+                ipaddress.ip_network(network, strict=False)
+                for network in self.local_api_trusted_networks
+            ]
+        except ValueError as exc:
+            raise ValueError("ELEVENWRITER_LOCAL_API_TRUSTED_NETWORKS contains an invalid CIDR.") from exc
+
+        credentials = self.configured_operator_tokens()
+        if self.auth_mode == "token":
+            if not credentials:
+                raise ValueError(
+                    "ELEVENWRITER_AUTH_MODE=token requires ELEVENWRITER_OPERATOR_API_TOKEN "
+                    "or ELEVENWRITER_OPERATOR_API_TOKENS."
+                )
+            for principal, credential in credentials.items():
+                if not principal or len(principal) > 80:
+                    raise ValueError("Operator principal names must be between 1 and 80 characters.")
+                if len(credential.token.get_secret_value()) < 32:
+                    raise ValueError(
+                        f"Operator token for {principal!r} is too short; use at least 32 random characters."
+                    )
+                if not credential.scopes:
+                    raise ValueError(f"Operator token for {principal!r} has no scopes.")
+            return
+
+        if self.app_env not in {"local", "test"} or not all(
+            network.is_loopback for network in trusted_networks
+        ):
+            raise ValueError(
+                "Unauthenticated mode is permitted only for local/test deployments restricted to loopback. "
+                "Set ELEVENWRITER_AUTH_MODE=token for Docker, reverse-proxy, or trusted-network deployments."
+            )
 
     @property
     def sqlalchemy_connect_args(self) -> dict[str, object]:

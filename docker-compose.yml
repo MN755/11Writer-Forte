@@ -16,6 +16,8 @@ services:
     environment:
       ELEVENWRITER_DATABASE_URL: postgresql+psycopg://elevenwriter:elevenwriter@db:5432/elevenwriter
       ELEVENWRITER_APP_ENV: docker
+      ELEVENWRITER_AUTH_MODE: token
+      ELEVENWRITER_OPERATOR_API_TOKEN: ${ELEVENWRITER_OPERATOR_API_TOKEN:?Set a 32+ character operator token in your shell or .env file.}
       ELEVENWRITER_SCHEDULER_POLL_SECONDS: 5
       ELEVENWRITER_DISCOVERY_ALLOW_PRIVATE_NETWORKS: ${ELEVENWRITER_DISCOVERY_ALLOW_PRIVATE_NETWORKS:-false}
       ELEVENWRITER_CLICKHOUSE_ENABLED: ${ELEVENWRITER_CLICKHOUSE_ENABLED:-false}
@@ -37,8 +39,8 @@ services:
     depends_on:
       - db
     ports:
-      # The backend has no built-in multi-user authentication boundary. Keep the
-      # published API local by default; only override this behind a trusted boundary.
+      # Token-authenticated API. Keep it local unless an authenticated reverse proxy is
+      # deliberately configured and ELEVENWRITER_OPERATOR_API_TOKEN is protected.
       - "${ELEVENWRITER_API_BIND:-127.0.0.1}:8000:8000"
     command: uvicorn src.main:app --host 0.0.0.0 --port 8000
 
@@ -48,6 +50,8 @@ services:
     environment:
       ELEVENWRITER_DATABASE_URL: postgresql+psycopg://elevenwriter:elevenwriter@db:5432/elevenwriter
       ELEVENWRITER_APP_ENV: docker
+      ELEVENWRITER_AUTH_MODE: token
+      ELEVENWRITER_OPERATOR_API_TOKEN: ${ELEVENWRITER_OPERATOR_API_TOKEN:?Set a 32+ character operator token in your shell or .env file.}
       ELEVENWRITER_SCHEDULER_POLL_SECONDS: 5
       ELEVENWRITER_DISCOVERY_ALLOW_PRIVATE_NETWORKS: ${ELEVENWRITER_DISCOVERY_ALLOW_PRIVATE_NETWORKS:-false}
       ELEVENWRITER_CLICKHOUSE_ENABLED: ${ELEVENWRITER_CLICKHOUSE_ENABLED:-false}

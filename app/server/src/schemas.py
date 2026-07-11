@@ -120,7 +120,6 @@ class HealthResponse(ForteModel):
     status: str
     app_name: str
     app_version: str
-    database_url: str
     database_backend: str
     database_connected: bool
     spatial_backend: str

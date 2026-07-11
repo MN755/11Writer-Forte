@@ -205,7 +205,15 @@ docker compose up --build
 docker compose --profile clickhouse up --build
 ```
 
-By default the compose stack starts the API on `127.0.0.1:8000`, a scheduler worker, and PostGIS-ready Postgres. The backend does not provide a multi-user authentication boundary; only override `ELEVENWRITER_API_BIND` behind an authenticated reverse proxy or on an otherwise trusted network. The optional `clickhouse` profile starts a self-hosted ClickHouse server on `8123`/`9000`; Forte will only use it if you also set the ClickHouse env vars below. The compose file also mounts [`app/server/11writer-r2-storage.xml`](app/server/11writer-r2-storage.xml), and `elevenwriter write-clickhouse-r2-config` now targets that mounted file automatically when you run it from the repo root, so the generated R2 disk policy lands where Docker actually reads it.
+By default the compose stack starts the API on `127.0.0.1:8000`, a scheduler worker, and PostGIS-ready Postgres. Docker requires a 32+ character `ELEVENWRITER_OPERATOR_API_TOKEN`; send it as `Authorization: Bearer <token>` for every API endpoint except `/health`. Read requests require `read`, mutations require `operate`, and runtime restore/ClickHouse provisioning/storage sweeping require `admin` (the single-token setting grants `admin`). Token mode disables interactive OpenAPI docs so the API surface is not published as a deployment aid. Keep `ELEVENWRITER_API_BIND` local unless an authenticated reverse proxy is deliberately configured. The optional `clickhouse` profile starts a self-hosted ClickHouse server on `8123`/`9000`; Forte will only use it if you also set the ClickHouse env vars below. The compose file also mounts [`app/server/11writer-r2-storage.xml`](app/server/11writer-r2-storage.xml), and `elevenwriter write-clickhouse-r2-config` now targets that mounted file automatically when you run it from the repo root, so the generated R2 disk policy lands where Docker actually reads it.
+
+For multiple operators, supply `ELEVENWRITER_OPERATOR_API_TOKENS` as JSON through a secret manager or local `.env` file, never source control:
+
+```json
+{"newsroom-reader":{"token":"replace-with-32-or-more-random-characters","scopes":["read"]},"operator":{"token":"replace-with-a-different-32-or-more-random-characters","scopes":["admin"]}}
+```
+
+Unauthenticated mode is limited to `ELEVENWRITER_APP_ENV=local` or `test` and loopback-only trusted networks. It is deliberately rejected for Docker or a non-loopback deployment. `/health` no longer emits the database URL or storage details.
 
 ### Optional ClickHouse + R2 env
 
