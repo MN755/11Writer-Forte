@@ -88,6 +88,54 @@ class HealthResponse(ForteModel):
     warning_count: int
 
 
+class MediaIntakeRequest(ForteModel):
+    payload_base64: str = Field(min_length=1, max_length=120_000_000)
+    owner_type: str = Field(default="media_intake", min_length=1, max_length=60)
+    owner_id: str = Field(min_length=1, max_length=120)
+    claimed_mime: str | None = Field(default=None, max_length=160)
+    source_uri: str | None = Field(default=None, max_length=4096)
+    source_page_uri: str | None = Field(default=None, max_length=4096)
+    retention_class: RetentionClass = "operational"
+
+
+class WebImageReferenceRequest(ForteModel):
+    image_url: str = Field(min_length=1, max_length=4096)
+    source_page_url: str | None = Field(default=None, max_length=4096)
+
+
+class InferenceRequest(ForteModel):
+    artifact_id: str = Field(min_length=1, max_length=200)
+    model_manifest: dict[str, Any]
+    input_features: dict[str, Any] = Field(default_factory=dict)
+    prefer_gpu: bool = True
+
+
+class VisualChangeRequest(ForteModel):
+    observation: dict[str, Any]
+    baseline: dict[str, Any] | None = None
+    historical: list[dict[str, Any]] = Field(default_factory=list)
+    llm_quota_available: bool = True
+    confirmed: bool = False
+
+
+class MediaDerivativeRequest(ForteModel):
+    artifact_uid: str = Field(min_length=1, max_length=100)
+    derivative_kind: Literal["image", "video"]
+
+
+class OfflineTranscriptionRequest(ForteModel):
+    audio_path: str = Field(min_length=1, max_length=4096)
+    approval_path: str = Field(min_length=1, max_length=4096)
+    prefer_gpu: bool = True
+
+
+class TesseractOcrRequest(ForteModel):
+    image_path: str = Field(min_length=1, max_length=4096)
+    approval_path: str = Field(min_length=1, max_length=4096)
+    language: str = Field(default="eng", pattern=r"^[A-Za-z0-9_+]+$")
+    page_segmentation_mode: int = Field(default=3, ge=0, le=13)
+
+
 class DatabaseColumnAuditRead(ForteModel):
     table_name: str
     column_name: str

@@ -12,8 +12,6 @@ from src.services.geospatial_service import build_bbox_sql_filter, uses_postgis
 
 
 @dataclass
-<<<<<<< HEAD
-=======
 class ObservationQueryRecord:
     observation_id: int
     import_run_id: int | None
@@ -34,7 +32,6 @@ class ObservationQueryRecord:
 
 
 @dataclass
->>>>>>> 05aeee6 (chore: initialize repository)
 class CrossVerificationCluster:
     observation_ids: list[int] = field(default_factory=list)
     layer_keys: set[str] = field(default_factory=set)
@@ -86,9 +83,6 @@ def query_observations(
     since: datetime | None = None,
     until: datetime | None = None,
     limit: int = 200,
-<<<<<<< HEAD
-) -> list[ObservationORM]:
-=======
     backend: str = "runtime",
     archive_glob_url: str | None = None,
 ) -> list[ObservationORM | ObservationQueryRecord]:
@@ -109,8 +103,6 @@ def query_observations(
             backend=backend,
             archive_glob_url=archive_glob_url,
         )
-
->>>>>>> 05aeee6 (chore: initialize repository)
     statement = select(ObservationORM).order_by(ObservationORM.created_at.desc())
     if layer_key:
         statement = statement.where(ObservationORM.layer_key == layer_key)

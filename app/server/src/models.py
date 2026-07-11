@@ -165,8 +165,6 @@ class CameraInventoryORM(TimestampMixin, Base):
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
 
-<<<<<<< HEAD
-=======
 class CameraSourceInventoryORM(TimestampMixin, Base):
     __tablename__ = "camera_source_inventory"
 
@@ -199,7 +197,6 @@ class CameraSourceInventoryORM(TimestampMixin, Base):
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
 
->>>>>>> 05aeee6 (chore: initialize repository)
 class StorageObjectORM(TimestampMixin, Base):
     __tablename__ = "storage_objects"
 
