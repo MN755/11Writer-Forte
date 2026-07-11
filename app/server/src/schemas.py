@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from ipaddress import ip_address
 from typing import Annotated, Any, Literal
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -51,6 +53,48 @@ GraphEntityType = Literal[
 GraphReviewState = Literal["pending", "reviewed", "accepted", "rejected"]
 GraphContradictionState = Literal["none", "disputed", "contradicted", "superseded"]
 GraphAssertionStatus = Literal["asserted", "reported", "denied", "retracted", "superseded"]
+ResearchProviderKind = Literal[
+    "search_api",
+    "rss_atom",
+    "sitemap",
+    "static_html",
+    "document_repository",
+    "structured_dataset",
+    "activitypub",
+    "video_metadata",
+    "browser_rendered",
+]
+ResearchProviderCapability = Literal[
+    "search",
+    "fetch_feed",
+    "fetch_static",
+    "parse_document",
+    "browser_render",
+    "source_health",
+]
+ResearchProviderAccessMode = Literal[
+    "public_no_login",
+    "operator_supplied_public_feed",
+    "disabled",
+]
+ResearchProviderRobotsMode = Literal[
+    "required",
+    "not_applicable",
+    "provider_terms_override_documented",
+]
+ResearchProviderArtifactCaptureMode = Literal[
+    "metadata_only",
+    "normalized_text",
+    "raw_and_normalized",
+    "evidence_candidate",
+]
+ResearchProviderHealthStatus = Literal[
+    "unknown",
+    "healthy",
+    "degraded",
+    "unavailable",
+    "schema_quarantined",
+]
 
 
 class ForteModel(BaseModel):
@@ -70,6 +114,7 @@ DISCOVERY_SNAPSHOT_ROW_SCHEMAS = {
     "candidate_promotion_decisions": "CandidatePromotionDecisionRead",
     "robots_observations": "RobotsObservationRead",
     "discovery_artifacts": "DiscoveryArtifactRead",
+    "research_providers": "ResearchProviderRead",
 }
 
 
@@ -114,6 +159,191 @@ def validate_discovery_crawl_policy(value: dict[str, Any]) -> dict[str, Any]:
             "Discovery crawl policy user_agent must be a string of 500 characters or fewer."
         )
     return value
+
+
+def validate_public_http_url(value: str, *, field_name: str) -> str:
+    """Validate an explicit public HTTP(S) origin or prefix without resolving DNS."""
+
+    normalized = value.strip()
+    if not normalized:
+        raise ValueError(f"{field_name} is required.")
+    if "*" in normalized:
+        raise ValueError(f"{field_name} must not contain wildcard origins.")
+    parsed = urlsplit(normalized)
+    if parsed.scheme not in {"http", "https"}:
+        raise ValueError(f"{field_name} must use HTTP or HTTPS.")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError(f"{field_name} must not contain userinfo.")
+    if parsed.query or parsed.fragment:
+        raise ValueError(f"{field_name} must not contain a query or fragment.")
+    hostname = parsed.hostname
+    if not hostname or hostname.lower() == "localhost":
+        raise ValueError(f"{field_name} must name a public host.")
+    try:
+        address = ip_address(hostname)
+    except ValueError:
+        return normalized
+    if not address.is_global:
+        raise ValueError(f"{field_name} must not use a private or reserved IP address.")
+    return normalized
+
+
+class ResearchProviderRequestBudget(ForteModel):
+    model_config = ConfigDict(extra="forbid")
+
+    max_requests_per_run: int = Field(ge=1, le=10_000)
+    max_requests_per_day: int = Field(ge=1, le=100_000)
+    max_concurrency: int = Field(default=1, ge=1, le=20)
+    max_response_bytes: int = Field(ge=1024, le=100_000_000)
+    request_timeout_seconds: float = Field(default=30.0, gt=0.0, le=300.0)
+    retry_ceiling: int = Field(default=0, ge=0, le=10)
+
+
+class ResearchProviderCreate(ForteModel):
+    model_config = ConfigDict(from_attributes=True, extra="forbid")
+
+    provider_key: str = Field(
+        min_length=1,
+        max_length=120,
+        pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$",
+    )
+    display_name: str = Field(min_length=1, max_length=200)
+    provider_kind: ResearchProviderKind
+    capabilities_json: list[ResearchProviderCapability] = Field(min_length=1, max_length=6)
+    base_urls_json: list[str] = Field(min_length=1, max_length=50)
+    access_mode: ResearchProviderAccessMode = "public_no_login"
+    terms_url: str = Field(min_length=1, max_length=2_000)
+    license_note: str = Field(min_length=1, max_length=10_000)
+    robots_mode: ResearchProviderRobotsMode = "required"
+    jurisdictions_json: list[str] = Field(default_factory=list, max_length=100)
+    languages_json: list[str] = Field(default_factory=list, max_length=100)
+    request_budget_json: ResearchProviderRequestBudget
+    artifact_capture_mode: ResearchProviderArtifactCaptureMode = "metadata_only"
+    health_status: ResearchProviderHealthStatus = "unknown"
+    health_reason: str | None = Field(default=None, max_length=10_000)
+    schema_version: int = Field(default=1, ge=1, le=10_000)
+    last_checked_at: datetime | None = None
+    enabled: bool = False
+    paused_at: datetime | None = None
+    disabled_reason: str | None = Field(default=None, max_length=10_000)
+    created_by: str = Field(default="operator", min_length=1, max_length=120)
+    approved_by: str | None = Field(default=None, max_length=120)
+
+    @field_validator("provider_key")
+    @classmethod
+    def normalize_provider_key(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized != value:
+            raise ValueError("provider_key must be a lowercase slug.")
+        return normalized
+
+    @field_validator("capabilities_json")
+    @classmethod
+    def dedupe_capabilities(
+        cls, value: list[ResearchProviderCapability]
+    ) -> list[ResearchProviderCapability]:
+        if len(set(value)) != len(value):
+            raise ValueError("capabilities_json must not contain duplicates.")
+        return value
+
+    @field_validator("base_urls_json")
+    @classmethod
+    def validate_base_urls(cls, value: list[str]) -> list[str]:
+        normalized = [
+            validate_public_http_url(item, field_name="base_urls_json entry") for item in value
+        ]
+        if len(set(normalized)) != len(normalized):
+            raise ValueError("base_urls_json must not contain duplicates.")
+        return normalized
+
+    @field_validator("terms_url")
+    @classmethod
+    def validate_terms_url(cls, value: str) -> str:
+        return validate_public_http_url(value, field_name="terms_url")
+
+    @field_validator("jurisdictions_json", "languages_json")
+    @classmethod
+    def normalize_coverage_values(cls, value: list[str]) -> list[str]:
+        normalized = [item.strip() for item in value if item.strip()]
+        if len(normalized) != len(value) or len(set(normalized)) != len(normalized):
+            raise ValueError("coverage values must be non-empty and unique.")
+        return normalized
+
+    @model_validator(mode="after")
+    def require_disabled_create(self) -> "ResearchProviderCreate":
+        if self.enabled and not hasattr(self, "provider_id"):
+            raise ValueError("Research providers must be created disabled.")
+        return self
+
+
+class ResearchProviderUpdate(ForteModel):
+    """Mutable provider fields; provider_key is deliberately immutable."""
+
+    model_config = ConfigDict(from_attributes=True, extra="forbid")
+
+    display_name: str | None = Field(default=None, min_length=1, max_length=200)
+    provider_kind: ResearchProviderKind | None = None
+    capabilities_json: list[ResearchProviderCapability] | None = Field(default=None, min_length=1)
+    base_urls_json: list[str] | None = Field(default=None, min_length=1, max_length=50)
+    access_mode: ResearchProviderAccessMode | None = None
+    terms_url: str | None = Field(default=None, min_length=1, max_length=2_000)
+    license_note: str | None = Field(default=None, min_length=1, max_length=10_000)
+    robots_mode: ResearchProviderRobotsMode | None = None
+    jurisdictions_json: list[str] | None = Field(default=None, max_length=100)
+    languages_json: list[str] | None = Field(default=None, max_length=100)
+    request_budget_json: ResearchProviderRequestBudget | None = None
+    artifact_capture_mode: ResearchProviderArtifactCaptureMode | None = None
+    health_status: ResearchProviderHealthStatus | None = None
+    health_reason: str | None = Field(default=None, max_length=10_000)
+    schema_version: int | None = Field(default=None, ge=1, le=10_000)
+    last_checked_at: datetime | None = None
+    paused_at: datetime | None = None
+    disabled_reason: str | None = Field(default=None, max_length=10_000)
+    approved_by: str | None = Field(default=None, max_length=120)
+
+    @field_validator("capabilities_json")
+    @classmethod
+    def dedupe_optional_capabilities(
+        cls, value: list[ResearchProviderCapability] | None
+    ) -> list[ResearchProviderCapability] | None:
+        if value is not None and len(set(value)) != len(value):
+            raise ValueError("capabilities_json must not contain duplicates.")
+        return value
+
+    @field_validator("base_urls_json")
+    @classmethod
+    def validate_optional_base_urls(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        normalized = [
+            validate_public_http_url(item, field_name="base_urls_json entry") for item in value
+        ]
+        if len(set(normalized)) != len(normalized):
+            raise ValueError("base_urls_json must not contain duplicates.")
+        return normalized
+
+    @field_validator("terms_url")
+    @classmethod
+    def validate_optional_terms_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return validate_public_http_url(value, field_name="terms_url")
+
+    @field_validator("jurisdictions_json", "languages_json")
+    @classmethod
+    def normalize_optional_coverage_values(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        normalized = [item.strip() for item in value if item.strip()]
+        if len(normalized) != len(value) or len(set(normalized)) != len(normalized):
+            raise ValueError("coverage values must be non-empty and unique.")
+        return normalized
+
+
+class ResearchProviderRead(ResearchProviderCreate):
+    provider_id: int
+    created_at: datetime
+    updated_at: datetime
 
 
 class HealthResponse(ForteModel):
@@ -319,6 +549,7 @@ class RuntimeSnapshotRead(ForteModel):
     )
     robots_observations: list["RobotsObservationRead"] = Field(default_factory=list)
     discovery_artifacts: list["DiscoveryArtifactRead"] = Field(default_factory=list)
+    research_providers: list["ResearchProviderRead"] = Field(default_factory=list)
     geofences: list["GeofenceRead"]
     source_definitions: list["SourceDefinitionRead"]
     local_import_runs: list["LocalImportRunSummaryRead"]
