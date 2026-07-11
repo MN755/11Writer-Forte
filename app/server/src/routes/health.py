@@ -17,7 +17,6 @@ def health(session: Session = Depends(get_db)) -> HealthResponse:
         status=str(diagnostics["status"]),
         app_name=settings.app_name,
         app_version=settings.app_version,
-        database_url=settings.database_url,
         database_backend=str(diagnostics["database_backend"]),
         database_connected=bool(diagnostics["database_connected"]),
         spatial_backend=settings.spatial_backend,

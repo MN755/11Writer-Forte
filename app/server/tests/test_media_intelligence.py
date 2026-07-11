@@ -176,3 +176,39 @@ def test_local_media_endpoints_reject_paths_outside_data_dir(
 
     assert response.status_code == 422
     assert response.json()["detail"] == "Audio input must be inside the configured data_dir."
+
+
+def test_generic_inference_endpoint_is_retired(client: TestClient) -> None:
+    response = client.post(
+        "/api/media-intelligence/inference",
+        json={"artifact_id": "fixture", "model_manifest": {}, "input_features": {}},
+    )
+    assert response.status_code == 410
+    assert "approved local model endpoint" in response.json()["detail"]
+
+
+def test_embedding_endpoint_does_not_expose_local_runtime_errors(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.routes import media_intelligence
+    from src.services.local_vision_runtime_service import LocalVisionRuntimeError
+
+    monkeypatch.setattr(
+        media_intelligence,
+        "extract_onnx_image_embedding",
+        lambda **kwargs: (_ for _ in ()).throw(
+            LocalVisionRuntimeError("C:/private/model-path/provider implementation stack")
+        ),
+    )
+    response = client.post(
+        "/api/media-intelligence/embeddings",
+        json={
+            "artifact_id": "fixture",
+            "image_path": "C:/ignored/image.png",
+            "approval_path": "C:/ignored/approval.json",
+        },
+    )
+    assert response.status_code == 422
+    assert "private" not in response.text
+    assert response.json()["detail"] == "Local image embedding request was rejected by the approved runtime."

@@ -34,6 +34,12 @@ MATERIAL_OUTCOMES = {
 
 def ensure_local_feed_access(request: Request) -> None:
     """Reject non-loopback callers unless the deployment explicitly trusts a CIDR."""
+    # Token-authenticated operators already passed the application-wide boundary.
+    # Keep the stricter local-only rule for intentionally unauthenticated mode.
+    if getattr(get_settings(), "auth_mode", "disabled") == "token" and getattr(
+        request.state, "operator_principal", None
+    ) is not None:
+        return
     client = request.client
     host = client.host if client else ""
     # Starlette's in-process TestClient never represents a network listener.

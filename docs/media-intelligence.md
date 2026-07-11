@@ -31,8 +31,12 @@ the snapshot manifest and every retained blob before it writes the destination.
   ledger reference.
 - `POST /api/media-intelligence/web-image-reference` only validates and canonicalizes public
   HTTP(S) image/page references; it does not fetch them.
-- `POST /api/media-intelligence/inference` runs a local, security-gated adapter contract and
-  returns model/config/input/output hashes, confidence, reason codes, device, and CPU fallback.
+- `POST /api/media-intelligence/embeddings` runs a checksum-approved local ONNX image
+  encoder and returns an L2-normalized scene embedding plus model/config/input/output hashes,
+  device, and CPU-fallback evidence. `POST /api/media-intelligence/inference` is retired;
+  the former deterministic pass-through must not be presented as production inference.
+- `GET /api/media-intelligence/models` inventories valid local ONNX approvals without
+  exposing model paths, model bytes, secrets, or local filesystem layout.
 - `POST /api/media-intelligence/visual-change` performs rule-first visual triage. It emits
   `duplicate`, `irrelevant`, `insufficient_context`, `possible_change`,
   `material_change_candidate`, or `confirmed_change`. Only material candidates receive a
@@ -104,3 +108,48 @@ Perceptual hashing currently supports safely decoded, non-interlaced PNGs; unsup
 remain exact-hash dedupe only. Satellite plausibility and people/ground-photo cues are review
 signals, never authenticity declarations. Local model outputs are supplemental feature records
 and never replace source URI, page citation, capture time, or chain of custody.
+
+## ONNX image-embedding lane
+
+The optional `media-vision` extra provides the local ONNX Runtime, NumPy, and Pillow stack:
+
+```powershell
+python -m pip install -e '.[media-local,media-vision]'
+```
+
+Forte ships **no image model weights**. An operator must acquire a candidate model in a
+separate approved setup process; record its license, checksum, SBOM, package lock, CVE review,
+hardware benchmark, and offline proof before placing it under `data_dir`. An approval file
+under `data_dir/model_approvals/` has this shape:
+
+```json
+{
+  "manifest": {
+    "model_id": "operator-approved-image-encoder",
+    "version": "pinned-version",
+    "kind": "image_embedding",
+    "upstream_origin": "https://upstream.example/model",
+    "license_id": "recorded-license",
+    "artifact_sha256": "sha256-of-local-onnx-file",
+    "package_lock_sha256": "sha256-of-lockfile",
+    "sbom_sha256": "sha256-of-sbom",
+    "cve_review_ref": "security-review-reference",
+    "hardware_requirement": "RTX 4070 Laptop GPU; bounded CPU fallback",
+    "test_fixture_ref": "benchmark-manifest-reference",
+    "config": {"preprocess": "rgb-nchw"}
+  },
+  "model_path": "<absolute path beneath ELEVENWRITER_DATA_DIR>",
+  "input_name": "image",
+  "output_name": "embedding",
+  "input_size": 224,
+  "mean": [0.485, 0.456, 0.406],
+  "std": [0.229, 0.224, 0.225]
+}
+```
+
+At inference, Forte re-hashes the ONNX file, validates approval/image paths under `data_dir`,
+bounds decoded pixels, selects TensorRT/CUDA only when ONNX Runtime actually reports it, and
+otherwise uses CPU. It sets offline environment flags before loading. A failed approval, hash
+mismatch, invalid output, unavailable runtime, or decode limit fails closed. The embedding is
+a supplemental feature for rule-first visual-change comparison; it does not establish site
+identity, construction progress, or source authenticity.
