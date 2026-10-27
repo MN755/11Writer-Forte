@@ -16,6 +16,7 @@ The FEU-g XML endpoint is protected with HTTP Basic auth. A `HEAD` request again
 Set the MnDOT password in an environment variable instead of hardcoding it into source metadata:
 
 ```powershell
+$env:ELEVENWRITER_MNDOT_USERNAME = "<agency-issued username>"
 $env:ELEVENWRITER_MNDOT_PASSWORD = "<agency password>"
 ```
 
@@ -26,7 +27,7 @@ elevenwriter add-source-http-xml `
   mndot-feu-g `
   https://mn.carsprogram.org/hub/data/feu-g.xml `
   mndot-feu-g `
-  --basic-auth-username [redacted username] `
+  --basic-auth-username $env:ELEVENWRITER_MNDOT_USERNAME `
   --basic-auth-password-env ELEVENWRITER_MNDOT_PASSWORD `
   --retry-attempts 3 `
   --skip-unchanged true
