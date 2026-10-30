@@ -7,10 +7,11 @@ import os
 import subprocess
 import sys
 import time
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, Collection, Mapping, Sequence
+from typing import Any
 from uuid import uuid4
 
 from sqlalchemy.orm import Session
@@ -220,7 +221,7 @@ class CalibrationMode:
         operator_approved: bool,
         window_count: int = 1,
         started_at: datetime | None = None,
-    ) -> "CalibrationMode":
+    ) -> CalibrationMode:
         if not operator_approved:
             raise CodexAgentError("Quota calibration requires explicit operator approval.")
         if window_count not in {1, 2}:

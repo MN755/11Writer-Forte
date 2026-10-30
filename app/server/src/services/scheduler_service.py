@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -7,6 +8,7 @@ from pydantic import ValidationError
 from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
 
+from src.errors import InputValidationError, redacted_exception_info
 from src.models import (
     AlertORM,
     CustodyLogORM,
@@ -21,8 +23,8 @@ from src.schemas import (
     ScheduledTaskCreate,
     ScheduledTaskUpdate,
 )
-from src.services.camera_source_service import materialize_camera_source_inventory
 from src.services.camera_service import materialize_camera_inventory
+from src.services.camera_source_service import materialize_camera_source_inventory
 from src.services.clickhouse_service import (
     archive_clickhouse_observations_to_r2,
     sync_runtime_to_clickhouse,
@@ -36,9 +38,11 @@ from src.services.geospatial_service import (
 )
 from src.services.import_service import import_local_path
 from src.services.layer_service import ensure_data_layer
-from src.services.storage_service import sweep_expired_storage_objects
 from src.services.source_service import run_source_definition
+from src.services.storage_service import sweep_expired_storage_objects
 from src.services.trust_service import seed_default_integrity_sources
+
+logger = logging.getLogger("elevenwriter.runtime." + __name__)
 
 
 def scheduler_now() -> datetime:
@@ -249,10 +253,10 @@ def update_scheduled_task(
         layer_key=str(changes["layer_key"])
         if "layer_key" in changes and changes["layer_key"] is not None
         else (None if "layer_key" in changes else record.layer_key),
-        payload_json=changes["payload_json"] if "payload_json" in changes else record.payload_json,
+        payload_json=changes.get("payload_json", record.payload_json),
     )
 
-    if "layer_key" in changes and changes["layer_key"]:
+    if changes.get("layer_key"):
         ensure_data_layer(session, str(changes["layer_key"]), actor=actor)
 
     change_details = apply_task_changes(record, changes)
@@ -290,6 +294,7 @@ def run_due_tasks(session: Session, actor: str = "scheduler") -> list[ScheduledT
         try:
             runs.append(run_task(session, task.task_id, actor=actor))
         except Exception:
+            logger.error("scheduler service operation failed", exc_info=redacted_exception_info())
             failed_run = session.scalar(
                 select(ScheduledTaskRunORM)
                 .where(ScheduledTaskRunORM.task_id == task.task_id)
@@ -977,7 +982,7 @@ def resolve_camera_inventory_refresh_payload(
 ) -> tuple[str | None, int]:
     payload = payload_json or {}
     if not isinstance(payload, dict):
-        raise ValueError("Camera inventory refresh payload_json must be a JSON object.")
+        raise InputValidationError("Camera inventory refresh payload_json must be a JSON object.")
 
     source_domain_value = payload.get("source_domain")
     if source_domain_value is not None and not isinstance(source_domain_value, str):
@@ -988,7 +993,7 @@ def resolve_camera_inventory_refresh_payload(
 
     limit_value = payload.get("limit", 500)
     if isinstance(limit_value, bool) or not isinstance(limit_value, int):
-        raise ValueError("Camera inventory refresh payload limit must be an integer.")
+        raise InputValidationError("Camera inventory refresh payload limit must be an integer.")
     if limit_value < 1 or limit_value > 5000:
         raise ValueError("Camera inventory refresh payload limit must be between 1 and 5000.")
 
@@ -1083,7 +1088,7 @@ def resolve_storage_lifecycle_payload(
 
     limit_value = payload.get("limit", 100)
     if isinstance(limit_value, bool) or not isinstance(limit_value, int):
-        raise ValueError("Storage lifecycle payload limit must be an integer.")
+        raise InputValidationError("Storage lifecycle payload limit must be an integer.")
     if limit_value < 1 or limit_value > 1000:
         raise ValueError("Storage lifecycle payload limit must be between 1 and 1000.")
 
@@ -1104,7 +1109,7 @@ def resolve_clickhouse_sync_payload(
 
     limit_value = payload.get("limit", 1000)
     if isinstance(limit_value, bool) or not isinstance(limit_value, int):
-        raise ValueError("ClickHouse sync payload limit must be an integer.")
+        raise InputValidationError("ClickHouse sync payload limit must be an integer.")
     if limit_value < 1 or limit_value > 20000:
         raise ValueError("ClickHouse sync payload limit must be between 1 and 20000.")
 
@@ -1127,7 +1132,7 @@ def resolve_clickhouse_archive_payload(
     if limit_value is None:
         return source_domain, None
     if isinstance(limit_value, bool) or not isinstance(limit_value, int):
-        raise ValueError("ClickHouse archive payload limit must be an integer.")
+        raise InputValidationError("ClickHouse archive payload limit must be an integer.")
     if limit_value < 1 or limit_value > 500000:
         raise ValueError("ClickHouse archive payload limit must be between 1 and 500000.")
 
@@ -1170,7 +1175,7 @@ def resolve_scheduler_payload_json(
 ) -> dict[str, object]:
     payload = payload_json or {}
     if not isinstance(payload, dict):
-        raise ValueError(f"{task_label} payload_json must be a JSON object.")
+        raise InputValidationError(f"{task_label} payload_json must be a JSON object.")
     return dict(payload)
 
 

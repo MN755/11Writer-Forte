@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, HTTPException
 
@@ -13,7 +13,6 @@ from src.services.browser_collection_service import (
     collect_browser_capture,
 )
 
-
 router = APIRouter(prefix="/browser-collection", tags=["browser-collection"])
 
 
@@ -23,14 +22,18 @@ def health() -> dict[str, object]:
 
 
 @router.post("/collect", status_code=201)
-def collect(payload: dict[str, Any] = Body(...)) -> dict[str, object]:
+def collect(*, payload: Annotated[dict[str, Any], Body()]) -> dict[str, object]:
     admission = payload.get("admission")
     if not isinstance(admission, dict):
-        raise HTTPException(status_code=422, detail="A policy-admitted admission object is required.")
+        raise HTTPException(
+            status_code=422, detail="A policy-admitted admission object is required."
+        )
     if set(payload) != {"admission"}:
         raise HTTPException(status_code=422, detail="Only the admission field is accepted.")
     try:
-        return collect_browser_capture(admission=admission, data_dir=get_settings().data_dir).to_dict()
+        return collect_browser_capture(
+            admission=admission, data_dir=get_settings().data_dir
+        ).to_dict()
     except BrowserCollectionError as exc:
         status_code = 503 if "unavailable" in type(exc).__name__.lower() else 422
         raise HTTPException(status_code=status_code, detail=str(exc)) from exc

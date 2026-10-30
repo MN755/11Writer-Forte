@@ -1,3 +1,5 @@
+from typing import Annotated
+
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
@@ -10,7 +12,7 @@ router = APIRouter(tags=["health"])
 
 
 @router.get("/health", response_model=HealthResponse)
-def health(session: Session = Depends(get_db)) -> HealthResponse:
+def health(*, session: Annotated[Session, Depends(get_db)]) -> HealthResponse:
     settings = get_settings()
     diagnostics = build_database_diagnostics(session)
     return HealthResponse(

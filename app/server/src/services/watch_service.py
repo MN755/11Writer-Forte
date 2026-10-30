@@ -10,6 +10,7 @@ from xml.etree import ElementTree
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from src.config import get_settings
 from src.models import (
     AlertORM,
     CustodyLogORM,
@@ -27,28 +28,27 @@ from src.schemas import (
     InvestigationWatchCompilation,
     InvestigationWatchCompileRequest,
     InvestigationWatchRule,
+    ScheduledTaskCreate,
     WatchCreate,
     WatchScheduleCreate,
     WatchUpdate,
 )
-from src.config import get_settings
 from src.services.discovery_fetch import FetchPolicy, fetch_url
-from src.services.storage_service import register_storage_object
-from src.services.scheduler_service import create_scheduled_task
-from src.schemas import ScheduledTaskCreate
-from src.services.source_service import run_source_definition
 from src.services.materiality_service import (
     MaterialityCandidate,
     MaterialityPolicy,
     UpdateLedger,
     evaluate_materiality,
 )
+from src.services.scheduler_service import create_scheduled_task
 from src.services.source_coverage_service import (
     CoverageLedger,
     RetryPolicy,
     SourceCandidate,
     plan_collection_action,
 )
+from src.services.source_service import run_source_definition
+from src.services.storage_service import register_storage_object
 
 
 def now() -> datetime:
@@ -212,7 +212,7 @@ def _extract_quoted_phrases(value: str) -> list[str]:
     phrases: list[str] = []
     open_quote: str | None = None
     start = 0
-    closing_quotes = {'"': '"', '“': '”'}
+    closing_quotes = {'"': '"', "“": "”"}
     for index, character in enumerate(value):
         if open_quote is None and character in closing_quotes:
             open_quote, start = character, index + 1
@@ -249,15 +249,16 @@ def _extract_subject(value: str) -> str | None:
 def _extract_location(value: str) -> str | None:
     lowered = value.casefold()
     matches = [
-        (lowered.find(f" {marker} "), marker)
-        for marker in ("in", "near", "around", "at", "within")
+        (lowered.find(f" {marker} "), marker) for marker in ("in", "near", "around", "at", "within")
     ]
     positions = [(position, marker) for position, marker in matches if position >= 0]
     if not positions:
         return None
     position, marker = min(positions)
     start = position + len(marker) + 2
-    location = _trim_watch_clause(value[start:], ("during", "since", "after", "before", "from", "for"))
+    location = _trim_watch_clause(
+        value[start:], ("during", "since", "after", "before", "from", "for")
+    )
     return location.strip() or None
 
 
@@ -377,12 +378,14 @@ def update_watch(
     changes = payload.model_dump(mode="json", exclude_unset=True)
     if payload.rule_json is not None:
         changes["rule_json"] = canonical_rule_json(payload.rule_json)
-    if "name" in changes and changes["name"] != watch.name:
-        if session.scalar(select(WatchORM).where(WatchORM.name == changes["name"])) is not None:
-            raise ValueError(f"Watch name {changes['name']!r} already exists.")
-    if "slug" in changes and changes["slug"] != watch.slug:
-        if session.scalar(select(WatchORM).where(WatchORM.slug == changes["slug"])) is not None:
-            raise ValueError(f"Watch slug {changes['slug']!r} already exists.")
+    if ("name" in changes and changes["name"] != watch.name) and (
+        session.scalar(select(WatchORM).where(WatchORM.name == changes["name"])) is not None
+    ):
+        raise ValueError(f"Watch name {changes['name']!r} already exists.")
+    if ("slug" in changes and changes["slug"] != watch.slug) and (
+        session.scalar(select(WatchORM).where(WatchORM.slug == changes["slug"])) is not None
+    ):
+        raise ValueError(f"Watch slug {changes['slug']!r} already exists.")
     if "rule_json" in changes:
         requested_type = changes.get("watch_type", watch.watch_type)
         if changes["rule_json"].get("mode") != requested_type:
@@ -397,7 +400,7 @@ def update_watch(
                 version.superseded_at = now()
     for key, value in changes.items():
         setattr(watch, key, value)
-    if any(key in changes for key in {"watch_type", "rule_json", "source_id", "layer_key"}):
+    if any(key in changes for key in ("watch_type", "rule_json", "source_id", "layer_key")):
         watch.baseline_json, watch.dedupe_json = {}, {}
     if "rule_json" in changes:
         _record_rule_version(

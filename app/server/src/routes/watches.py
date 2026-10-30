@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Annotated
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy.orm import Session
 
@@ -47,8 +49,9 @@ def compile_investigation_watch(
 
 @router.post("/investigation-candidates", response_model=WatchRead)
 def create_investigation_candidate(
+    *,
     payload: InvestigationWatchCandidateCreate,
-    session: Session = Depends(get_db),
+    session: Annotated[Session, Depends(get_db)],
 ) -> object:
     try:
         watch, _ = create_investigation_watch_candidate(
@@ -69,18 +72,20 @@ def create_investigation_candidate(
 
 @router.get("", response_model=list[WatchRead])
 def list_watch_records(
+    *,
     state: str | None = None,
     watch_type: str | None = None,
     limit: int = Query(default=200, ge=1, le=2000),
-    session: Session = Depends(get_db),
+    session: Annotated[Session, Depends(get_db)],
 ) -> list[object]:
     return list_watches(session, state=state, watch_type=watch_type, limit=limit)
 
 
 @router.post("", response_model=WatchRead)
 def create_watch_record(
+    *,
     payload: WatchCreate,
-    session: Session = Depends(get_db),
+    session: Annotated[Session, Depends(get_db)],
 ) -> object:
     try:
         return create_watch(session, payload, actor="api")
@@ -91,11 +96,12 @@ def create_watch_record(
 # Keep collection-level static routes above /{watch_id}; FastAPI matches in declaration order.
 @router.get("/runs", response_model=list[WatchRunRead])
 def list_watch_run_records(
+    *,
     watch_id: int | None = None,
     status: str | None = None,
     outcome: str | None = None,
     limit: int = Query(default=200, ge=1, le=2000),
-    session: Session = Depends(get_db),
+    session: Annotated[Session, Depends(get_db)],
 ) -> list[object]:
     return list_watch_runs(
         session,
@@ -108,21 +114,23 @@ def list_watch_run_records(
 
 @router.get("/alerts", response_model=list[AlertRead])
 def list_watch_alert_records(
+    *,
     watch_id: int | None = None,
     status: str | None = None,
     limit: int = Query(default=200, ge=1, le=2000),
-    session: Session = Depends(get_db),
+    session: Annotated[Session, Depends(get_db)],
 ) -> list[object]:
     return list_watch_alerts(session, watch_id=watch_id, status=status, limit=limit)
 
 
 @router.get("/feed.rss", response_class=Response)
 def watch_alert_feed(
+    *,
     request: Request,
     watch_id: int | None = None,
     status: str | None = "open",
     limit: int = Query(default=50, ge=1, le=500),
-    session: Session = Depends(get_db),
+    session: Annotated[Session, Depends(get_db)],
 ) -> Response:
     try:
         content = render_watch_alert_rss(
@@ -138,7 +146,7 @@ def watch_alert_feed(
 
 
 @router.get("/{watch_id}", response_model=WatchRead)
-def get_watch_record(watch_id: int, session: Session = Depends(get_db)) -> object:
+def get_watch_record(*, watch_id: int, session: Annotated[Session, Depends(get_db)]) -> object:
     try:
         return get_watch(session, watch_id)
     except ValueError as exc:
@@ -151,9 +159,10 @@ def get_watch_record(watch_id: int, session: Session = Depends(get_db)) -> objec
 
 @router.patch("/{watch_id}", response_model=WatchRead)
 def patch_watch_record(
+    *,
     watch_id: int,
     payload: WatchUpdate,
-    session: Session = Depends(get_db),
+    session: Annotated[Session, Depends(get_db)],
 ) -> object:
     try:
         return update_watch(session, watch_id, payload, actor="api")
@@ -166,7 +175,7 @@ def patch_watch_record(
 
 
 @router.post("/{watch_id}/pause", response_model=WatchRead)
-def pause_watch_record(watch_id: int, session: Session = Depends(get_db)) -> object:
+def pause_watch_record(*, watch_id: int, session: Annotated[Session, Depends(get_db)]) -> object:
     try:
         return pause_watch(session, watch_id, actor="api")
     except ValueError as exc:
@@ -178,7 +187,7 @@ def pause_watch_record(watch_id: int, session: Session = Depends(get_db)) -> obj
 
 
 @router.post("/{watch_id}/resume", response_model=WatchRead)
-def resume_watch_record(watch_id: int, session: Session = Depends(get_db)) -> object:
+def resume_watch_record(*, watch_id: int, session: Annotated[Session, Depends(get_db)]) -> object:
     try:
         return resume_watch(session, watch_id, actor="api")
     except ValueError as exc:
@@ -191,9 +200,10 @@ def resume_watch_record(watch_id: int, session: Session = Depends(get_db)) -> ob
 
 @router.post("/{watch_id}/run", response_model=WatchRunRead)
 def run_watch_record(
+    *,
     watch_id: int,
     force: bool = False,
-    session: Session = Depends(get_db),
+    session: Annotated[Session, Depends(get_db)],
 ) -> object:
     try:
         return evaluate_watch(session, watch_id, actor="api", force=force)
@@ -209,9 +219,10 @@ def run_watch_record(
 
 @router.post("/{watch_id}/schedule", response_model=ScheduledTaskRead)
 def schedule_watch_record(
+    *,
     watch_id: int,
     payload: WatchScheduleCreate,
-    session: Session = Depends(get_db),
+    session: Annotated[Session, Depends(get_db)],
 ) -> object:
     try:
         return attach_watch_schedule(session, watch_id, payload, actor="api")
@@ -225,11 +236,12 @@ def schedule_watch_record(
 
 @router.get("/{watch_id}/runs", response_model=list[WatchRunRead])
 def list_runs_for_watch(
+    *,
     watch_id: int,
     status: str | None = None,
     outcome: str | None = None,
     limit: int = Query(default=200, ge=1, le=2000),
-    session: Session = Depends(get_db),
+    session: Annotated[Session, Depends(get_db)],
 ) -> list[object]:
     ensure_watch_exists(session, watch_id, action="list_watch_runs")
     return list_watch_runs(
@@ -243,10 +255,11 @@ def list_runs_for_watch(
 
 @router.get("/{watch_id}/alerts", response_model=list[AlertRead])
 def list_alerts_for_watch(
+    *,
     watch_id: int,
     status: str | None = None,
     limit: int = Query(default=200, ge=1, le=2000),
-    session: Session = Depends(get_db),
+    session: Annotated[Session, Depends(get_db)],
 ) -> list[object]:
     ensure_watch_exists(session, watch_id, action="list_watch_alerts")
     return list_watch_alerts(session, watch_id=watch_id, status=status, limit=limit)
@@ -254,9 +267,10 @@ def list_alerts_for_watch(
 
 @router.get("/{watch_id}/evidence", response_model=list[StorageObjectRead])
 def list_evidence_for_watch(
+    *,
     watch_id: int,
     limit: int = Query(default=200, ge=1, le=2000),
-    session: Session = Depends(get_db),
+    session: Annotated[Session, Depends(get_db)],
 ) -> list[object]:
     try:
         return list_watch_evidence(session, watch_id, limit=limit)

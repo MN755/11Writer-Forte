@@ -9,18 +9,19 @@ collection is unavailable by design.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
 import hashlib
 import json
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import tempfile
 import threading
 import time
-from typing import Any, Callable, Mapping
+from collections.abc import Callable, Mapping
+from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
 from urllib.parse import urlsplit
 from uuid import uuid4
 
@@ -53,9 +54,11 @@ class BrowserCollectionPolicy:
     max_concurrency: int = 1
 
     @classmethod
-    def from_environment(cls) -> "BrowserCollectionPolicy":
+    def from_environment(cls) -> BrowserCollectionPolicy:
         command = tuple(
-            part for part in os.getenv("ELEVENWRITER_BROWSER_COLLECTION_COMMAND", "").split() if part
+            part
+            for part in os.getenv("ELEVENWRITER_BROWSER_COLLECTION_COMMAND", "").split()
+            if part
         )
         return cls(
             enabled=os.getenv("ELEVENWRITER_BROWSER_COLLECTION_ENABLED", "").strip().lower()
@@ -63,15 +66,20 @@ class BrowserCollectionPolicy:
             command=command,
             max_redirects=_bounded_int("ELEVENWRITER_BROWSER_COLLECTION_MAX_REDIRECTS", 5, 0, 10),
             max_response_bytes=_bounded_int(
-                "ELEVENWRITER_BROWSER_COLLECTION_MAX_BYTES", 10 * 1024 * 1024, 1024, 25 * 1024 * 1024
+                "ELEVENWRITER_BROWSER_COLLECTION_MAX_BYTES",
+                10 * 1024 * 1024,
+                1024,
+                25 * 1024 * 1024,
             ),
             max_wall_clock_seconds=_bounded_float(
                 "ELEVENWRITER_BROWSER_COLLECTION_TIMEOUT_SECONDS", 45.0, 1.0, 120.0
             ),
-            max_concurrency=_bounded_int("ELEVENWRITER_BROWSER_COLLECTION_MAX_CONCURRENCY", 1, 1, 4),
+            max_concurrency=_bounded_int(
+                "ELEVENWRITER_BROWSER_COLLECTION_MAX_CONCURRENCY", 1, 1, 4
+            ),
         )
 
-    def normalized(self) -> "BrowserCollectionPolicy":
+    def normalized(self) -> BrowserCollectionPolicy:
         return BrowserCollectionPolicy(
             enabled=bool(self.enabled),
             command=tuple(str(part) for part in self.command if str(part).strip()),
@@ -223,7 +231,9 @@ def _run_capture(
                     "url": approved["canonical_url"],
                     "provider_id": approved["provider_id"],
                     "max_redirects": policy.max_redirects,
-                    "max_response_bytes": min(int(approved["max_response_bytes"]), policy.max_response_bytes),
+                    "max_response_bytes": min(
+                        int(approved["max_response_bytes"]), policy.max_response_bytes
+                    ),
                     "timeout_ms": int(policy.max_wall_clock_seconds * 1000),
                     "profile": "fresh",
                     "credentials": "disabled",
@@ -259,9 +269,13 @@ def _run_capture(
                 shell=False,
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
-            raise BrowserCollectionUnavailable(f"playwright_worker_failed_to_start_or_timed_out: {exc}") from exc
+            raise BrowserCollectionUnavailable(
+                f"playwright_worker_failed_to_start_or_timed_out: {exc}"
+            ) from exc
         if completed.returncode != 0:
-            detail = (completed.stderr or completed.stdout or "worker returned non-zero").strip()[:1000]
+            detail = (completed.stderr or completed.stdout or "worker returned non-zero").strip()[
+                :1000
+            ]
             raise BrowserCollectionUnavailable(f"playwright_worker_failed: {detail}")
         elapsed_ms = round(max(0.0, monotonic_fn() - started) * 1000.0, 3)
         if elapsed_ms > policy.max_wall_clock_seconds * 1000.0:
@@ -321,7 +335,9 @@ def _validate_stage(
     headers = _read_json(headers_path)
     if not isinstance(headers, dict):
         raise BrowserCollectionRejected("Browser worker headers artifact is invalid.")
-    safe_headers = sanitize_response_headers({str(key): str(value) for key, value in headers.items()})
+    safe_headers = sanitize_response_headers(
+        {str(key): str(value) for key, value in headers.items()}
+    )
     headers_path.write_text(json.dumps(safe_headers, sort_keys=True), encoding="utf-8")
     byte_size = 0
     hashes: dict[str, str] = {}

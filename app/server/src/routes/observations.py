@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -12,6 +13,7 @@ router = APIRouter(prefix="/observations", tags=["observations"])
 
 @router.get("", response_model=list[ObservationRead])
 def list_observations(
+    *,
     layer_key: str | None = None,
     source_domain: str | None = None,
     trust_level: str | None = None,
@@ -24,7 +26,7 @@ def list_observations(
     limit: int = Query(default=200, ge=1, le=1000),
     backend: str = Query(default="runtime"),
     archive_glob_url: str | None = Query(default=None),
-    session: Session = Depends(get_db),
+    session: Annotated[Session, Depends(get_db)],
 ) -> list[object]:
     try:
         return query_observations(
@@ -50,6 +52,7 @@ def list_observations(
 
 @router.get("/cross-verify", response_model=list[CrossVerificationSummaryRead])
 def cross_verify_observations(
+    *,
     layer_key: str | None = None,
     source_domain: str | None = None,
     trust_level: str | None = None,
@@ -65,7 +68,7 @@ def cross_verify_observations(
     min_independent_signals: int = Query(default=2, ge=2, le=10),
     backend: str = Query(default="runtime"),
     archive_glob_url: str | None = Query(default=None),
-    session: Session = Depends(get_db),
+    session: Annotated[Session, Depends(get_db)],
 ) -> list[dict[str, object]]:
     try:
         observations = query_observations(

@@ -5,8 +5,8 @@ import struct
 import zlib
 from pathlib import Path
 
-from fastapi.testclient import TestClient
 import pytest
+from fastapi.testclient import TestClient
 
 
 def _png() -> bytes:
@@ -14,9 +14,19 @@ def _png() -> bytes:
     raw = b"\x00" + pixels[:2] + b"\x00" + pixels[2:]
 
     def chunk(kind: bytes, value: bytes) -> bytes:
-        return struct.pack(">I", len(value)) + kind + value + struct.pack(">I", zlib.crc32(kind + value) & 0xFFFFFFFF)
+        return (
+            struct.pack(">I", len(value))
+            + kind
+            + value
+            + struct.pack(">I", zlib.crc32(kind + value) & 0xFFFFFFFF)
+        )
 
-    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 2, 2, 8, 0, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b"")
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", 2, 2, 8, 0, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(raw))
+        + chunk(b"IEND", b"")
+    )
 
 
 def test_intake_publishes_local_artifact_and_storage_evidence(client: TestClient) -> None:
@@ -65,10 +75,15 @@ def test_intake_publishes_local_artifact_and_storage_evidence(client: TestClient
     assert derivatives.status_code == 200
     derivative_payload = derivatives.json()["derivatives"]
     assert set(derivative_payload) == {"thumbnail", "proxy"}
-    assert all(item["parent_artifact_uid"] == payload["artifact"]["artifact_uid"] for item in derivative_payload.values())
+    assert all(
+        item["parent_artifact_uid"] == payload["artifact"]["artifact_uid"]
+        for item in derivative_payload.values()
+    )
 
 
-def test_visual_change_endpoint_rejects_keyword_only_and_queues_material_change(client: TestClient) -> None:
+def test_visual_change_endpoint_rejects_keyword_only_and_queues_material_change(
+    client: TestClient,
+) -> None:
     base = {
         "source_uri": "https://public.example/camera.jpg",
         "source_excerpt": "Municipal construction camera archive",
@@ -125,7 +140,10 @@ def test_tesseract_endpoint_uses_approved_local_engine(client: TestClient) -> No
     from PIL import Image, ImageDraw, ImageFont
 
     from src.config import get_settings
-    from src.services.local_media_runtime_service import build_tesseract_approval, write_tesseract_approval
+    from src.services.local_media_runtime_service import (
+        build_tesseract_approval,
+        write_tesseract_approval,
+    )
 
     model_dir = get_settings().data_dir / "models"
     model_dir.mkdir(parents=True, exist_ok=True)
@@ -211,4 +229,7 @@ def test_embedding_endpoint_does_not_expose_local_runtime_errors(
     )
     assert response.status_code == 422
     assert "private" not in response.text
-    assert response.json()["detail"] == "Local image embedding request was rejected by the approved runtime."
+    assert (
+        response.json()["detail"]
+        == "Local image embedding request was rejected by the approved runtime."
+    )

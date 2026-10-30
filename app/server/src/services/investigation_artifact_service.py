@@ -12,7 +12,6 @@ from pathlib import Path
 
 import blake3
 
-
 VALID_DATA_ROLES = frozenset({"raw", "normalized", "derived", "evidence", "cache"})
 
 

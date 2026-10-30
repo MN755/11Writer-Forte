@@ -8,17 +8,28 @@ prevents a source-format change from silently becoming graph evidence.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import date, datetime
 import ipaddress
 import re
 import unicodedata
-from typing import Any, Iterable, Mapping
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass, field
+from datetime import date, datetime
+from typing import Any
 from urllib.parse import urlparse
 
-
 ALLOWED_PUBLIC_SOURCE_TYPES = frozenset(
-    {"government", "court", "financial", "news", "dataset", "website", "rss", "api", "social", "video"}
+    {
+        "government",
+        "court",
+        "financial",
+        "news",
+        "dataset",
+        "website",
+        "rss",
+        "api",
+        "social",
+        "video",
+    }
 )
 SOURCE_RELIABILITY = {
     "government": 0.95,
@@ -49,33 +60,173 @@ _CONTEXT_KEYS = frozenset({"jurisdiction", "event_date", "role", "public_institu
 # inventing a potentially misleading spelling.
 _TRANSLITERATION = str.maketrans(
     {
-        **dict(zip("АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ", [
-            "A", "B", "V", "G", "D", "E", "E", "Zh", "Z", "I", "I", "K", "L", "M", "N", "O",
-            "P", "R", "S", "T", "U", "F", "Kh", "Ts", "Ch", "Sh", "Shch", "", "Y", "", "E", "Yu", "Ya",
-        ])),
-        **dict(zip("абвгдеёжзийклмнопрстуфхцчшщъыьэюя", [
-            "a", "b", "v", "g", "d", "e", "e", "zh", "z", "i", "i", "k", "l", "m", "n", "o",
-            "p", "r", "s", "t", "u", "f", "kh", "ts", "ch", "sh", "shch", "", "y", "", "e", "yu", "ya",
-        ])),
-        **dict(zip("ΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡΣΤΥΦΧΨΩ", [
-            "A", "V", "G", "D", "E", "Z", "I", "Th", "I", "K", "L", "M", "N", "X", "O", "P", "R", "S", "T", "Y", "F", "Ch", "Ps", "O",
-        ])),
-        **dict(zip("αβγδεζηθικλμνξοπρσςτυφχψω", [
-            "a", "v", "g", "d", "e", "z", "i", "th", "i", "k", "l", "m", "n", "x", "o", "p", "r", "s", "s", "t", "y", "f", "ch", "ps", "o",
-        ])),
+        **dict(
+            zip(
+                "АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ",
+                [
+                    "A",
+                    "B",
+                    "V",
+                    "G",
+                    "D",
+                    "E",
+                    "E",
+                    "Zh",
+                    "Z",
+                    "I",
+                    "I",
+                    "K",
+                    "L",
+                    "M",
+                    "N",
+                    "O",
+                    "P",
+                    "R",
+                    "S",
+                    "T",
+                    "U",
+                    "F",
+                    "Kh",
+                    "Ts",
+                    "Ch",
+                    "Sh",
+                    "Shch",
+                    "",
+                    "Y",
+                    "",
+                    "E",
+                    "Yu",
+                    "Ya",
+                ],
+            )
+        ),
+        **dict(
+            zip(
+                "абвгдеёжзийклмнопрстуфхцчшщъыьэюя",
+                [
+                    "a",
+                    "b",
+                    "v",
+                    "g",
+                    "d",
+                    "e",
+                    "e",
+                    "zh",
+                    "z",
+                    "i",
+                    "i",
+                    "k",
+                    "l",
+                    "m",
+                    "n",
+                    "o",
+                    "p",
+                    "r",
+                    "s",
+                    "t",
+                    "u",
+                    "f",
+                    "kh",
+                    "ts",
+                    "ch",
+                    "sh",
+                    "shch",
+                    "",
+                    "y",
+                    "",
+                    "e",
+                    "yu",
+                    "ya",
+                ],
+            )
+        ),
+        **dict(
+            zip(
+                "ΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡΣΤΥΦΧΨΩ",
+                [
+                    "A",
+                    "V",
+                    "G",
+                    "D",
+                    "E",
+                    "Z",
+                    "I",
+                    "Th",
+                    "I",
+                    "K",
+                    "L",
+                    "M",
+                    "N",
+                    "X",
+                    "O",
+                    "P",
+                    "R",
+                    "S",
+                    "T",
+                    "Y",
+                    "F",
+                    "Ch",
+                    "Ps",
+                    "O",
+                ],
+            )
+        ),
+        **dict(
+            zip(
+                "αβγδεζηθικλμνξοπρσςτυφχψω",
+                [
+                    "a",
+                    "v",
+                    "g",
+                    "d",
+                    "e",
+                    "z",
+                    "i",
+                    "th",
+                    "i",
+                    "k",
+                    "l",
+                    "m",
+                    "n",
+                    "x",
+                    "o",
+                    "p",
+                    "r",
+                    "s",
+                    "s",
+                    "t",
+                    "y",
+                    "f",
+                    "ch",
+                    "ps",
+                    "o",
+                ],
+            )
+        ),
     }
 )
 _IDENTIFIER_PATTERNS: dict[str, re.Pattern[str]] = {
     "imo": re.compile(r"\bIMO\s*[:#-]?\s*(\d{7})\b", re.IGNORECASE),
     "mmsi": re.compile(r"\bMMSI\s*[:#-]?\s*(\d{9})\b", re.IGNORECASE),
-    "vessel_callsign": re.compile(r"\b(?:CALL\s*SIGN|CALLSIGN)\s*[:#-]?\s*([A-Z0-9]{3,8})\b", re.IGNORECASE),
-    "aircraft_registration": re.compile(r"\b(?:REG(?:ISTRATION)?|TAIL(?:\s*NUMBER)?)\s*[:#-]?\s*([A-Z]{1,2}-?[A-Z0-9]{2,6})\b", re.IGNORECASE),
+    "vessel_callsign": re.compile(
+        r"\b(?:CALL\s*SIGN|CALLSIGN)\s*[:#-]?\s*([A-Z0-9]{3,8})\b", re.IGNORECASE
+    ),
+    "aircraft_registration": re.compile(
+        r"\b(?:REG(?:ISTRATION)?|TAIL(?:\s*NUMBER)?)\s*[:#-]?\s*([A-Z]{1,2}-?[A-Z0-9]{2,6})\b",
+        re.IGNORECASE,
+    ),
     "organization_registration_id": re.compile(
         r"\b(?:COMPANY|ORGANIZATION|BUSINESS|REG(?:ISTRATION)?)(?:\s+(?:NO|NUMBER|ID))?\s*[:#-]?\s*([A-Z0-9][A-Z0-9./-]{3,31})\b",
         re.IGNORECASE,
     ),
-    "case_id": re.compile(r"\b(?:CASE|DOCKET)\s*(?:NO\.?|NUMBER|ID)?\s*[:#-]?\s*([A-Z0-9][A-Z0-9./:-]{3,63})\b", re.IGNORECASE),
-    "document_id": re.compile(r"\b(?:DOCUMENT|FILING|RECORD)\s*(?:NO\.?|NUMBER|ID)?\s*[:#-]?\s*([A-Z0-9][A-Z0-9./:-]{3,63})\b", re.IGNORECASE),
+    "case_id": re.compile(
+        r"\b(?:CASE|DOCKET)\s*(?:NO\.?|NUMBER|ID)?\s*[:#-]?\s*([A-Z0-9][A-Z0-9./:-]{3,63})\b",
+        re.IGNORECASE,
+    ),
+    "document_id": re.compile(
+        r"\b(?:DOCUMENT|FILING|RECORD)\s*(?:NO\.?|NUMBER|ID)?\s*[:#-]?\s*([A-Z0-9][A-Z0-9./:-]{3,63})\b",
+        re.IGNORECASE,
+    ),
 }
 
 
@@ -135,7 +286,9 @@ class PublicRecordAdapter:
                     f"{self.source_name} schema version mismatch: expected {self.schema_version!r}, "
                     f"received {actual_schema_version!r}."
                 )
-            missing = sorted(field for field in self.required_fields if record.get(field) in (None, ""))
+            missing = sorted(
+                field for field in self.required_fields if record.get(field) in (None, "")
+            )
             if missing:
                 raise AdapterSchemaMismatchError(f"Missing required fields: {', '.join(missing)}.")
             if self.allowed_fields is not None:
@@ -148,7 +301,9 @@ class PublicRecordAdapter:
         except AdapterSchemaMismatchError as exc:
             if strict:
                 raise
-            return AdapterValidationResult(status="quarantined", record=None, quarantine_reason=str(exc))
+            return AdapterValidationResult(
+                status="quarantined", record=None, quarantine_reason=str(exc)
+            )
 
 
 @dataclass(frozen=True)
@@ -206,7 +361,13 @@ def normalize_identifier(key: str, value: object) -> str | None:
         return normalized if len(normalized) == 7 and normalized.isdigit() else None
     if key == "mmsi":
         return normalized if len(normalized) == 9 and normalized.isdigit() else None
-    if key in {"vessel_callsign", "aircraft_registration", "organization_registration_id", "case_id", "document_id"}:
+    if key in {
+        "vessel_callsign",
+        "aircraft_registration",
+        "organization_registration_id",
+        "case_id",
+        "document_id",
+    }:
         return normalized or None
     return canonicalize_text(text) or None
 
@@ -230,10 +391,14 @@ def extract_resolution_signals(record: Mapping[str, Any]) -> list[ResolutionSign
         normalized_key = str(key).strip().lower()
         if raw is None:
             continue
-        if normalized_key in _IDENTIFIER_PATTERNS or normalized_key in ENTITY_IDENTIFIER_KEYS.get("vessel", frozenset()):
+        if normalized_key in _IDENTIFIER_PATTERNS or normalized_key in ENTITY_IDENTIFIER_KEYS.get(
+            "vessel", frozenset()
+        ):
             normalized = normalize_identifier(normalized_key, raw)
             if normalized:
-                signals[(normalized_key, normalized)] = ResolutionSignal(normalized_key, normalized, "strong")
+                signals[(normalized_key, normalized)] = ResolutionSignal(
+                    normalized_key, normalized, "strong"
+                )
         elif normalized_key in {"name", "full_name", "organization", "alias", "aliases"}:
             values: Iterable[object] = raw if isinstance(raw, (list, tuple, set)) else (raw,)
             for candidate in values:
@@ -243,10 +408,14 @@ def extract_resolution_signals(record: Mapping[str, Any]) -> list[ResolutionSign
         elif normalized_key in _CONTEXT_KEYS:
             normalized = _normalize_context(normalized_key, raw)
             if normalized:
-                signals[(normalized_key, normalized)] = ResolutionSignal(normalized_key, normalized, "context")
+                signals[(normalized_key, normalized)] = ResolutionSignal(
+                    normalized_key, normalized, "context"
+                )
         elif isinstance(raw, str):
             for identifier_key, identifier_value in extract_identifiers(raw).items():
-                signals[(identifier_key, identifier_value)] = ResolutionSignal(identifier_key, identifier_value, "strong")
+                signals[(identifier_key, identifier_value)] = ResolutionSignal(
+                    identifier_key, identifier_value, "strong"
+                )
     return sorted(signals.values(), key=lambda signal: (signal.key, signal.value))
 
 
@@ -266,19 +435,37 @@ def evaluate_public_source(
     domain = (parsed.hostname or "").rstrip(".").lower() or None
     source_type = source_type.strip().lower()
     if parsed.scheme not in {"http", "https"} or not domain or parsed.username or parsed.password:
-        return _policy_denied("source URL must be a credential-free HTTP(S) URL", domain, source_type)
-    if domain == "localhost" or domain.endswith(".localhost") or domain.endswith(".local"):
+        return _policy_denied(
+            "source URL must be a credential-free HTTP(S) URL", domain, source_type
+        )
+    if domain == "localhost" or domain.endswith((".localhost", ".local")):
         return _policy_denied("local source addresses are not public sources", domain, source_type)
     try:
         if ipaddress.ip_address(domain).is_private or ipaddress.ip_address(domain).is_loopback:
-            return _policy_denied("private or loopback source addresses are not public sources", domain, source_type)
+            return _policy_denied(
+                "private or loopback source addresses are not public sources", domain, source_type
+            )
     except ValueError:
         pass
     if source_type not in ALLOWED_PUBLIC_SOURCE_TYPES:
-        return _policy_denied("source type is not approved for public-record adapters", domain, source_type)
-    if not public_access or requires_login or requires_payment or bypasses_access_controls or not terms_permit_access:
-        return _policy_denied("source must be legally accessible without login, payment, or bypass", domain, source_type)
-    return SourcePolicyDecision(True, None, domain, source_domain_reliability(domain, source_type, domain_reliability))
+        return _policy_denied(
+            "source type is not approved for public-record adapters", domain, source_type
+        )
+    if (
+        not public_access
+        or requires_login
+        or requires_payment
+        or bypasses_access_controls
+        or not terms_permit_access
+    ):
+        return _policy_denied(
+            "source must be legally accessible without login, payment, or bypass",
+            domain,
+            source_type,
+        )
+    return SourcePolicyDecision(
+        True, None, domain, source_domain_reliability(domain, source_type, domain_reliability)
+    )
 
 
 def validate_source_and_record(
@@ -321,22 +508,42 @@ def decide_merge(left: EntityCandidate, right: EntityCandidate) -> MergeDecision
     applicable = ENTITY_IDENTIFIER_KEYS.get(left.entity_type, STRONG_IDENTIFIER_KEYS)
     left_strong = {key: value for key, value in left_ids.items() if key in applicable}
     right_strong = {key: value for key, value in right_ids.items() if key in applicable}
-    shared = tuple(sorted(key for key in set(left_strong) & set(right_strong) if left_strong[key] == right_strong[key]))
-    conflicts = sorted(key for key in set(left_strong) & set(right_strong) if left_strong[key] != right_strong[key])
+    shared = tuple(
+        sorted(
+            key
+            for key in set(left_strong) & set(right_strong)
+            if left_strong[key] == right_strong[key]
+        )
+    )
+    conflicts = sorted(
+        key for key in set(left_strong) & set(right_strong) if left_strong[key] != right_strong[key]
+    )
     if conflicts:
-        return MergeDecision("do_not_merge", f"conflicting strong identifiers: {', '.join(conflicts)}")
+        return MergeDecision(
+            "do_not_merge", f"conflicting strong identifiers: {', '.join(conflicts)}"
+        )
     if shared:
         if not left.source_citations or not right.source_citations:
-            return MergeDecision("ambiguous", "shared strong identifier lacks cited evidence", shared)
+            return MergeDecision(
+                "ambiguous", "shared strong identifier lacks cited evidence", shared
+            )
         if min(left.source_reliability, right.source_reliability) < 0.5:
-            return MergeDecision("ambiguous", "shared strong identifier has insufficient source reliability", shared)
+            return MergeDecision(
+                "ambiguous", "shared strong identifier has insufficient source reliability", shared
+            )
         return MergeDecision("merge", "matching cited strong public identifier", shared)
     if not _candidate_name_forms(left).intersection(_candidate_name_forms(right)):
-        return MergeDecision("do_not_merge", "canonical names differ and no strong identifier matches")
+        return MergeDecision(
+            "do_not_merge", "canonical names differ and no strong identifier matches"
+        )
     context = _shared_context(left.context, right.context)
     domains = {domain.lower() for domain in left.source_domains + right.source_domains if domain}
     if len(context) >= 2 and len(domains) >= 2 and left.source_citations and right.source_citations:
-        return MergeDecision("merge", "same name with independently corroborated cited context", corroborated_context=context)
+        return MergeDecision(
+            "merge",
+            "same name with independently corroborated cited context",
+            corroborated_context=context,
+        )
     return MergeDecision(
         "ambiguous",
         "same-name candidates lack a matching strong identifier or independently corroborated context",
@@ -390,7 +597,9 @@ def _candidate_name_forms(candidate: EntityCandidate) -> set[str]:
 def _shared_context(left: Mapping[str, str], right: Mapping[str, str]) -> tuple[str, ...]:
     matched = []
     for key in sorted(_CONTEXT_KEYS & set(left) & set(right)):
-        if _normalize_context(key, left[key]) == _normalize_context(key, right[key]) and _normalize_context(key, left[key]):
+        if _normalize_context(key, left[key]) == _normalize_context(
+            key, right[key]
+        ) and _normalize_context(key, left[key]):
             matched.append(key)
     return tuple(matched)
 

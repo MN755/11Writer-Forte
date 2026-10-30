@@ -9,8 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects import postgresql
 
 from src.config import reset_settings_cache
-from src.db import init_db, reset_db_state
-from src.db import get_session_factory
+from src.db import get_session_factory, init_db, reset_db_state
 from src.models import GeofenceORM, ObservationORM
 from src.services.geospatial_service import (
     build_bbox_sql_filter,

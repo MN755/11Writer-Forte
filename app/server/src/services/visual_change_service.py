@@ -9,13 +9,13 @@ model-produced labels.
 
 from __future__ import annotations
 
+import json
+import math
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from hashlib import sha256
-import json
-import math
-from typing import Any, Callable, Iterable, Mapping, Protocol, Sequence
-
+from typing import Any, Protocol
 
 MODEL_KINDS = frozenset(
     {
@@ -299,7 +299,15 @@ def _site_association(observation: VisualObservation) -> float:
 def _semantic_progress(observation: VisualObservation, baseline: VisualObservation) -> float:
     labels = {label.casefold() for label in observation.object_labels}
     base_labels = {label.casefold() for label in baseline.object_labels}
-    construction = {"crane", "excavator", "construction", "building", "foundation", "steel", "scaffolding"}
+    construction = {
+        "crane",
+        "excavator",
+        "construction",
+        "building",
+        "foundation",
+        "steel",
+        "scaffolding",
+    }
     gained = len((labels - base_labels) & construction) / max(1, len(construction & labels))
     similarity = _cosine_similarity(observation.scene_embedding, baseline.scene_embedding)
     visual_delta = 0.0 if similarity is None else 1.0 - similarity
@@ -309,7 +317,9 @@ def _semantic_progress(observation: VisualObservation, baseline: VisualObservati
 class MaterialVisualChangePipeline:
     """Rule-first triage; it queues exceptional review but never performs an LLM call."""
 
-    def __init__(self, *, material_threshold: float = 0.70, possible_threshold: float = 0.45) -> None:
+    def __init__(
+        self, *, material_threshold: float = 0.70, possible_threshold: float = 0.45
+    ) -> None:
         self.material_threshold = material_threshold
         self.possible_threshold = possible_threshold
         self.review_queue: list[VisualChangeCandidate] = []
@@ -336,17 +346,37 @@ class MaterialVisualChangePipeline:
         # it can never turn an unrelated image into an alert.
         if association < 0.35 and geo < 0.35:
             return self._candidate(
-                "irrelevant", observation, baseline, 0.0, ("no_named_or_geospatial_site_association",), {}, None
+                "irrelevant",
+                observation,
+                baseline,
+                0.0,
+                ("no_named_or_geospatial_site_association",),
+                {},
+                None,
             )
-        if baseline is None or observation.capture_time is None or not observation.source_excerpt.strip():
+        if (
+            baseline is None
+            or observation.capture_time is None
+            or not observation.source_excerpt.strip()
+        ):
             return self._candidate(
-                "insufficient_context", observation, baseline, 0.0, ("baseline_capture_time_or_citable_context_missing",), {}, None
+                "insufficient_context",
+                observation,
+                baseline,
+                0.0,
+                ("baseline_capture_time_or_citable_context_missing",),
+                {},
+                None,
             )
 
         similarity = _cosine_similarity(observation.scene_embedding, baseline.scene_embedding)
         scene_change = 0.0 if similarity is None else 1.0 - similarity
         semantic = _semantic_progress(observation, baseline)
-        ocr_change = float(_tokens(observation.ocr_text) != _tokens(baseline.ocr_text)) if observation.ocr_text else 0.0
+        ocr_change = (
+            float(_tokens(observation.ocr_text) != _tokens(baseline.ocr_text))
+            if observation.ocr_text
+            else 0.0
+        )
         components = {
             "source_credibility": observation.source_credibility * 0.16,
             "site_association": association * 0.24,
@@ -376,7 +406,14 @@ class MaterialVisualChangePipeline:
             packet = self._review_packet(observation, baseline)
             review_status = "queued" if llm_quota_available else "queued_quota_exhausted"
         candidate = self._candidate(
-            classification, observation, baseline, score, tuple(reason_codes), components, packet, review_status
+            classification,
+            observation,
+            baseline,
+            score,
+            tuple(reason_codes),
+            components,
+            packet,
+            review_status,
         )
         if classification == "material_change_candidate":
             self.review_queue.append(candidate)
@@ -397,7 +434,9 @@ class MaterialVisualChangePipeline:
         return None
 
     @staticmethod
-    def _review_packet(observation: VisualObservation, baseline: VisualObservation) -> Mapping[str, Any]:
+    def _review_packet(
+        observation: VisualObservation, baseline: VisualObservation
+    ) -> Mapping[str, Any]:
         return {
             "candidate_artifact_id": observation.artifact_id,
             "baseline_artifact_id": baseline.artifact_id,
@@ -415,7 +454,9 @@ class MaterialVisualChangePipeline:
             "source_excerpt": observation.source_excerpt[:2_000],
             "historical_baseline": {
                 "source_uri": baseline.source_uri,
-                "capture_time": baseline.capture_time.isoformat() if baseline.capture_time else None,
+                "capture_time": baseline.capture_time.isoformat()
+                if baseline.capture_time
+                else None,
                 "object_labels": list(baseline.object_labels[:50]),
             },
         }

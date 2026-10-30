@@ -8,6 +8,7 @@ from urllib.error import HTTPError
 from urllib.request import Request
 
 import pytest
+from typing_extensions import Self
 
 from src.services.discovery_fetch import (
     FetchPolicy,
@@ -229,7 +230,7 @@ class SuccessfulResponse(StreamingResponse):
     def geturl(self) -> str:
         return self.url
 
-    def __enter__(self) -> "SuccessfulResponse":
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, exc_type, exc, traceback) -> None:  # type: ignore[no-untyped-def]

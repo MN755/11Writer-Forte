@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Annotated
 
 import typer
 from pydantic import TypeAdapter
@@ -14,15 +15,22 @@ from src.models import (
     EntityObservationLinkORM,
     EntityORM,
     LocalImportRunORM,
+    ResearchProviderORM,
     ScheduledTaskORM,
     ScheduledTaskRunORM,
     SituationProductORM,
     SourceTrustProfileORM,
-    ResearchProviderORM,
 )
 from src.schemas import (
     AlertCreate,
     AlertUpdate,
+    CameraMaterializationResponse,
+    CameraOpsExportSummaryRead,
+    CameraOpsReportIndexRead,
+    CameraSourceMaterializationResponse,
+    CameraSourceOpsExportSummaryRead,
+    CameraSourceOpsReportIndexRead,
+    CameraSourceSummaryRead,
     CandidateHealthCheckRead,
     CandidateHealthScanRequest,
     CandidateHealthScanResultRead,
@@ -31,21 +39,14 @@ from src.schemas import (
     CandidateScoreExplanationRead,
     CandidateSuppressionRead,
     CandidateSuppressionRequest,
-    CameraSourceOpsExportSummaryRead,
-    CameraSourceMaterializationResponse,
-    CameraSourceOpsReportIndexRead,
-    CameraSourceSummaryRead,
     ClickHouseArchiveResultRead,
     ClickHouseDiagnosticsRead,
     ClickHouseProvisionResultRead,
     ClickHouseR2ConfigRead,
     ClickHouseRehydrateResultRead,
     ClickHouseSyncResultRead,
-    CameraOpsExportSummaryRead,
-    CameraOpsReportIndexRead,
-    CameraMaterializationResponse,
-    DataLayerCreate,
     DatabaseDiagnosticsRead,
+    DataLayerCreate,
     DiscoveryCampaignCreate,
     DiscoveryCampaignRead,
     DiscoveryCampaignUpdate,
@@ -61,61 +62,66 @@ from src.schemas import (
     DiscoveryRunRead,
     DiscoveryRunRequest,
     DiscoveryRunResultRead,
-    ResearchProviderCreate,
-    ResearchProviderRead,
-    EventExportBundleRead,
+    EntityResolutionRequest,
     EventCreate,
+    EventExportBundleRead,
     EventFusionRequest,
     GeofenceCreate,
-    InvestigationWatchCompileRequest,
+    InvestigationArchiveResultRead,
     InvestigationCreate,
     InvestigationRead,
     InvestigationTransitionRequest,
-    InvestigationArchiveResultRead,
-    EntityResolutionRequest,
+    InvestigationWatchCompileRequest,
     OperationsReportRead,
+    ResearchProviderCreate,
+    ResearchProviderRead,
     RuntimeRestoreResultRead,
     RuntimeSnapshotRead,
+    ScheduledTaskCreate,
+    ScheduledTaskUpdate,
     SchedulerInventorySummaryRead,
     SchedulerOpsExportSummaryRead,
     SchedulerOpsReportIndexRead,
-    ScheduledTaskCreate,
-    ScheduledTaskUpdate,
+    SourceCandidateDetailRead,
+    SourceCandidateRead,
+    SourceDefinitionCreate,
+    SourceDefinitionUpdate,
+    SourceInventorySummaryRead,
+    SourceOpsExportSummaryRead,
+    SourceOpsReportIndexRead,
+    SourceTrustProfileCreate,
+    SourceTrustProfileUpdate,
     StorageLifecycleSweepResultRead,
     StorageObjectCreate,
     StorageObjectPromoteRequest,
     StorageObjectRead,
     StorageObjectTransitionRequest,
     StorageReportRead,
-    SourceDefinitionCreate,
-    SourceDefinitionUpdate,
-    SourceInventorySummaryRead,
-    SourceOpsExportSummaryRead,
-    SourceOpsReportIndexRead,
-    SourceCandidateDetailRead,
-    SourceCandidateRead,
-    SourceTrustProfileCreate,
-    SourceTrustProfileUpdate,
-)
-from src.services.camera_source_service import (
-    build_camera_source_inventory_ops_detail,
-    build_camera_source_ops_export_summary,
-    build_camera_source_ops_report_index,
-    build_camera_source_inventory_summary,
-    list_camera_sources,
-    materialize_camera_source_inventory,
-)
-from src.services.codex_agent_service import (
-    CodexAgentError,
-    build_codex_exec_command,
-    build_codex_mcp_add_command,
-    register_codex_mcp,
-    run_codex_research,
 )
 from src.services.alert_service import (
     create_alert as create_alert_record,
+)
+from src.services.alert_service import (
     list_alerts as list_alert_records,
+)
+from src.services.alert_service import (
     update_alert as update_alert_record,
+)
+from src.services.camera_service import (
+    build_camera_inventory_ops_detail,
+    build_camera_inventory_summary,
+    build_camera_ops_export_summary,
+    build_camera_ops_report_index,
+    list_cameras,
+    materialize_camera_inventory,
+)
+from src.services.camera_source_service import (
+    build_camera_source_inventory_ops_detail,
+    build_camera_source_inventory_summary,
+    build_camera_source_ops_export_summary,
+    build_camera_source_ops_report_index,
+    list_camera_sources,
+    materialize_camera_source_inventory,
 )
 from src.services.clickhouse_service import (
     archive_clickhouse_observations_to_r2,
@@ -126,12 +132,13 @@ from src.services.clickhouse_service import (
     rehydrate_clickhouse_observations_from_r2,
     sync_runtime_to_clickhouse,
 )
-from src.services.camera_service import list_cameras
-from src.services.camera_service import materialize_camera_inventory
-from src.services.camera_service import build_camera_ops_export_summary
-from src.services.camera_service import build_camera_ops_report_index
-from src.services.camera_service import build_camera_inventory_ops_detail
-from src.services.camera_service import build_camera_inventory_summary
+from src.services.codex_agent_service import (
+    CodexAgentError,
+    build_codex_exec_command,
+    build_codex_mcp_add_command,
+    register_codex_mcp,
+    run_codex_research,
+)
 from src.services.custody_service import list_custody_logs
 from src.services.database_diagnostics_service import build_database_diagnostics
 from src.services.discovery_service import (
@@ -145,8 +152,8 @@ from src.services.discovery_service import (
     diff_discovery_inventories,
     explain_candidate_score,
     list_discovery_campaigns,
-    list_domain_policies,
     list_discovery_runs,
+    list_domain_policies,
     list_source_candidates,
     promote_source_candidate,
     revisit_discovery,
@@ -157,16 +164,16 @@ from src.services.discovery_service import (
     update_domain_policy,
     upsert_domain_policy,
 )
-from src.services.entity_resolution_service import materialize_entities
 from src.services.entity_graph_service import get_entity_profile, query_network_slice
-from src.services.export_artifact_service import (
-    write_json_export_artifact,
-    write_text_export_artifact,
-)
+from src.services.entity_resolution_service import materialize_entities
 from src.services.event_export_service import build_event_export_bundle
 from src.services.event_fusion_service import materialize_fused_events
 from src.services.event_service import create_event as create_event_record
 from src.services.event_service import list_events as list_event_records
+from src.services.export_artifact_service import (
+    write_json_export_artifact,
+    write_text_export_artifact,
+)
 from src.services.geofence_service import create_geofence, list_geofences
 from src.services.import_service import import_local_path
 from src.services.investigation_service import (
@@ -187,8 +194,7 @@ from src.services.provider_registry_service import (
 )
 from src.services.redaction_service import enforce_export_redaction
 from src.services.runtime_bundle_service import export_runtime_bundle, restore_runtime_bundle
-from src.services.runtime_snapshot_service import build_runtime_snapshot
-from src.services.runtime_snapshot_service import restore_runtime_snapshot
+from src.services.runtime_snapshot_service import build_runtime_snapshot, restore_runtime_snapshot
 from src.services.scheduler_runtime_service import run_scheduler_worker
 from src.services.scheduler_service import (
     build_scheduler_inventory_summary,
@@ -198,14 +204,6 @@ from src.services.scheduler_service import (
     run_due_tasks,
     run_task,
     update_scheduled_task,
-)
-from src.services.storage_service import (
-    build_storage_report,
-    create_storage_object,
-    list_storage_objects,
-    promote_storage_object,
-    sweep_expired_storage_objects,
-    transition_storage_object,
 )
 from src.services.source_service import (
     build_source_inventory_summary,
@@ -218,6 +216,14 @@ from src.services.source_service import (
     run_source_definition,
     update_source_definition,
 )
+from src.services.storage_service import (
+    build_storage_report,
+    create_storage_object,
+    list_storage_objects,
+    promote_storage_object,
+    sweep_expired_storage_objects,
+    transition_storage_object,
+)
 from src.services.trust_service import (
     create_source_trust_profile,
     seed_default_integrity_sources,
@@ -225,6 +231,8 @@ from src.services.trust_service import (
 )
 from src.services.watch_service import (
     archive_watch as archive_watch_record,
+)
+from src.services.watch_service import (
     create_investigation_watch_candidate,
     generate_watch_report,
     get_watch,
@@ -911,6 +919,7 @@ def add_source_file(
 
 @app.command("add-source-http-json")
 def add_source_http_json(
+    *,
     name: str,
     target_uri: str,
     layer: str,
@@ -920,7 +929,7 @@ def add_source_http_json(
     retry_attempts: int = 3,
     retry_backoff_seconds: float = 0.0,
     skip_unchanged: bool = True,
-    header: list[str] = typer.Option(default_factory=list),
+    header: Annotated[list[str], typer.Option(default_factory=list)],
     basic_auth_username: str | None = None,
     basic_auth_password_env: str | None = None,
 ) -> None:
@@ -955,6 +964,7 @@ def add_source_http_json(
 
 @app.command("add-source-http-text")
 def add_source_http_text(
+    *,
     name: str,
     target_uri: str,
     layer: str,
@@ -964,7 +974,7 @@ def add_source_http_text(
     retry_attempts: int = 3,
     retry_backoff_seconds: float = 0.0,
     skip_unchanged: bool = True,
-    header: list[str] = typer.Option(default_factory=list),
+    header: Annotated[list[str], typer.Option(default_factory=list)],
     basic_auth_username: str | None = None,
     basic_auth_password_env: str | None = None,
 ) -> None:
@@ -999,6 +1009,7 @@ def add_source_http_text(
 
 @app.command("add-source-http-xml")
 def add_source_http_xml(
+    *,
     name: str,
     target_uri: str,
     layer: str,
@@ -1008,7 +1019,7 @@ def add_source_http_xml(
     retry_attempts: int = 3,
     retry_backoff_seconds: float = 0.0,
     skip_unchanged: bool = True,
-    header: list[str] = typer.Option(default_factory=list),
+    header: Annotated[list[str], typer.Option(default_factory=list)],
     basic_auth_username: str | None = None,
     basic_auth_password_env: str | None = None,
 ) -> None:
@@ -1043,6 +1054,7 @@ def add_source_http_xml(
 
 @app.command("add-source-http-jsonl")
 def add_source_http_jsonl(
+    *,
     name: str,
     target_uri: str,
     layer: str,
@@ -1052,7 +1064,7 @@ def add_source_http_jsonl(
     retry_attempts: int = 3,
     retry_backoff_seconds: float = 0.0,
     skip_unchanged: bool = True,
-    header: list[str] = typer.Option(default_factory=list),
+    header: Annotated[list[str], typer.Option(default_factory=list)],
     basic_auth_username: str | None = None,
     basic_auth_password_env: str | None = None,
 ) -> None:
@@ -1087,6 +1099,7 @@ def add_source_http_jsonl(
 
 @app.command("add-source-http-csv")
 def add_source_http_csv(
+    *,
     name: str,
     target_uri: str,
     layer: str,
@@ -1096,7 +1109,7 @@ def add_source_http_csv(
     retry_attempts: int = 3,
     retry_backoff_seconds: float = 0.0,
     skip_unchanged: bool = True,
-    header: list[str] = typer.Option(default_factory=list),
+    header: Annotated[list[str], typer.Option(default_factory=list)],
     basic_auth_username: str | None = None,
     basic_auth_password_env: str | None = None,
 ) -> None:
@@ -1131,6 +1144,7 @@ def add_source_http_csv(
 
 @app.command("add-source-rss")
 def add_source_rss(
+    *,
     name: str,
     target_uri: str,
     layer: str,
@@ -1140,7 +1154,7 @@ def add_source_rss(
     retry_attempts: int = 3,
     retry_backoff_seconds: float = 0.0,
     skip_unchanged: bool = True,
-    header: list[str] = typer.Option(default_factory=list),
+    header: Annotated[list[str], typer.Option(default_factory=list)],
     basic_auth_username: str | None = None,
     basic_auth_password_env: str | None = None,
 ) -> None:
@@ -1175,6 +1189,7 @@ def add_source_rss(
 
 @app.command("add-source-arcgis-feature-json")
 def add_source_arcgis_feature_json(
+    *,
     name: str,
     target_uri: str,
     layer: str,
@@ -1184,7 +1199,7 @@ def add_source_arcgis_feature_json(
     retry_attempts: int = 3,
     retry_backoff_seconds: float = 0.0,
     skip_unchanged: bool = True,
-    header: list[str] = typer.Option(default_factory=list),
+    header: Annotated[list[str], typer.Option(default_factory=list)],
     basic_auth_username: str | None = None,
     basic_auth_password_env: str | None = None,
 ) -> None:
@@ -1219,6 +1234,7 @@ def add_source_arcgis_feature_json(
 
 @app.command("add-source-ckan-package-search")
 def add_source_ckan_package_search(
+    *,
     name: str,
     target_uri: str,
     layer: str,
@@ -1228,7 +1244,7 @@ def add_source_ckan_package_search(
     retry_attempts: int = 3,
     retry_backoff_seconds: float = 0.0,
     skip_unchanged: bool = True,
-    header: list[str] = typer.Option(default_factory=list),
+    header: Annotated[list[str], typer.Option(default_factory=list)],
     basic_auth_username: str | None = None,
     basic_auth_password_env: str | None = None,
 ) -> None:
@@ -1263,6 +1279,7 @@ def add_source_ckan_package_search(
 
 @app.command("add-source-web-search")
 def add_source_web_search(
+    *,
     name: str,
     target_uri: str,
     layer: str,
@@ -1272,7 +1289,7 @@ def add_source_web_search(
     retry_attempts: int = 3,
     retry_backoff_seconds: float = 0.0,
     skip_unchanged: bool = True,
-    header: list[str] = typer.Option(default_factory=list),
+    header: Annotated[list[str], typer.Option(default_factory=list)],
     basic_auth_username: str | None = None,
     basic_auth_password_env: str | None = None,
 ) -> None:
@@ -1307,6 +1324,7 @@ def add_source_web_search(
 
 @app.command("add-source-web-crawl")
 def add_source_web_crawl(
+    *,
     name: str,
     target_uri: str,
     layer: str,
@@ -1316,7 +1334,7 @@ def add_source_web_crawl(
     retry_attempts: int = 3,
     retry_backoff_seconds: float = 0.0,
     skip_unchanged: bool = True,
-    header: list[str] = typer.Option(default_factory=list),
+    header: Annotated[list[str], typer.Option(default_factory=list)],
     basic_auth_username: str | None = None,
     basic_auth_password_env: str | None = None,
 ) -> None:
@@ -1351,6 +1369,7 @@ def add_source_web_crawl(
 
 @app.command("add-source-web-discovery")
 def add_source_web_discovery(
+    *,
     name: str,
     target_uri: str,
     layer: str,
@@ -1360,7 +1379,7 @@ def add_source_web_discovery(
     retry_attempts: int = 3,
     retry_backoff_seconds: float = 0.0,
     skip_unchanged: bool = True,
-    header: list[str] = typer.Option(default_factory=list),
+    header: Annotated[list[str], typer.Option(default_factory=list)],
     basic_auth_username: str | None = None,
     basic_auth_password_env: str | None = None,
 ) -> None:
@@ -3739,21 +3758,22 @@ def update_schedule(
 
 @app.command("create-discovery-campaign")
 def create_discovery_campaign_command(
+    *,
     name: str,
     description: str = "",
     mode: str = "query_seeded",
     status: str = "draft",
     layer: str | None = None,
     enabled: bool = True,
-    discovery_mode: list[str] = typer.Option(default_factory=list),
-    query: list[str] = typer.Option(default_factory=list),
-    seed: list[str] = typer.Option(default_factory=list),
-    search_template: list[str] = typer.Option(default_factory=list),
-    format_target: list[str] = typer.Option(default_factory=list),
-    locale: list[str] = typer.Option(default_factory=list),
-    language: list[str] = typer.Option(default_factory=list),
-    allow_domain: list[str] = typer.Option(default_factory=list),
-    deny_domain: list[str] = typer.Option(default_factory=list),
+    discovery_mode: Annotated[list[str], typer.Option(default_factory=list)],
+    query: Annotated[list[str], typer.Option(default_factory=list)],
+    seed: Annotated[list[str], typer.Option(default_factory=list)],
+    search_template: Annotated[list[str], typer.Option(default_factory=list)],
+    format_target: Annotated[list[str], typer.Option(default_factory=list)],
+    locale: Annotated[list[str], typer.Option(default_factory=list)],
+    language: Annotated[list[str], typer.Option(default_factory=list)],
+    allow_domain: Annotated[list[str], typer.Option(default_factory=list)],
+    deny_domain: Annotated[list[str], typer.Option(default_factory=list)],
     policy_json: str | None = None,
     geo_json: str | None = None,
     entities_json: str | None = None,
@@ -4521,7 +4541,9 @@ def enable_research_provider_command(provider_key: str) -> None:
         if provider is None:
             raise typer.BadParameter(f"Research provider '{provider_key}' does not exist.")
         print_banner()
-        echo_model_json(ResearchProviderRead, enable_provider(session, provider.provider_id, actor="cli"))
+        echo_model_json(
+            ResearchProviderRead, enable_provider(session, provider.provider_id, actor="cli")
+        )
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
     finally:
@@ -4529,7 +4551,9 @@ def enable_research_provider_command(provider_key: str) -> None:
 
 
 @app.command("pause-research-provider")
-def pause_research_provider_command(provider_key: str, reason: str = typer.Option(..., "--reason")) -> None:
+def pause_research_provider_command(
+    provider_key: str, reason: str = typer.Option(..., "--reason")
+) -> None:
     """Stop scheduling a provider immediately, preserving the reason in custody."""
 
     init_db()
@@ -5117,7 +5141,9 @@ def archive_watch_command(watch_id: int) -> None:
     init_db()
     session = get_session_factory()()
     try:
-        typer.echo(f"watch {archive_watch_record(session, watch_id, actor='cli').watch_id} archived")
+        typer.echo(
+            f"watch {archive_watch_record(session, watch_id, actor='cli').watch_id} archived"
+        )
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
     finally:

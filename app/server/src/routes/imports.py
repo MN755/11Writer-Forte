@@ -1,3 +1,5 @@
+from typing import Annotated
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
@@ -11,7 +13,7 @@ router = APIRouter(prefix="/imports", tags=["imports"])
 
 
 @router.get("/runs", response_model=list[LocalImportRunRead])
-def list_import_runs(session: Session = Depends(get_db)) -> list[LocalImportRunORM]:
+def list_import_runs(*, session: Annotated[Session, Depends(get_db)]) -> list[LocalImportRunORM]:
     statement = (
         select(LocalImportRunORM)
         .options(selectinload(LocalImportRunORM.observations))
@@ -22,8 +24,9 @@ def list_import_runs(session: Session = Depends(get_db)) -> list[LocalImportRunO
 
 @router.post("/local", response_model=LocalImportRunRead)
 def create_local_import(
+    *,
     payload: LocalImportRequest,
-    session: Session = Depends(get_db),
+    session: Annotated[Session, Depends(get_db)],
 ) -> LocalImportRunORM:
     try:
         run = import_local_path(session, payload.source_path, payload.layer_key, payload.notes)

@@ -15,15 +15,15 @@ from src.models import (
     ScheduledTaskRunORM,
     SourceRunORM,
 )
-from src.services.clickhouse_service import build_clickhouse_diagnostics
-from src.services.camera_source_service import (
-    build_camera_source_inventory_summary,
-    build_camera_source_ops_report_index,
-)
 from src.services.camera_service import (
     build_camera_inventory_summary,
     build_camera_ops_report_index,
 )
+from src.services.camera_source_service import (
+    build_camera_source_inventory_summary,
+    build_camera_source_ops_report_index,
+)
+from src.services.clickhouse_service import build_clickhouse_diagnostics
 from src.services.discovery_service import build_discovery_ops_summary
 from src.services.scheduler_service import (
     build_scheduler_inventory_summary,

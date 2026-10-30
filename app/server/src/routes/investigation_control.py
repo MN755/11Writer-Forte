@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -35,7 +35,9 @@ class ModelAssistanceRequest(BaseModel):
 
 
 @router.get("/{investigation_id}/plan")
-def get_deterministic_plan(investigation_id: int, session: Session = Depends(get_db)) -> dict[str, object]:
+def get_deterministic_plan(
+    *, investigation_id: int, session: Annotated[Session, Depends(get_db)]
+) -> dict[str, object]:
     try:
         return build_investigation_plan(session, investigation_id)
     except ValueError as exc:
@@ -43,7 +45,9 @@ def get_deterministic_plan(investigation_id: int, session: Session = Depends(get
 
 
 @router.get("/{investigation_id}/readiness")
-def get_readiness(investigation_id: int, session: Session = Depends(get_db)) -> dict[str, object]:
+def get_readiness(
+    *, investigation_id: int, session: Annotated[Session, Depends(get_db)]
+) -> dict[str, object]:
     try:
         return assess_investigation_readiness(session, investigation_id)
     except ValueError as exc:

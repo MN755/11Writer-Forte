@@ -7,6 +7,7 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from src.errors import InputValidationError
 
 TrustLevel = Literal["trusted", "neutral", "blocked"]
 ApprovalPolicy = Literal["auto_approve_stable", "manual_review", "always_review", "auto_reject"]
@@ -138,7 +139,7 @@ def validate_discovery_crawl_policy(value: dict[str, Any]) -> dict[str, Any]:
             continue
         candidate = value[key]
         if isinstance(candidate, bool) or not isinstance(candidate, (int, float)):
-            raise ValueError(f"Discovery crawl policy {key} must be numeric.")
+            raise InputValidationError(f"Discovery crawl policy {key} must be numeric.")
         if integer_only and not isinstance(candidate, int):
             raise ValueError(f"Discovery crawl policy {key} must be an integer.")
         if candidate < minimum or candidate > maximum:
@@ -271,7 +272,7 @@ class ResearchProviderCreate(ForteModel):
         return normalized
 
     @model_validator(mode="after")
-    def require_disabled_create(self) -> "ResearchProviderCreate":
+    def require_disabled_create(self) -> ResearchProviderCreate:
         if self.enabled and not hasattr(self, "provider_id"):
             raise ValueError("Research providers must be created disabled.")
         return self
@@ -432,11 +433,16 @@ class ResearchFleetProviderRunCreate(ForteModel):
     output_json: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
-    def require_one_provider_id(self) -> "ResearchFleetProviderRunCreate":
+    def require_one_provider_id(self) -> ResearchFleetProviderRunCreate:
         if self.provider_id is None and self.research_provider_id is None:
             raise ValueError("provider_id is required.")
-        if self.provider_id is not None and self.research_provider_id not in {None, self.provider_id}:
-            raise ValueError("provider_id and research_provider_id must match when both are supplied.")
+        if self.provider_id is not None and self.research_provider_id not in {
+            None,
+            self.provider_id,
+        }:
+            raise ValueError(
+                "provider_id and research_provider_id must match when both are supplied."
+            )
         if self.provider_id is None:
             self.provider_id = self.research_provider_id
         return self
@@ -635,61 +641,69 @@ class RuntimeSnapshotRead(ForteModel):
     database_backend: str
     spatial_backend: str
     row_counts: list[DatabaseTableCountRead]
-    data_layers: list["DataLayerRead"]
-    source_trust_profiles: list["SourceTrustProfileRead"]
-    discovery_domain_policies: list["DiscoveryDomainPolicyRead"] = Field(default_factory=list)
-    discovery_campaigns: list["DiscoveryCampaignRead"] = Field(default_factory=list)
-    discovery_runs: list["DiscoveryRunRead"] = Field(default_factory=list)
-    source_candidates: list["SourceCandidateRead"] = Field(default_factory=list)
-    discovery_frontier_entries: list["DiscoveryFrontierEntryRead"] = Field(default_factory=list)
-    source_candidate_revisions: list["SourceCandidateRevisionRead"] = Field(default_factory=list)
-    discovery_graph_edges: list["DiscoveryGraphEdgeRead"] = Field(default_factory=list)
-    candidate_health_checks: list["CandidateHealthCheckRead"] = Field(default_factory=list)
-    candidate_suppressions: list["CandidateSuppressionRead"] = Field(default_factory=list)
-    candidate_promotion_decisions: list["CandidatePromotionDecisionRead"] = Field(
+    data_layers: list[DataLayerRead]
+    source_trust_profiles: list[SourceTrustProfileRead]
+    discovery_domain_policies: list[DiscoveryDomainPolicyRead] = Field(default_factory=list)
+    discovery_campaigns: list[DiscoveryCampaignRead] = Field(default_factory=list)
+    discovery_runs: list[DiscoveryRunRead] = Field(default_factory=list)
+    source_candidates: list[SourceCandidateRead] = Field(default_factory=list)
+    discovery_frontier_entries: list[DiscoveryFrontierEntryRead] = Field(default_factory=list)
+    source_candidate_revisions: list[SourceCandidateRevisionRead] = Field(default_factory=list)
+    discovery_graph_edges: list[DiscoveryGraphEdgeRead] = Field(default_factory=list)
+    candidate_health_checks: list[CandidateHealthCheckRead] = Field(default_factory=list)
+    candidate_suppressions: list[CandidateSuppressionRead] = Field(default_factory=list)
+    candidate_promotion_decisions: list[CandidatePromotionDecisionRead] = Field(
         default_factory=list
     )
-    robots_observations: list["RobotsObservationRead"] = Field(default_factory=list)
-    discovery_artifacts: list["DiscoveryArtifactRead"] = Field(default_factory=list)
-    research_providers: list["ResearchProviderRead"] = Field(default_factory=list)
-    research_provider_runs: list["ResearchFleetProviderRunRead"] = Field(default_factory=list)
-    geofences: list["GeofenceRead"]
-    source_definitions: list["SourceDefinitionRead"]
-    local_import_runs: list["LocalImportRunSummaryRead"]
-    events: list["EventRead"]
-    entities: list["EntityRead"]
-    entity_candidates: list["EntityCandidateRead"] = Field(default_factory=list)
-    entity_aliases: list["EntityAliasRead"] = Field(default_factory=list)
-    entity_relationship_types: list["EntityRelationshipTypeRead"] = Field(default_factory=list)
-    entity_citations: list["EntityCitationRead"] = Field(default_factory=list)
-    entity_identity_assertions: list["EntityIdentityAssertionRead"] = Field(default_factory=list)
-    entity_relationship_assertions: list["EntityRelationshipAssertionRead"] = Field(default_factory=list)
-    entity_candidate_citation_links: list["EntityCandidateCitationLinkRead"] = Field(default_factory=list)
-    entity_alias_citation_links: list["EntityAliasCitationLinkRead"] = Field(default_factory=list)
-    entity_identity_assertion_citation_links: list["EntityIdentityAssertionCitationLinkRead"] = Field(default_factory=list)
-    entity_relationship_assertion_citation_links: list["EntityRelationshipAssertionCitationLinkRead"] = Field(default_factory=list)
-    observations: list["ObservationRead"]
-    camera_inventory: list["CameraInventoryRead"]
-    camera_source_inventory: list["CameraSourceInventoryRead"]
-    storage_objects: list["StorageObjectRead"]
-    investigations: list["InvestigationRead"] = Field(default_factory=list)
-    investigation_discovery_attempts: list["InvestigationDiscoveryAttemptRead"] = Field(
+    robots_observations: list[RobotsObservationRead] = Field(default_factory=list)
+    discovery_artifacts: list[DiscoveryArtifactRead] = Field(default_factory=list)
+    research_providers: list[ResearchProviderRead] = Field(default_factory=list)
+    research_provider_runs: list[ResearchFleetProviderRunRead] = Field(default_factory=list)
+    geofences: list[GeofenceRead]
+    source_definitions: list[SourceDefinitionRead]
+    local_import_runs: list[LocalImportRunSummaryRead]
+    events: list[EventRead]
+    entities: list[EntityRead]
+    entity_candidates: list[EntityCandidateRead] = Field(default_factory=list)
+    entity_aliases: list[EntityAliasRead] = Field(default_factory=list)
+    entity_relationship_types: list[EntityRelationshipTypeRead] = Field(default_factory=list)
+    entity_citations: list[EntityCitationRead] = Field(default_factory=list)
+    entity_identity_assertions: list[EntityIdentityAssertionRead] = Field(default_factory=list)
+    entity_relationship_assertions: list[EntityRelationshipAssertionRead] = Field(
         default_factory=list
     )
-    investigation_report_versions: list["InvestigationReportVersionRead"] = Field(
+    entity_candidate_citation_links: list[EntityCandidateCitationLinkRead] = Field(
         default_factory=list
     )
-    investigation_evidence_promotions: list["InvestigationEvidencePromotionRead"] = Field(
+    entity_alias_citation_links: list[EntityAliasCitationLinkRead] = Field(default_factory=list)
+    entity_identity_assertion_citation_links: list[EntityIdentityAssertionCitationLinkRead] = Field(
         default_factory=list
     )
-    event_observation_links: list["EventObservationLinkRead"]
-    entity_observation_links: list["EntityObservationLinkRead"]
-    alerts: list["AlertRead"]
-    scheduled_tasks: list["ScheduledTaskRead"]
-    scheduled_task_runs: list["ScheduledTaskRunRead"]
-    source_runs: list["SourceRunRead"]
-    situation_products: list["SituationProductRead"]
-    custody_logs: list["CustodyLogRead"]
+    entity_relationship_assertion_citation_links: list[
+        EntityRelationshipAssertionCitationLinkRead
+    ] = Field(default_factory=list)
+    observations: list[ObservationRead]
+    camera_inventory: list[CameraInventoryRead]
+    camera_source_inventory: list[CameraSourceInventoryRead]
+    storage_objects: list[StorageObjectRead]
+    investigations: list[InvestigationRead] = Field(default_factory=list)
+    investigation_discovery_attempts: list[InvestigationDiscoveryAttemptRead] = Field(
+        default_factory=list
+    )
+    investigation_report_versions: list[InvestigationReportVersionRead] = Field(
+        default_factory=list
+    )
+    investigation_evidence_promotions: list[InvestigationEvidencePromotionRead] = Field(
+        default_factory=list
+    )
+    event_observation_links: list[EventObservationLinkRead]
+    entity_observation_links: list[EntityObservationLinkRead]
+    alerts: list[AlertRead]
+    scheduled_tasks: list[ScheduledTaskRead]
+    scheduled_task_runs: list[ScheduledTaskRunRead]
+    source_runs: list[SourceRunRead]
+    situation_products: list[SituationProductRead]
+    custody_logs: list[CustodyLogRead]
 
     @model_validator(mode="before")
     @classmethod
@@ -715,7 +729,9 @@ class RuntimeSnapshotRead(ForteModel):
                 )
             rows = value.get(section_name, [])
             if not isinstance(rows, list):
-                raise ValueError(f"Runtime snapshot section '{section_name}' must be a list.")
+                raise InputValidationError(
+                    f"Runtime snapshot section '{section_name}' must be a list."
+                )
             if section_name in row_counts and len(rows) != row_counts[section_name]:
                 raise ValueError(
                     f"Runtime snapshot section '{section_name}' contains {len(rows)} rows; "
@@ -727,7 +743,7 @@ class RuntimeSnapshotRead(ForteModel):
             expected_fields = set(schema_cls.model_fields)
             for row_index, row in enumerate(rows):
                 if not isinstance(row, dict):
-                    raise ValueError(
+                    raise InputValidationError(
                         f"Runtime snapshot section '{section_name}' row {row_index} must be an object."
                     )
                 actual_fields = set(row)
@@ -809,8 +825,12 @@ class GraphTemporalFields(ForteModel):
     observed_to: datetime | None = None
 
     @model_validator(mode="after")
-    def validate_temporal_ranges(self) -> "GraphTemporalFields":
-        if self.valid_from is not None and self.valid_to is not None and self.valid_to < self.valid_from:
+    def validate_temporal_ranges(self) -> GraphTemporalFields:
+        if (
+            self.valid_from is not None
+            and self.valid_to is not None
+            and self.valid_to < self.valid_from
+        ):
             raise ValueError("valid_to must not precede valid_from")
         if (
             self.observed_from is not None
@@ -840,10 +860,14 @@ class EntityCitationCreate(ForteModel):
     metadata_json: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
-    def require_durable_evidence_reference(self) -> "EntityCitationCreate":
+    def require_durable_evidence_reference(self) -> EntityCitationCreate:
         if self.storage_object_id is None and self.observation_id is None:
             raise ValueError("A citation requires a storage_object_id or observation_id.")
-        if self.span_start is not None and self.span_end is not None and self.span_end < self.span_start:
+        if (
+            self.span_start is not None
+            and self.span_end is not None
+            and self.span_end < self.span_start
+        ):
             raise ValueError("span_end must not precede span_start")
         return self
 
@@ -863,8 +887,12 @@ class EntityCitationUpdate(ForteModel):
     metadata_json: dict[str, Any] | None = None
 
     @model_validator(mode="after")
-    def validate_span(self) -> "EntityCitationUpdate":
-        if self.span_start is not None and self.span_end is not None and self.span_end < self.span_start:
+    def validate_span(self) -> EntityCitationUpdate:
+        if (
+            self.span_start is not None
+            and self.span_end is not None
+            and self.span_end < self.span_start
+        ):
             raise ValueError("span_end must not precede span_start")
         return self
 
@@ -1058,9 +1086,11 @@ class EntityRelationshipAssertionCreate(GraphTemporalFields):
     citation_ids: list[int] = Field(min_length=1)
 
     @model_validator(mode="after")
-    def require_distinct_endpoints(self) -> "EntityRelationshipAssertionCreate":
+    def require_distinct_endpoints(self) -> EntityRelationshipAssertionCreate:
         if self.subject_entity_id == self.object_entity_id:
-            raise ValueError("A relationship assertion requires distinct subject and object entities.")
+            raise ValueError(
+                "A relationship assertion requires distinct subject and object entities."
+            )
         return self
 
 
@@ -1277,8 +1307,8 @@ class CameraInventoryOpsDetailRead(ForteModel):
     camera: CameraInventoryRead
     latest_observation: ObservationRead | None
     latest_import_run: LocalImportRunSummaryRead | None
-    custody_logs: list["CustodyLogRead"]
-    refresh_tasks: list["ScheduledTaskRead"]
+    custody_logs: list[CustodyLogRead]
+    refresh_tasks: list[ScheduledTaskRead]
 
 
 class CameraSourceInventoryRead(ForteModel):
@@ -1345,7 +1375,7 @@ class CameraSourceOpsDetailRead(ForteModel):
     source: CameraSourceInventoryRead
     camera: CameraInventoryRead | None
     latest_observation: ObservationRead | None
-    custody_logs: list["CustodyLogRead"]
+    custody_logs: list[CustodyLogRead]
 
 
 class CameraSourceOpsReportIndexRead(ForteModel):
@@ -1356,9 +1386,9 @@ class CameraSourceOpsReportIndexRead(ForteModel):
     refresh_task_count: int
     refresh_run_count: int
     refresh_failure_count: int
-    refresh_tasks: list["ScheduledTaskRead"]
-    recent_refresh_runs: list["CameraRefreshTaskRunRead"]
-    recent_materializations: list["CustodyLogRead"]
+    refresh_tasks: list[ScheduledTaskRead]
+    recent_refresh_runs: list[CameraRefreshTaskRunRead]
+    recent_materializations: list[CustodyLogRead]
     stale_sources: list[CameraSourceInventoryRead]
 
 
@@ -1511,7 +1541,7 @@ class SourceOpsDetailRead(ForteModel):
     source: SourceDefinitionRead
     recent_runs: list[SourceRunRead]
     storage_objects: list[StorageObjectRead]
-    custody_logs: list["CustodyLogRead"]
+    custody_logs: list[CustodyLogRead]
 
 
 class SourceOpsStatusRead(ForteModel):
@@ -1558,7 +1588,7 @@ class SourceOpsReportIndexRead(ForteModel):
     sync_task_count: int
     sync_run_count: int
     sync_failure_count: int
-    sync_tasks: list["ScheduledTaskRead"]
+    sync_tasks: list[ScheduledTaskRead]
     recent_runs: list[SourceRunRead]
     stale_sources: list[SourceOpsStatusRead]
     failing_sources: list[SourceOpsStatusRead]
@@ -1965,7 +1995,7 @@ class NotificationPolicy(StrictForteModel):
     analysis_on_change: bool = False
 
     @model_validator(mode="after")
-    def require_api_for_rss(self) -> "NotificationPolicy":
+    def require_api_for_rss(self) -> NotificationPolicy:
         if self.rss_enabled and not self.api_enabled:
             raise ValueError(
                 "rss_enabled requires api_enabled because RSS is backed by local alerts"
@@ -2007,7 +2037,7 @@ class DomainPolicySnapshot(StrictForteModel):
         return normalized
 
     @model_validator(mode="after")
-    def prevent_conflicting_domains(self) -> "DomainPolicySnapshot":
+    def prevent_conflicting_domains(self) -> DomainPolicySnapshot:
         overlap = set(self.allowed_domains) & set(self.blocked_domains)
         if overlap:
             raise ValueError(f"domains cannot be both allowed and blocked: {sorted(overlap)}")
@@ -2020,7 +2050,7 @@ class InvestigationTimeContext(StrictForteModel):
     relative_description: str | None = Field(default=None, max_length=240)
 
     @model_validator(mode="after")
-    def validate_range(self) -> "InvestigationTimeContext":
+    def validate_range(self) -> InvestigationTimeContext:
         if self.start_at and self.end_at and self.end_at < self.start_at:
             raise ValueError("time context end_at must not be before start_at")
         return self
@@ -2090,7 +2120,7 @@ class InvestigationWatchRule(StrictForteModel):
         return sorted(set(value))
 
     @model_validator(mode="after")
-    def validate_materiality_and_scope(self) -> "InvestigationWatchRule":
+    def validate_materiality_and_scope(self) -> InvestigationWatchRule:
         if self.materiality_threshold < self.relevance_threshold:
             raise ValueError("materiality_threshold must be at least relevance_threshold")
         if not (self.target_concepts or self.target_entities or self.target_locations):
@@ -2276,7 +2306,7 @@ class WatchCreate(StrictForteModel):
     provenance_json: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
-    def validate_rule_mode(self) -> "WatchCreate":
+    def validate_rule_mode(self) -> WatchCreate:
         ensure_watch_rule_matches_type(self.watch_type, self.rule_json)
         return self
 
@@ -2309,7 +2339,7 @@ class WatchUpdate(StrictForteModel):
     provenance_json: dict[str, Any] | None = None
 
     @model_validator(mode="after")
-    def validate_rule_mode(self) -> "WatchUpdate":
+    def validate_rule_mode(self) -> WatchUpdate:
         if self.watch_type is not None and self.rule_json is not None:
             ensure_watch_rule_matches_type(self.watch_type, self.rule_json)
         return self
@@ -2470,7 +2500,7 @@ class OperationsReportRead(ForteModel):
     camera_report_index: CameraOpsReportIndexRead
     camera_source_inventory_summary: CameraSourceSummaryRead
     camera_source_report_index: CameraSourceOpsReportIndexRead
-    discovery_ops_summary: "DiscoveryOpsSummaryRead | None" = None
+    discovery_ops_summary: DiscoveryOpsSummaryRead | None = None
     import_runs: list[LocalImportRunSummaryRead]
     source_runs: list[SourceRunRead]
     scheduled_task_runs: list[ScheduledTaskRunRead]
@@ -2540,7 +2570,7 @@ class DiscoveryCampaignCreate(ForteModel):
         if nested is None:
             return value
         if not isinstance(nested, dict):
-            raise ValueError("Discovery request crawl_policy must be a JSON object.")
+            raise InputValidationError("Discovery request crawl_policy must be a JSON object.")
         validate_discovery_crawl_policy(nested)
         return value
 
@@ -2597,7 +2627,7 @@ class DiscoveryCampaignUpdate(ForteModel):
         if nested is None:
             return value
         if not isinstance(nested, dict):
-            raise ValueError("Discovery request crawl_policy must be a JSON object.")
+            raise InputValidationError("Discovery request crawl_policy must be a JSON object.")
         validate_discovery_crawl_policy(nested)
         return value
 

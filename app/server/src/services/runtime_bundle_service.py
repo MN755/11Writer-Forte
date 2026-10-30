@@ -13,6 +13,7 @@ from pydantic import TypeAdapter
 from sqlalchemy.orm import Session
 
 from src.config import get_settings
+from src.errors import InputValidationError
 from src.models import CustodyLogORM
 from src.schemas import RuntimeSnapshotRead
 from src.services.runtime_snapshot_service import build_runtime_snapshot, restore_runtime_snapshot
@@ -241,7 +242,7 @@ def build_runtime_bundle_manifest(
 def parse_runtime_bundle_manifest(payload: bytes) -> dict[str, Any]:
     manifest = json.loads(payload.decode("utf-8"))
     if not isinstance(manifest, dict):
-        raise ValueError("Runtime bundle manifest must be an object.")
+        raise InputValidationError("Runtime bundle manifest must be an object.")
     if int(manifest.get("bundle_format_version", 0)) != BUNDLE_FORMAT_VERSION:
         raise ValueError("Unsupported runtime bundle format version.")
     bundle_exported_at = str(manifest.get("bundle_exported_at", "")).strip()
@@ -252,11 +253,11 @@ def parse_runtime_bundle_manifest(payload: bytes) -> dict[str, Any]:
         raise ValueError("Runtime bundle manifest is missing bundle_actor.")
     data_dir_files = manifest.get("data_dir_files", [])
     if not isinstance(data_dir_files, list):
-        raise ValueError("Runtime bundle manifest data_dir_files must be a list.")
+        raise InputValidationError("Runtime bundle manifest data_dir_files must be a list.")
     normalized_files = []
     for entry in data_dir_files:
         if not isinstance(entry, dict):
-            raise ValueError("Runtime bundle manifest entries must be objects.")
+            raise InputValidationError("Runtime bundle manifest entries must be objects.")
         relative_path = normalize_bundle_relative_path(entry.get("relative_path"))
         byte_size = int(entry.get("byte_size", 0))
         sha256 = str(entry.get("sha256", "")).strip().lower()

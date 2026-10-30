@@ -9,8 +9,8 @@ from sqlalchemy.orm import Session
 
 from src.models import (
     CustodyLogORM,
-    EventORM,
     EventObservationLinkORM,
+    EventORM,
     ObservationORM,
     SituationProductORM,
 )

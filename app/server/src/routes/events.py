@@ -1,9 +1,11 @@
+from typing import Annotated
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from src.db import get_db
-from src.models import EventORM, EventObservationLinkORM, SituationProductORM
+from src.models import EventObservationLinkORM, EventORM, SituationProductORM
 from src.schemas import (
     DataLayerCreate,
     DataLayerRead,
@@ -30,12 +32,12 @@ layer_router = APIRouter(prefix="/layers", tags=["layers"])
 
 
 @router.get("", response_model=list[EventRead])
-def get_events(session: Session = Depends(get_db)) -> list[EventORM]:
+def get_events(*, session: Annotated[Session, Depends(get_db)]) -> list[EventORM]:
     return list_events(session)
 
 
 @router.post("", response_model=EventRead)
-def post_event(payload: EventCreate, session: Session = Depends(get_db)) -> EventORM:
+def post_event(*, payload: EventCreate, session: Annotated[Session, Depends(get_db)]) -> EventORM:
     try:
         return create_event(session, payload, actor="api_event")
     except ValueError as exc:
@@ -44,7 +46,7 @@ def post_event(payload: EventCreate, session: Session = Depends(get_db)) -> Even
 
 @router.post("/fuse", response_model=EventFusionResponse)
 def fuse_events(
-    payload: EventFusionRequest, session: Session = Depends(get_db)
+    *, payload: EventFusionRequest, session: Annotated[Session, Depends(get_db)]
 ) -> EventFusionResponse:
     results = materialize_fused_events(session, payload)
     return EventFusionResponse(
@@ -65,7 +67,7 @@ def fuse_events(
 
 @router.get("/{event_id}/observations", response_model=list[EventObservationLinkRead])
 def list_event_observations(
-    event_id: int, session: Session = Depends(get_db)
+    *, event_id: int, session: Annotated[Session, Depends(get_db)]
 ) -> list[EventObservationLinkORM]:
     event = session.get(EventORM, event_id)
     if event is None:
@@ -78,9 +80,10 @@ def list_event_observations(
 
 @router.get("/{event_id}/products", response_model=list[SituationProductRead])
 def list_event_products(
+    *,
     event_id: int,
     max_redaction_level: str | None = None,
-    session: Session = Depends(get_db),
+    session: Annotated[Session, Depends(get_db)],
 ) -> list[SituationProductORM]:
     event = session.get(EventORM, event_id)
     if event is None:
@@ -98,9 +101,10 @@ def list_event_products(
 
 @router.get("/{event_id}/export", response_model=EventExportBundleRead)
 def export_event_bundle(
+    *,
     event_id: int,
     max_redaction_level: str | None = None,
-    session: Session = Depends(get_db),
+    session: Annotated[Session, Depends(get_db)],
 ) -> dict[str, object]:
     try:
         return build_event_export_bundle(session, event_id, max_redaction_level=max_redaction_level)
@@ -111,12 +115,14 @@ def export_event_bundle(
 
 
 @layer_router.get("", response_model=list[DataLayerRead])
-def list_layers(session: Session = Depends(get_db)) -> list[object]:
+def list_layers(*, session: Annotated[Session, Depends(get_db)]) -> list[object]:
     return list_data_layers(session)
 
 
 @layer_router.post("", response_model=DataLayerRead)
-def create_layer(payload: DataLayerCreate, session: Session = Depends(get_db)) -> object:
+def create_layer(
+    *, payload: DataLayerCreate, session: Annotated[Session, Depends(get_db)]
+) -> object:
     try:
         return create_data_layer(session, payload, actor="api")
     except ValueError as exc:

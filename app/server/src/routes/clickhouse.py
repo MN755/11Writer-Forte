@@ -1,3 +1,5 @@
+from typing import Annotated
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
@@ -28,7 +30,7 @@ def clickhouse_status() -> dict[str, object]:
 
 
 @router.post("/provision", response_model=ClickHouseProvisionResultRead)
-def provision_clickhouse(session: Session = Depends(get_db)) -> dict[str, object]:
+def provision_clickhouse(*, session: Annotated[Session, Depends(get_db)]) -> dict[str, object]:
     try:
         return provision_clickhouse_backend(session, actor="api_clickhouse")
     except ValueError as exc:
@@ -39,10 +41,11 @@ def provision_clickhouse(session: Session = Depends(get_db)) -> dict[str, object
 
 @router.post("/sync", response_model=ClickHouseSyncResultRead)
 def sync_clickhouse(
+    *,
     layer_key: str | None = None,
     source_domain: str | None = None,
     limit: int = Query(default=1000, ge=1, le=20000),
-    session: Session = Depends(get_db),
+    session: Annotated[Session, Depends(get_db)],
 ) -> dict[str, object]:
     try:
         return sync_runtime_to_clickhouse(
@@ -60,10 +63,11 @@ def sync_clickhouse(
 
 @router.post("/archive", response_model=ClickHouseArchiveResultRead)
 def archive_clickhouse(
+    *,
     layer_key: str | None = None,
     source_domain: str | None = None,
     limit: int | None = Query(default=None, ge=1, le=500000),
-    session: Session = Depends(get_db),
+    session: Annotated[Session, Depends(get_db)],
 ) -> dict[str, object]:
     try:
         return archive_clickhouse_observations_to_r2(
@@ -89,8 +93,9 @@ def clickhouse_r2_config() -> dict[str, object]:
 
 @router.post("/rehydrate", response_model=ClickHouseRehydrateResultRead)
 def rehydrate_clickhouse(
+    *,
     archive_glob_url: str = Query(min_length=1),
-    session: Session = Depends(get_db),
+    session: Annotated[Session, Depends(get_db)],
 ) -> dict[str, object]:
     try:
         return rehydrate_clickhouse_observations_from_r2(

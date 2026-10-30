@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -31,23 +31,26 @@ from src.services.research_provider_service import (
     execute_provider_run,
     heartbeat_provider_run,
     list_provider_runs,
-    list_providers as list_configured_providers,
     update_provider,
 )
-
+from src.services.research_provider_service import (
+    list_providers as list_configured_providers,
+)
 
 router = APIRouter(prefix="/research-fleet", tags=["research-fleet"])
 
 
 @router.get("/configured-providers", response_model=list[ResearchFleetProviderRead])
 def configured_providers(
-    limit: int = Query(default=500, ge=1, le=5000), session: Session = Depends(get_db)
+    *, limit: int = Query(default=500, ge=1, le=5000), session: Annotated[Session, Depends(get_db)]
 ) -> list[object]:
     return list_configured_providers(session, limit=limit)
 
 
 @router.post("/configured-providers", response_model=ResearchFleetProviderRead)
-def configure_provider(payload: ResearchFleetProviderCreate, session: Session = Depends(get_db)) -> object:
+def configure_provider(
+    *, payload: ResearchFleetProviderCreate, session: Annotated[Session, Depends(get_db)]
+) -> object:
     try:
         return create_provider(session, payload)
     except ValueError as exc:
@@ -55,7 +58,9 @@ def configure_provider(payload: ResearchFleetProviderCreate, session: Session = 
 
 
 @router.post("/configured-providers/bootstrap-official")
-def bootstrap_official_providers(session: Session = Depends(get_db)) -> dict[str, object]:
+def bootstrap_official_providers(
+    *, session: Annotated[Session, Depends(get_db)]
+) -> dict[str, object]:
     """Add only reviewed official APIs that do not require a secret or login."""
 
     result = bootstrap_official_public_providers(session)
@@ -68,7 +73,10 @@ def bootstrap_official_providers(session: Session = Depends(get_db)) -> dict[str
 
 @router.patch("/configured-providers/{provider_id}", response_model=ResearchFleetProviderRead)
 def patch_provider(
-    provider_id: int, payload: ResearchFleetProviderUpdate, session: Session = Depends(get_db)
+    *,
+    provider_id: int,
+    payload: ResearchFleetProviderUpdate,
+    session: Annotated[Session, Depends(get_db)],
 ) -> object:
     try:
         return update_provider(session, provider_id, payload)
@@ -78,15 +86,18 @@ def patch_provider(
 
 @router.get("/runs", response_model=list[ResearchFleetProviderRunRead])
 def durable_runs(
+    *,
     provider_id: int | None = None,
     limit: int = Query(default=500, ge=1, le=5000),
-    session: Session = Depends(get_db),
+    session: Annotated[Session, Depends(get_db)],
 ) -> list[object]:
     return list_provider_runs(session, provider_id=provider_id, limit=limit)
 
 
 @router.post("/runs", response_model=ResearchFleetProviderRunRead)
-def queue_durable_run(payload: ResearchFleetProviderRunCreate, session: Session = Depends(get_db)) -> object:
+def queue_durable_run(
+    *, payload: ResearchFleetProviderRunCreate, session: Annotated[Session, Depends(get_db)]
+) -> object:
     try:
         return enqueue_provider_run(session, payload)
     except ValueError as exc:
@@ -94,7 +105,9 @@ def queue_durable_run(payload: ResearchFleetProviderRunCreate, session: Session 
 
 
 @router.post("/runs/claim", response_model=ResearchFleetProviderRunRead | None)
-def claim_durable_run(payload: dict[str, Any] = Body(...), session: Session = Depends(get_db)) -> object:
+def claim_durable_run(
+    *, payload: Annotated[dict[str, Any], Body()], session: Annotated[Session, Depends(get_db)]
+) -> object:
     worker_id = _optional_string(payload.get("worker_id"))
     if not worker_id:
         raise HTTPException(status_code=422, detail="worker_id is required.")
@@ -105,14 +118,20 @@ def claim_durable_run(payload: dict[str, Any] = Body(...), session: Session = De
 
 @router.post("/runs/{run_id}/heartbeat", response_model=ResearchFleetProviderRunRead)
 def heartbeat_durable_run(
-    run_id: int, payload: dict[str, Any] = Body(...), session: Session = Depends(get_db)
+    *,
+    run_id: int,
+    payload: Annotated[dict[str, Any], Body()],
+    session: Annotated[Session, Depends(get_db)],
 ) -> object:
     worker_id = _optional_string(payload.get("worker_id"))
     if not worker_id:
         raise HTTPException(status_code=422, detail="worker_id is required.")
     try:
         return heartbeat_provider_run(
-            session, run_id, worker_id=worker_id, lease_seconds=int(payload.get("lease_seconds", 60))
+            session,
+            run_id,
+            worker_id=worker_id,
+            lease_seconds=int(payload.get("lease_seconds", 60)),
         )
     except ValueError as exc:
         raise _fleet_error(exc) from exc
@@ -120,7 +139,10 @@ def heartbeat_durable_run(
 
 @router.post("/runs/{run_id}/execute", response_model=ResearchFleetProviderRunRead)
 def execute_durable_run(
-    run_id: int, payload: dict[str, Any] = Body(...), session: Session = Depends(get_db)
+    *,
+    run_id: int,
+    payload: Annotated[dict[str, Any], Body()],
+    session: Annotated[Session, Depends(get_db)],
 ) -> object:
     worker_id = _optional_string(payload.get("worker_id"))
     if not worker_id:
@@ -132,7 +154,7 @@ def execute_durable_run(
 
 
 @router.post("/runs/{run_id}/cancel", response_model=ResearchFleetProviderRunRead)
-def cancel_durable_run(run_id: int, session: Session = Depends(get_db)) -> object:
+def cancel_durable_run(*, run_id: int, session: Annotated[Session, Depends(get_db)]) -> object:
     try:
         return cancel_provider_run(session, run_id)
     except ValueError as exc:
@@ -147,7 +169,7 @@ def list_providers() -> list[dict[str, object]]:
 
 
 @router.post("/plan")
-def create_plan(payload: dict[str, Any] = Body(...)) -> dict[str, object]:
+def create_plan(*, payload: Annotated[dict[str, Any], Body()]) -> dict[str, object]:
     try:
         question = str(payload.get("question", ""))
         aliases = _string_list(payload.get("aliases"))
@@ -160,22 +182,25 @@ def create_plan(payload: dict[str, Any] = Body(...)) -> dict[str, object]:
             place=_optional_string(payload.get("place")),
             date_range=_optional_string(payload.get("date_range")),
             source_kinds=source_kinds,
-            evidence_requirement=_optional_string(payload.get("evidence_requirement")) or "citation_required",
+            evidence_requirement=_optional_string(payload.get("evidence_requirement"))
+            or "citation_required",
         ).to_dict()
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.post("/candidates/deduplicate")
-def deduplicate_candidates(payload: dict[str, Any] = Body(...)) -> dict[str, object]:
+def deduplicate_candidates(*, payload: Annotated[dict[str, Any], Body()]) -> dict[str, object]:
     urls = _string_list(payload.get("urls"))
     return {"candidates": deduplicate_candidate_urls(urls), "input_count": len(urls)}
 
 
 @router.post("/static-collection/admit")
-def admit_static_collection(payload: dict[str, Any] = Body(...)) -> dict[str, object]:
+def admit_static_collection(*, payload: Annotated[dict[str, Any], Body()]) -> dict[str, object]:
     provider_id = _optional_string(payload.get("provider_id"))
-    provider = next((item for item in DEFAULT_PUBLIC_PROVIDER_REGISTRY if item.provider_id == provider_id), None)
+    provider = next(
+        (item for item in DEFAULT_PUBLIC_PROVIDER_REGISTRY if item.provider_id == provider_id), None
+    )
     if provider is None:
         raise HTTPException(status_code=404, detail="Configured provider does not exist.")
     try:
@@ -185,7 +210,9 @@ def admit_static_collection(payload: dict[str, Any] = Body(...)) -> dict[str, ob
 
 
 @router.post("/health")
-def research_fleet_health(payload: dict[str, Any] = Body(default_factory=dict)) -> dict[str, object]:
+def research_fleet_health(
+    *, payload: Annotated[dict[str, Any], Body(default_factory=dict)]
+) -> dict[str, object]:
     ledger = payload.get("coverage_ledger")
     if ledger is not None and not isinstance(ledger, dict):
         raise HTTPException(status_code=422, detail="coverage_ledger must be an object.")

@@ -7,10 +7,9 @@ from hashlib import sha1
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from src.models import CustodyLogORM, EntityORM, EntityObservationLinkORM, ObservationORM
+from src.models import CustodyLogORM, EntityObservationLinkORM, EntityORM, ObservationORM
 from src.schemas import EntityResolutionRequest
 from src.services.observation_service import query_observations
-
 
 EMAIL_RE = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE)
 PHONE_RE = re.compile(r"\+?\d[\d\-\s().]{6,}\d")
@@ -338,7 +337,7 @@ def choose_canonical_name(component: dict[str, object]) -> str:
 def build_entity_slug(component: dict[str, object]) -> str:
     entity_type = component["entity_type"]
     signals: list[EntitySignal] = component["signals"]
-    primary_signal = sorted(
+    primary_signal = min(
         signals,
         key=lambda signal: (
             PRIMARY_SIGNAL_PRIORITY.index(signal.signal_key)
@@ -346,7 +345,7 @@ def build_entity_slug(component: dict[str, object]) -> str:
             else len(PRIMARY_SIGNAL_PRIORITY),
             signal.normalized_value,
         ),
-    )[0]
+    )
     basis = f"{entity_type}:{primary_signal.signal_key}:{primary_signal.normalized_value}"
     return f"entity-{sha1(basis.encode('utf-8')).hexdigest()[:12]}"
 

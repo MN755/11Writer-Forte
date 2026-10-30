@@ -8,7 +8,6 @@ from fastapi import Request
 
 from src.config import OperatorScope, Settings
 
-
 RequiredScope = Literal["read", "operate", "admin"]
 _SCOPE_RANK: dict[RequiredScope, int] = {"read": 1, "operate": 2, "admin": 3}
 _ADMIN_PATHS = {

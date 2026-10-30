@@ -6,7 +6,6 @@ from sqlalchemy import and_, func
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
-
 SRID = 4326
 
 

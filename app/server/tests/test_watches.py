@@ -1,5 +1,5 @@
-from fastapi.testclient import TestClient
 import pytest
+from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from src.db import get_session_factory
@@ -14,8 +14,8 @@ from src.services.watch_service import (
     archive_watch,
     attach_watch_schedule,
     compile_investigation_watch_instruction,
-    create_watch,
     create_investigation_watch_candidate,
+    create_watch,
     evaluate_watch,
     generate_watch_report,
     list_watch_rule_versions,

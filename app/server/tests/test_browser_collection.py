@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import socket
 import subprocess
+from pathlib import Path
 
 import pytest
 from fastapi import FastAPI
@@ -17,7 +17,10 @@ from src.services.browser_collection_service import (
     browser_collection_status,
     collect_browser_capture,
 )
-from src.services.research_fleet_service import DEFAULT_PUBLIC_PROVIDER_REGISTRY, admit_static_collection_url
+from src.services.research_fleet_service import (
+    DEFAULT_PUBLIC_PROVIDER_REGISTRY,
+    admit_static_collection_url,
+)
 
 
 def _resolver(ip: str):
@@ -95,7 +98,9 @@ def test_capture_rejects_missing_screenshot_and_no_command_fallback(tmp_path: Pa
             command_runner=incomplete,
         )
     with pytest.raises(BrowserCollectionUnavailable):
-        collect_browser_capture(admission=_admission(), data_dir=tmp_path, policy=BrowserCollectionPolicy())
+        collect_browser_capture(
+            admission=_admission(), data_dir=tmp_path, policy=BrowserCollectionPolicy()
+        )
 
 
 def test_route_exposes_fail_closed_health_without_a_worker(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -1,51 +1,57 @@
-from datetime import datetime
 import tempfile
+from datetime import datetime
 from pathlib import Path
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from src.db import get_db
-from src.schemas import DatabaseDiagnosticsRead
-from src.schemas import OperationsReportRead
-from src.schemas import RuntimeBundleRestoreResultRead
-from src.schemas import RuntimeRestoreResultRead
-from src.schemas import RuntimeSnapshotRead
-from src.services.runtime_bundle_service import default_runtime_bundle_output_path
-from src.services.runtime_bundle_service import export_runtime_bundle
-from src.services.runtime_bundle_service import restore_runtime_bundle
+from src.schemas import (
+    DatabaseDiagnosticsRead,
+    OperationsReportRead,
+    RuntimeBundleRestoreResultRead,
+    RuntimeRestoreResultRead,
+    RuntimeSnapshotRead,
+)
 from src.services.database_diagnostics_service import build_database_diagnostics
 from src.services.operations_report_service import build_operations_report
-from src.services.runtime_snapshot_service import build_runtime_snapshot
-from src.services.runtime_snapshot_service import restore_runtime_snapshot
+from src.services.runtime_bundle_service import (
+    default_runtime_bundle_output_path,
+    export_runtime_bundle,
+    restore_runtime_bundle,
+)
+from src.services.runtime_snapshot_service import build_runtime_snapshot, restore_runtime_snapshot
 
 router = APIRouter(prefix="/operations", tags=["operations"])
 
 
 @router.get("/report", response_model=OperationsReportRead)
 def operations_report(
+    *,
     since: datetime | None = None,
     until: datetime | None = None,
     limit: int = Query(default=25, ge=1, le=200),
-    session: Session = Depends(get_db),
+    session: Annotated[Session, Depends(get_db)],
 ) -> dict[str, object]:
     return build_operations_report(session, since=since, until=until, limit=limit)
 
 
 @router.get("/database", response_model=DatabaseDiagnosticsRead)
-def database_diagnostics(session: Session = Depends(get_db)) -> dict[str, object]:
+def database_diagnostics(*, session: Annotated[Session, Depends(get_db)]) -> dict[str, object]:
     return build_database_diagnostics(session)
 
 
 @router.get("/runtime/export", response_model=RuntimeSnapshotRead)
-def export_runtime_snapshot(session: Session = Depends(get_db)) -> dict[str, object]:
+def export_runtime_snapshot(*, session: Annotated[Session, Depends(get_db)]) -> dict[str, object]:
     return build_runtime_snapshot(session)
 
 
 @router.get("/runtime/bundle/export")
 def export_runtime_bundle_archive(
-    session: Session = Depends(get_db),
+    *,
+    session: Annotated[Session, Depends(get_db)],
 ) -> FileResponse:
     result = export_runtime_bundle(
         session,
@@ -66,9 +72,10 @@ def export_runtime_bundle_archive(
 
 @router.post("/runtime/restore", response_model=RuntimeRestoreResultRead)
 def restore_runtime(
+    *,
     payload: RuntimeSnapshotRead,
     replace_existing: bool = Query(default=False),
-    session: Session = Depends(get_db),
+    session: Annotated[Session, Depends(get_db)],
 ) -> dict[str, object]:
     try:
         return restore_runtime_snapshot(
@@ -82,9 +89,10 @@ def restore_runtime(
 
 @router.post("/runtime/bundle/restore", response_model=RuntimeBundleRestoreResultRead)
 async def restore_runtime_bundle_archive(
+    *,
     request: Request,
     replace_existing: bool = Query(default=False),
-    session: Session = Depends(get_db),
+    session: Annotated[Session, Depends(get_db)],
 ) -> dict[str, object]:
     payload = await request.body()
     if not payload:

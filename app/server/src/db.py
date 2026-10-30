@@ -4,9 +4,7 @@ from collections.abc import Generator
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from sqlalchemy import inspect
-from sqlalchemy import text
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -138,9 +136,7 @@ def apply_schema_migrations(engine: Engine) -> list[int]:
             # Recheck inside the transaction so two local processes cannot record
             # the same migration independently.
             exists = connection.execute(
-                text(
-                    f"SELECT 1 FROM {SCHEMA_MIGRATIONS_TABLE} WHERE version = :version"
-                ),
+                text(f"SELECT 1 FROM {SCHEMA_MIGRATIONS_TABLE} WHERE version = :version"),
                 {"version": migration.version},
             ).first()
             if exists is not None:
@@ -190,7 +186,9 @@ def _apply_baseline_additive_columns(connection) -> None:  # type: ignore[no-unt
         for column_name, ddl_type in required_columns.items():
             if column_name in existing:
                 continue
-            connection.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {ddl_type}"))
+            connection.execute(
+                text(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {ddl_type}")
+            )
 
 
 def _apply_research_fleet_durable_tables(connection) -> None:  # type: ignore[no-untyped-def]

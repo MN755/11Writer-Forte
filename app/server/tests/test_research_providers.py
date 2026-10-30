@@ -10,7 +10,6 @@ from sqlalchemy.orm import Session
 from src.db import get_session_factory
 from src.services.provider_registry_service import evaluate_provider_request
 
-
 PROVIDER_PATH = "/api/discovery/providers"
 
 
