@@ -4,10 +4,11 @@ import json
 import re
 import threading
 import time
+from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any, Iterator
+from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
 from fastapi.testclient import TestClient
@@ -49,7 +50,7 @@ def discovery_site(
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
 
-        def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler contract
+        def do_GET(self) -> None:
             state["requests"].append(self.path)
             request_url = urlsplit(self.path)
             path = request_url.path
@@ -71,7 +72,7 @@ def discovery_site(
                 self._send(200, "text/plain", body)
                 return
             if path == "/seed":
-                body = """
+                body = b"""
                 <html><head>
                   <title>Metro source inventory</title>
                   <meta name="geo.position" content="44.98;-93.27">
@@ -84,7 +85,7 @@ def discovery_site(
                   <a href="/camera/snapshot.jpg">Traffic camera</a>
                   <p>Minneapolis I-94 operational sources.</p>
                 </body></html>
-                """.encode()
+                """
                 self._send(200, "text/html; charset=utf-8", body, etag='"seed-v1"')
                 return
             if path == "/sitemap.xml":
@@ -202,12 +203,12 @@ def discovery_site(
                 )
                 return
             if path == "/parallel-seed":
-                body = """
+                body = b"""
                 <html><head><title>Parallel seed</title></head><body>
                   <a href="/slow-a.json">Slow A</a>
                   <a href="/slow-b.json">Slow B</a>
                 </body></html>
-                """.encode()
+                """
                 self._send(200, "text/html; charset=utf-8", body)
                 return
             if path in {"/slow-a.json", "/slow-b.json"}:
@@ -1020,7 +1021,7 @@ def test_artifact_file_is_removed_when_candidate_transaction_fails(
     client: TestClient,
     monkeypatch,
 ) -> None:
-    import src.services.discovery_service as discovery_service
+    from src.services import discovery_service
 
     def fail_after_artifact(*_args, **_kwargs):
         raise RuntimeError("forced graph persistence failure")

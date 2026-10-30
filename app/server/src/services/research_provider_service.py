@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 import hashlib
 import json
+import logging
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from src.errors import redacted_exception_info
 from src.models import CustodyLogORM, ResearchProviderORM, ResearchProviderRunORM
 from src.schemas import (
     ResearchFleetProviderCreate,
@@ -19,6 +21,7 @@ from src.schemas import (
 from src.services.discovery_analysis import canonicalize_url
 from src.services.discovery_fetch import FetchPolicy, fetch_url
 
+logger = logging.getLogger("elevenwriter.runtime." + __name__)
 
 # These records are intentionally narrow.  GovInfo is not included because its API
 # requires an api.data.gov key, which must be operator-supplied and must never be
@@ -104,12 +107,18 @@ def _provider_values(payload: dict[str, object], *, partial: bool = False) -> di
                 if payload.get("access_requirement", "none") == "none"
                 else "operator_supplied_public_feed",
                 "terms_url": str(metadata.get("api_documentation_url") or endpoint),
-                "license_note": str(payload.get("license_notes") or "Operator-recorded provider terms."),
-                "robots_mode": "required" if payload.get("robots_supported", True) else "not_applicable",
+                "license_note": str(
+                    payload.get("license_notes") or "Operator-recorded provider terms."
+                ),
+                "robots_mode": "required"
+                if payload.get("robots_supported", True)
+                else "not_applicable",
                 "jurisdictions_json": [str(payload.get("jurisdiction") or "operator-configured")],
                 "languages_json": list(payload.get("languages_json") or []),
                 "request_budget_json": dict(payload.get("default_budget_json") or {}),
-                "artifact_capture_mode": str(payload.get("evidence_capture_method") or "metadata_only"),
+                "artifact_capture_mode": str(
+                    payload.get("evidence_capture_method") or "metadata_only"
+                ),
                 "health_status": str(payload.get("health_state") or "unknown"),
                 "health_reason": payload.get("last_error_text"),
                 "schema_version": 1,
@@ -131,12 +140,31 @@ def _provider_values(payload: dict[str, object], *, partial: bool = False) -> di
             values["license_note"] = payload["license_notes"]
         if "enabled" in payload:
             values["enabled"] = payload["enabled"]
-        return {key: value for key, value in values.items() if key in {
-            "metadata_json", "freshness_hours", "cost", "access_requirement", "robots_supported",
-            "evidence_capture_method", "coverage_gaps_json", "last_checked_at", "last_success_at",
-            "last_error_text", "display_name", "provider_kind", "languages_json", "request_budget_json",
-            "health_status", "license_note", "enabled"
-        } or key in payload}
+        return {
+            key: value
+            for key, value in values.items()
+            if key
+            in {
+                "metadata_json",
+                "freshness_hours",
+                "cost",
+                "access_requirement",
+                "robots_supported",
+                "evidence_capture_method",
+                "coverage_gaps_json",
+                "last_checked_at",
+                "last_success_at",
+                "last_error_text",
+                "display_name",
+                "provider_kind",
+                "languages_json",
+                "request_budget_json",
+                "health_status",
+                "license_note",
+                "enabled",
+            }
+            or key in payload
+        }
     return values
 
 
@@ -146,7 +174,9 @@ def _serialize_provider(provider: ResearchProviderORM) -> dict[str, object]:
         "research_provider_id": provider.provider_id,
         "provider_key": provider.provider_key,
         "name": provider.display_name,
-        "source_kind": str((provider.metadata_json or {}).get("source_kind") or provider.provider_kind),
+        "source_kind": str(
+            (provider.metadata_json or {}).get("source_kind") or provider.provider_kind
+        ),
         "enabled": provider.enabled,
         "health_state": provider.health_status,
         "license_notes": provider.license_note,
@@ -251,12 +281,13 @@ def list_providers(session: Session, *, limit: int = 500) -> list[dict[str, obje
     return [
         _serialize_provider(provider)
         for provider in list(
-        session.scalars(
-            select(ResearchProviderORM)
-            .order_by(ResearchProviderORM.provider_key.asc())
-            .limit(limit)
+            session.scalars(
+                select(ResearchProviderORM)
+                .order_by(ResearchProviderORM.provider_key.asc())
+                .limit(limit)
+            )
         )
-    )]
+    ]
 
 
 def require_provider(session: Session, provider_id: int) -> ResearchProviderORM:
@@ -312,7 +343,8 @@ def list_provider_runs(
     session: Session, *, provider_id: int | None = None, limit: int = 500
 ) -> list[ResearchProviderRunORM]:
     statement = select(ResearchProviderRunORM).order_by(
-        ResearchProviderRunORM.priority.desc(), ResearchProviderRunORM.research_provider_run_id.asc()
+        ResearchProviderRunORM.priority.desc(),
+        ResearchProviderRunORM.research_provider_run_id.asc(),
     )
     if provider_id is not None:
         statement = statement.where(ResearchProviderRunORM.provider_id == provider_id)
@@ -341,7 +373,9 @@ def claim_provider_run(
                 (ResearchProviderRunORM.status == "running")
                 & (ResearchProviderRunORM.lease_expires_at < moment),
             ),
-            or_(ResearchProviderRunORM.retry_at.is_(None), ResearchProviderRunORM.retry_at <= moment),
+            or_(
+                ResearchProviderRunORM.retry_at.is_(None), ResearchProviderRunORM.retry_at <= moment
+            ),
         )
         .order_by(ResearchProviderRunORM.priority.desc(), ResearchProviderRunORM.created_at.asc())
         .limit(1)
@@ -382,7 +416,9 @@ def heartbeat_provider_run(
     return run
 
 
-def cancel_provider_run(session: Session, run_id: int, *, actor: str = "api") -> ResearchProviderRunORM:
+def cancel_provider_run(
+    session: Session, run_id: int, *, actor: str = "api"
+) -> ResearchProviderRunORM:
     run = require_provider_run(session, run_id)
     if run.status in {"completed", "failed", "cancelled"}:
         raise ValueError(f"Research provider run {run_id} is already terminal.")
@@ -435,8 +471,15 @@ def execute_provider_run(
             "candidate_count": len(run.candidate_urls_json),
         }
         run.status, run.finished_at = "completed", now()
-        provider.health_status, provider.last_success_at, provider.last_error_text = "healthy", now(), None
+        provider.health_status, provider.last_success_at, provider.last_error_text = (
+            "healthy",
+            now(),
+            None,
+        )
     except Exception as exc:
+        logger.error(
+            "research provider service operation failed", exc_info=redacted_exception_info()
+        )
         _fail_or_retry(run, provider, str(exc))
     finally:
         run.lease_owner, run.lease_expires_at = None, None
@@ -457,7 +500,10 @@ def execute_provider_run(
 def _provider_endpoint(provider: ResearchProviderORM) -> str:
     if not provider.enabled or provider.cost == "disabled":
         raise ValueError("Research provider is disabled.")
-    if provider.access_requirement not in {"none", "operator_supplied"} or not provider.robots_supported:
+    if (
+        provider.access_requirement not in {"none", "operator_supplied"}
+        or not provider.robots_supported
+    ):
         raise ValueError("Research provider does not permit policy-bound public collection.")
     endpoint = str((provider.metadata_json or {}).get("endpoint_url", "")).strip()
     if not endpoint:
@@ -488,7 +534,11 @@ def _candidate_urls(payload: bytes) -> list[str]:
 
 
 def _fail_or_retry(run: ResearchProviderRunORM, provider: ResearchProviderORM, error: str) -> None:
-    provider.health_status, provider.last_checked_at, provider.last_error_text = "degraded", now(), error
+    provider.health_status, provider.last_checked_at, provider.last_error_text = (
+        "degraded",
+        now(),
+        error,
+    )
     run.error_text = error
     run.coverage_gaps_json = {"provider": provider.provider_key, "reason": "collection_failed"}
     if run.attempt_count < run.max_attempts and not run.cancellation_requested:
@@ -499,7 +549,11 @@ def _fail_or_retry(run: ResearchProviderRunORM, provider: ResearchProviderORM, e
 
 
 def _custody(
-    session: Session, provider: ResearchProviderORM, action: str, actor: str, details: dict[str, object]
+    session: Session,
+    provider: ResearchProviderORM,
+    action: str,
+    actor: str,
+    details: dict[str, object],
 ) -> None:
     session.add(
         CustodyLogORM(

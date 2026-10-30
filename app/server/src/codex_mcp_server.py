@@ -8,6 +8,7 @@ from typing import Any
 from sqlalchemy import func, select
 
 from src.db import get_session_factory, init_db
+from src.errors import InputValidationError
 from src.models import AlertORM, CustodyLogORM, EventORM, ObservationORM, SourceDefinitionORM
 
 SERVER_NAME = "elevenwriter-forte"
@@ -80,7 +81,7 @@ TOOLS: list[dict[str, Any]] = [
 def bounded_limit(arguments: dict[str, Any]) -> int:
     value = arguments.get("limit", 25)
     if not isinstance(value, int):
-        raise ValueError("limit must be an integer.")
+        raise InputValidationError("limit must be an integer.")
     return max(1, min(value, MAX_LIMIT))
 
 

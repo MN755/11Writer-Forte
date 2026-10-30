@@ -24,7 +24,6 @@ from src.schemas import (
 )
 from src.services.storage_service import apply_storage_promotion, apply_storage_transition
 
-
 TERMINAL_STATES = {"archived", "insufficient_evidence", "failed"}
 ACTIVE_STATES = {
     "draft",

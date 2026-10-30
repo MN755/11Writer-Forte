@@ -7,7 +7,6 @@ import json
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-
 UPDATE_TYPES = frozenset(
     {
         "new_source",
@@ -105,27 +104,43 @@ class UpdateLedger:
     source_ids: set[str] = field(default_factory=set)
 
     @classmethod
-    def from_json(cls, payload: dict[str, object] | None) -> "UpdateLedger":
+    def from_json(cls, payload: dict[str, object] | None) -> UpdateLedger:
         payload = payload or {}
         evidence = payload.get("evidence_versions")
         claim = payload.get("claim_versions")
         hashes = payload.get("content_hashes")
         return cls(
-            evidence_versions={str(key): dict(value) for key, value in evidence.items() if isinstance(value, dict)}
+            evidence_versions={
+                str(key): dict(value) for key, value in evidence.items() if isinstance(value, dict)
+            }
             if isinstance(evidence, dict)
             else {},
-            claim_versions={str(key): sorted(str(item) for item in value) for key, value in claim.items() if isinstance(value, list)}
+            claim_versions={
+                str(key): sorted(str(item) for item in value)
+                for key, value in claim.items()
+                if isinstance(value, list)
+            }
             if isinstance(claim, dict)
             else {},
-            content_hashes={str(key): str(value) for key, value in hashes.items()} if isinstance(hashes, dict) else {},
-            source_ids={str(item) for item in payload.get("source_ids", [])} if isinstance(payload.get("source_ids"), list) else set(),
+            content_hashes={str(key): str(value) for key, value in hashes.items()}
+            if isinstance(hashes, dict)
+            else {},
+            source_ids={str(item) for item in payload.get("source_ids", [])}
+            if isinstance(payload.get("source_ids"), list)
+            else set(),
         )
 
     def to_json(self) -> dict[str, object]:
         return {
-            "evidence_versions": {key: self.evidence_versions[key] for key in sorted(self.evidence_versions)},
-            "claim_versions": {key: sorted(self.claim_versions[key]) for key in sorted(self.claim_versions)},
-            "content_hashes": {key: self.content_hashes[key] for key in sorted(self.content_hashes)},
+            "evidence_versions": {
+                key: self.evidence_versions[key] for key in sorted(self.evidence_versions)
+            },
+            "claim_versions": {
+                key: sorted(self.claim_versions[key]) for key in sorted(self.claim_versions)
+            },
+            "content_hashes": {
+                key: self.content_hashes[key] for key in sorted(self.content_hashes)
+            },
             "source_ids": sorted(self.source_ids),
         }
 
@@ -140,7 +155,10 @@ class UpdateLedger:
         return f"{candidate.claim_id}:{candidate.claim_version or 'current'}"
 
     def has_duplicate(self, candidate: MaterialityCandidate) -> bool:
-        return self.evidence_key(candidate) in self.evidence_versions or candidate.content_hash in self.content_hashes
+        return (
+            self.evidence_key(candidate) in self.evidence_versions
+            or candidate.content_hash in self.content_hashes
+        )
 
     def source_is_independent_for_claim(self, candidate: MaterialityCandidate) -> bool:
         claim_key = self.claim_key(candidate)
@@ -186,13 +204,18 @@ def evaluate_materiality(
     update_type = classify_update(candidate, ledger, duplicate=duplicate, independent=independent)
     score = score_materiality(candidate, novelty=not duplicate, independent=independent)
     citation_valid = bool(candidate.citation_ids) or not policy.require_citation
-    material = update_type not in {"no_material_change", "visual_change_candidate"} and score >= policy.min_materiality_score
+    material = (
+        update_type not in {"no_material_change", "visual_change_candidate"}
+        and score >= policy.min_materiality_score
+    )
     if update_type == "contradiction" and candidate.confidence >= policy.min_alert_confidence:
         material = True
     alert = material and citation_valid and candidate.confidence >= policy.min_alert_confidence
     if update_type == "visual_change_candidate" and not policy.alert_visual_candidates:
         alert = False
-    reviewable = update_type != "no_material_change" and (not alert or update_type == "visual_change_candidate")
+    reviewable = update_type != "no_material_change" and (
+        not alert or update_type == "visual_change_candidate"
+    )
     decision = MaterialityDecision(
         update_type=update_type,
         score=score,
@@ -220,7 +243,11 @@ def classify_update(
         return "contradiction"
     if candidate.visual_change:
         return "visual_change_candidate"
-    if candidate.previous_status is not None and candidate.status is not None and candidate.previous_status != candidate.status:
+    if (
+        candidate.previous_status is not None
+        and candidate.status is not None
+        and candidate.previous_status != candidate.status
+    ):
         return "status_change"
     claim_key = ledger.claim_key(candidate)
     if claim_key is not None and claim_key not in ledger.claim_versions:
@@ -232,7 +259,9 @@ def classify_update(
     return "no_material_change"
 
 
-def score_materiality(candidate: MaterialityCandidate, *, novelty: bool, independent: bool) -> float:
+def score_materiality(
+    candidate: MaterialityCandidate, *, novelty: bool, independent: bool
+) -> float:
     confidence_change = (
         abs(candidate.confidence - candidate.previous_confidence)
         if candidate.previous_confidence is not None
@@ -264,7 +293,9 @@ def stable_dedupe_key(candidate: MaterialityCandidate, update_type: str) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def decision_reason(candidate: MaterialityCandidate, update_type: str, duplicate: bool, independent: bool) -> str:
+def decision_reason(
+    candidate: MaterialityCandidate, update_type: str, duplicate: bool, independent: bool
+) -> str:
     if duplicate:
         return "evidence version or byte-identical content already recorded"
     if update_type == "corroboration":

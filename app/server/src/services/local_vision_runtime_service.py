@@ -7,19 +7,21 @@ provider-discovery code.  Model acquisition and security review happen outside r
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
 import math
 import os
-from pathlib import Path
 import time
-from typing import Any, Mapping
+from collections.abc import Mapping
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
 
-from src.services.local_media_runtime_service import LocalMediaRuntimeError
-from src.services.local_media_runtime_service import hash_file
-from src.services.local_media_runtime_service import resolve_data_dir_path
-from src.services.visual_change_service import InferenceRecord
-from src.services.visual_change_service import ModelManifest
+from src.services.local_media_runtime_service import (
+    LocalMediaRuntimeError,
+    hash_file,
+    resolve_data_dir_path,
+)
+from src.services.visual_change_service import InferenceRecord, ModelManifest
 
 
 class LocalVisionRuntimeError(LocalMediaRuntimeError):
@@ -52,7 +54,9 @@ class OnnxEmbeddingApproval:
         if self.layout != "NCHW":
             raise ValueError("Only NCHW ONNX image encoders are supported.")
         if len(self.mean) != 3 or len(self.std) != 3 or any(value <= 0 for value in self.std):
-            raise ValueError("ONNX image normalization requires three means and positive std values.")
+            raise ValueError(
+                "ONNX image normalization requires three means and positive std values."
+            )
         if not 1 <= int(self.max_image_pixels) <= 48_000_000:
             raise ValueError("max_image_pixels must be between 1 and 48,000,000.")
 
@@ -89,13 +93,22 @@ def load_onnx_embedding_approval(path: str | Path) -> OnnxEmbeddingApproval:
             max_image_pixels=int(raw.get("max_image_pixels", 48_000_000)),
         )
         model_path = resolve_data_dir_path(approval.model_path, label="Approved ONNX model")
-    except (KeyError, LocalMediaRuntimeError, OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+    except (
+        KeyError,
+        LocalMediaRuntimeError,
+        OSError,
+        TypeError,
+        ValueError,
+        json.JSONDecodeError,
+    ) as exc:
         raise LocalVisionRuntimeError(f"Invalid ONNX image-embedding approval: {exc}") from exc
 
     if not model_path.is_file():
         raise LocalVisionRuntimeError("Approved ONNX model file does not exist.")
     if hash_file(model_path) != approval.manifest.artifact_sha256:
-        raise LocalVisionRuntimeError("Approved ONNX model checksum differs from its approval record.")
+        raise LocalVisionRuntimeError(
+            "Approved ONNX model checksum differs from its approval record."
+        )
     return approval
 
 
@@ -202,34 +215,46 @@ def _create_offline_session(model_path: Path, *, prefer_gpu: bool) -> tuple[Any,
         ) from exc
     available = set(ort.get_available_providers())
     gpu_providers = [
-        name
-        for name in ("TensorrtExecutionProvider", "CUDAExecutionProvider")
-        if name in available
+        name for name in ("TensorrtExecutionProvider", "CUDAExecutionProvider") if name in available
     ]
-    requested = [*gpu_providers, "CPUExecutionProvider"] if prefer_gpu and gpu_providers else ["CPUExecutionProvider"]
+    requested = (
+        [*gpu_providers, "CPUExecutionProvider"]
+        if prefer_gpu and gpu_providers
+        else ["CPUExecutionProvider"]
+    )
     try:
         session = ort.InferenceSession(str(model_path), providers=requested)
     except Exception as exc:
         raise LocalVisionRuntimeError(f"Approved ONNX model could not be loaded: {exc}") from exc
     actual = list(session.get_providers())
-    gpu_selected = any(name in {"TensorrtExecutionProvider", "CUDAExecutionProvider"} for name in actual)
+    gpu_selected = any(
+        name in {"TensorrtExecutionProvider", "CUDAExecutionProvider"} for name in actual
+    )
     return session, actual, gpu_selected
 
 
-def _prepare_image_tensor(image_path: Path, approval: OnnxEmbeddingApproval) -> tuple[Any, tuple[int, int]]:
+def _prepare_image_tensor(
+    image_path: Path, approval: OnnxEmbeddingApproval
+) -> tuple[Any, tuple[int, int]]:
     try:
         import numpy as np
         from PIL import Image, ImageOps, UnidentifiedImageError
     except ImportError as exc:
-        raise LocalVisionRuntimeError("Pillow and NumPy are required for image embeddings.") from exc
+        raise LocalVisionRuntimeError(
+            "Pillow and NumPy are required for image embeddings."
+        ) from exc
     try:
         with Image.open(image_path) as source:
             source.load()
             normalized = ImageOps.exif_transpose(source).convert("RGB")
             width, height = normalized.size
             if width < 1 or height < 1 or width * height > approval.max_image_pixels:
-                raise LocalVisionRuntimeError("Image dimensions exceed the approved embedding decode limit.")
-            resized = normalized.resize((approval.input_size, approval.input_size), Image.Resampling.BICUBIC)
+                raise LocalVisionRuntimeError(
+                    "Image dimensions exceed the approved embedding decode limit."
+                )
+            resized = normalized.resize(
+                (approval.input_size, approval.input_size), Image.Resampling.BICUBIC
+            )
             values = np.asarray(resized, dtype=np.float32) / 255.0
     except (OSError, UnidentifiedImageError) as exc:
         raise LocalVisionRuntimeError(f"Image embedding input cannot be decoded: {exc}") from exc
@@ -246,7 +271,9 @@ def _normalize_embedding(value: Any) -> list[float]:
         raise LocalVisionRuntimeError("NumPy is required for image embeddings.") from exc
     vector = np.asarray(value, dtype=np.float32).reshape(-1)
     if not 16 <= vector.size <= 4096 or not bool(np.isfinite(vector).all()):
-        raise LocalVisionRuntimeError("Approved ONNX model returned an invalid image embedding vector.")
+        raise LocalVisionRuntimeError(
+            "Approved ONNX model returned an invalid image embedding vector."
+        )
     magnitude = float(np.linalg.norm(vector))
     if not math.isfinite(magnitude) or magnitude <= 0:
         raise LocalVisionRuntimeError("Approved ONNX model returned a zero-norm image embedding.")
@@ -256,5 +283,7 @@ def _normalize_embedding(value: Any) -> list[float]:
 def _canonical_output_hash(value: Mapping[str, Any]) -> str:
     import hashlib
 
-    payload = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+    payload = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode(
+        "utf-8"
+    )
     return hashlib.sha256(payload).hexdigest()

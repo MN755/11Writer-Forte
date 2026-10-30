@@ -54,10 +54,8 @@ class EventORM(TimestampMixin, Base):
     redaction_level: Mapped[str] = mapped_column(String(50), default="public")
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
-    observation_links: Mapped[list["EventObservationLinkORM"]] = relationship(
-        back_populates="event"
-    )
-    products: Mapped[list["SituationProductORM"]] = relationship(back_populates="event")
+    observation_links: Mapped[list[EventObservationLinkORM]] = relationship(back_populates="event")
+    products: Mapped[list[SituationProductORM]] = relationship(back_populates="event")
 
 
 class EntityORM(TimestampMixin, Base):
@@ -72,19 +70,19 @@ class EntityORM(TimestampMixin, Base):
     redaction_level: Mapped[str] = mapped_column(String(50), default="public")
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
-    observation_links: Mapped[list["EntityObservationLinkORM"]] = relationship(
+    observation_links: Mapped[list[EntityObservationLinkORM]] = relationship(
         back_populates="entity"
     )
-    candidates: Mapped[list["EntityCandidateORM"]] = relationship(back_populates="resolved_entity")
-    aliases: Mapped[list["EntityAliasORM"]] = relationship(back_populates="entity")
-    identity_assertions: Mapped[list["EntityIdentityAssertionORM"]] = relationship(
+    candidates: Mapped[list[EntityCandidateORM]] = relationship(back_populates="resolved_entity")
+    aliases: Mapped[list[EntityAliasORM]] = relationship(back_populates="entity")
+    identity_assertions: Mapped[list[EntityIdentityAssertionORM]] = relationship(
         back_populates="entity"
     )
-    outgoing_relationship_assertions: Mapped[list["EntityRelationshipAssertionORM"]] = relationship(
+    outgoing_relationship_assertions: Mapped[list[EntityRelationshipAssertionORM]] = relationship(
         foreign_keys="EntityRelationshipAssertionORM.subject_entity_id",
         back_populates="subject_entity",
     )
-    incoming_relationship_assertions: Mapped[list["EntityRelationshipAssertionORM"]] = relationship(
+    incoming_relationship_assertions: Mapped[list[EntityRelationshipAssertionORM]] = relationship(
         foreign_keys="EntityRelationshipAssertionORM.object_entity_id",
         back_populates="object_entity",
     )
@@ -123,10 +121,10 @@ class EntityCandidateORM(TimestampMixin, Base):
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
     resolved_entity: Mapped[EntityORM | None] = relationship(back_populates="candidates")
-    citation_links: Mapped[list["EntityCandidateCitationLinkORM"]] = relationship(
+    citation_links: Mapped[list[EntityCandidateCitationLinkORM]] = relationship(
         back_populates="entity_candidate", cascade="all, delete-orphan"
     )
-    identity_assertions: Mapped[list["EntityIdentityAssertionORM"]] = relationship(
+    identity_assertions: Mapped[list[EntityIdentityAssertionORM]] = relationship(
         back_populates="entity_candidate"
     )
 
@@ -134,7 +132,9 @@ class EntityCandidateORM(TimestampMixin, Base):
 class EntityAliasORM(TimestampMixin, Base):
     __tablename__ = "entity_aliases"
     __table_args__ = (
-        Index("ix_entity_aliases_normalized_lookup", "normalized_alias", "entity_type", "jurisdiction"),
+        Index(
+            "ix_entity_aliases_normalized_lookup", "normalized_alias", "entity_type", "jurisdiction"
+        ),
     )
 
     entity_alias_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -156,7 +156,7 @@ class EntityAliasORM(TimestampMixin, Base):
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
     entity: Mapped[EntityORM] = relationship(back_populates="aliases")
-    citation_links: Mapped[list["EntityAliasCitationLinkORM"]] = relationship(
+    citation_links: Mapped[list[EntityAliasCitationLinkORM]] = relationship(
         back_populates="entity_alias", cascade="all, delete-orphan"
     )
 
@@ -178,7 +178,7 @@ class EntityRelationshipTypeORM(TimestampMixin, Base):
     active: Mapped[bool] = mapped_column(default=True, index=True)
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
-    assertions: Mapped[list["EntityRelationshipAssertionORM"]] = relationship(
+    assertions: Mapped[list[EntityRelationshipAssertionORM]] = relationship(
         back_populates="relationship_type_definition"
     )
 
@@ -187,9 +187,7 @@ class EntityCitationORM(TimestampMixin, Base):
     """An attributable span in a persisted artifact or normalized observation."""
 
     __tablename__ = "entity_citations"
-    __table_args__ = (
-        Index("ix_entity_citations_evidence", "storage_object_id", "observation_id"),
-    )
+    __table_args__ = (Index("ix_entity_citations_evidence", "storage_object_id", "observation_id"),)
 
     entity_citation_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     storage_object_id: Mapped[int | None] = mapped_column(
@@ -211,24 +209,26 @@ class EntityCitationORM(TimestampMixin, Base):
     source_reliability: Mapped[str] = mapped_column(String(40), default="unassessed", index=True)
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
-    candidate_links: Mapped[list["EntityCandidateCitationLinkORM"]] = relationship(
+    candidate_links: Mapped[list[EntityCandidateCitationLinkORM]] = relationship(
         back_populates="citation", cascade="all, delete-orphan"
     )
-    alias_links: Mapped[list["EntityAliasCitationLinkORM"]] = relationship(
+    alias_links: Mapped[list[EntityAliasCitationLinkORM]] = relationship(
         back_populates="citation", cascade="all, delete-orphan"
     )
-    identity_assertion_links: Mapped[list["EntityIdentityAssertionCitationLinkORM"]] = relationship(
+    identity_assertion_links: Mapped[list[EntityIdentityAssertionCitationLinkORM]] = relationship(
         back_populates="citation", cascade="all, delete-orphan"
     )
-    relationship_assertion_links: Mapped[
-        list["EntityRelationshipAssertionCitationLinkORM"]
-    ] = relationship(back_populates="citation", cascade="all, delete-orphan")
+    relationship_assertion_links: Mapped[list[EntityRelationshipAssertionCitationLinkORM]] = (
+        relationship(back_populates="citation", cascade="all, delete-orphan")
+    )
 
 
 class EntityIdentityAssertionORM(TimestampMixin, Base):
     __tablename__ = "entity_identity_assertions"
 
-    entity_identity_assertion_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    entity_identity_assertion_id: Mapped[int] = mapped_column(
+        Integer, primary_key=True, autoincrement=True
+    )
     entity_candidate_id: Mapped[int] = mapped_column(
         ForeignKey("entity_candidates.entity_candidate_id"), index=True
     )
@@ -246,9 +246,11 @@ class EntityIdentityAssertionORM(TimestampMixin, Base):
     rationale: Mapped[str] = mapped_column(Text, default="")
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
-    entity_candidate: Mapped[EntityCandidateORM] = relationship(back_populates="identity_assertions")
+    entity_candidate: Mapped[EntityCandidateORM] = relationship(
+        back_populates="identity_assertions"
+    )
     entity: Mapped[EntityORM] = relationship(back_populates="identity_assertions")
-    citation_links: Mapped[list["EntityIdentityAssertionCitationLinkORM"]] = relationship(
+    citation_links: Mapped[list[EntityIdentityAssertionCitationLinkORM]] = relationship(
         back_populates="identity_assertion", cascade="all, delete-orphan"
     )
 
@@ -258,7 +260,10 @@ class EntityRelationshipAssertionORM(TimestampMixin, Base):
     __table_args__ = (
         ForeignKeyConstraint(
             ["relation_type", "relation_version"],
-            ["entity_relationship_types.relation_type", "entity_relationship_types.relation_version"],
+            [
+                "entity_relationship_types.relation_type",
+                "entity_relationship_types.relation_version",
+            ],
         ),
         Index(
             "ix_entity_relationship_assertions_subject_relation",
@@ -303,7 +308,7 @@ class EntityRelationshipAssertionORM(TimestampMixin, Base):
     relationship_type_definition: Mapped[EntityRelationshipTypeORM] = relationship(
         back_populates="assertions"
     )
-    citation_links: Mapped[list["EntityRelationshipAssertionCitationLinkORM"]] = relationship(
+    citation_links: Mapped[list[EntityRelationshipAssertionCitationLinkORM]] = relationship(
         back_populates="relationship_assertion", cascade="all, delete-orphan"
     )
 
@@ -318,7 +323,9 @@ class EntityCandidateCitationLinkORM(Base):
     entity_candidate_id: Mapped[int] = mapped_column(
         ForeignKey("entity_candidates.entity_candidate_id"), index=True
     )
-    entity_citation_id: Mapped[int] = mapped_column(ForeignKey("entity_citations.entity_citation_id"), index=True)
+    entity_citation_id: Mapped[int] = mapped_column(
+        ForeignKey("entity_citations.entity_citation_id"), index=True
+    )
     evidence_role: Mapped[str] = mapped_column(String(40), default="supporting")
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
@@ -330,9 +337,15 @@ class EntityAliasCitationLinkORM(Base):
     __tablename__ = "entity_alias_citation_links"
     __table_args__ = (UniqueConstraint("entity_alias_id", "entity_citation_id"),)
 
-    entity_alias_citation_link_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    entity_alias_id: Mapped[int] = mapped_column(ForeignKey("entity_aliases.entity_alias_id"), index=True)
-    entity_citation_id: Mapped[int] = mapped_column(ForeignKey("entity_citations.entity_citation_id"), index=True)
+    entity_alias_citation_link_id: Mapped[int] = mapped_column(
+        Integer, primary_key=True, autoincrement=True
+    )
+    entity_alias_id: Mapped[int] = mapped_column(
+        ForeignKey("entity_aliases.entity_alias_id"), index=True
+    )
+    entity_citation_id: Mapped[int] = mapped_column(
+        ForeignKey("entity_citations.entity_citation_id"), index=True
+    )
     evidence_role: Mapped[str] = mapped_column(String(40), default="supporting")
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
@@ -350,11 +363,15 @@ class EntityIdentityAssertionCitationLinkORM(Base):
     entity_identity_assertion_id: Mapped[int] = mapped_column(
         ForeignKey("entity_identity_assertions.entity_identity_assertion_id"), index=True
     )
-    entity_citation_id: Mapped[int] = mapped_column(ForeignKey("entity_citations.entity_citation_id"), index=True)
+    entity_citation_id: Mapped[int] = mapped_column(
+        ForeignKey("entity_citations.entity_citation_id"), index=True
+    )
     evidence_role: Mapped[str] = mapped_column(String(40), default="supporting")
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
-    identity_assertion: Mapped[EntityIdentityAssertionORM] = relationship(back_populates="citation_links")
+    identity_assertion: Mapped[EntityIdentityAssertionORM] = relationship(
+        back_populates="citation_links"
+    )
     citation: Mapped[EntityCitationORM] = relationship(back_populates="identity_assertion_links")
 
 
@@ -368,14 +385,18 @@ class EntityRelationshipAssertionCitationLinkORM(Base):
     entity_relationship_assertion_id: Mapped[int] = mapped_column(
         ForeignKey("entity_relationship_assertions.entity_relationship_assertion_id"), index=True
     )
-    entity_citation_id: Mapped[int] = mapped_column(ForeignKey("entity_citations.entity_citation_id"), index=True)
+    entity_citation_id: Mapped[int] = mapped_column(
+        ForeignKey("entity_citations.entity_citation_id"), index=True
+    )
     evidence_role: Mapped[str] = mapped_column(String(40), default="supporting")
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
     relationship_assertion: Mapped[EntityRelationshipAssertionORM] = relationship(
         back_populates="citation_links"
     )
-    citation: Mapped[EntityCitationORM] = relationship(back_populates="relationship_assertion_links")
+    citation: Mapped[EntityCitationORM] = relationship(
+        back_populates="relationship_assertion_links"
+    )
 
 
 class GeofenceORM(TimestampMixin, Base):
@@ -431,7 +452,7 @@ class LocalImportRunORM(TimestampMixin, Base):
     notes: Mapped[str] = mapped_column(Text, default="")
     chain_of_custody_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
 
-    observations: Mapped[list["ObservationORM"]] = relationship(back_populates="import_run")
+    observations: Mapped[list[ObservationORM]] = relationship(back_populates="import_run")
 
 
 class ObservationORM(TimestampMixin, Base):
@@ -454,10 +475,8 @@ class ObservationORM(TimestampMixin, Base):
     raw_hash: Mapped[str] = mapped_column(String(64), index=True)
 
     import_run: Mapped[LocalImportRunORM | None] = relationship(back_populates="observations")
-    event_links: Mapped[list["EventObservationLinkORM"]] = relationship(
-        back_populates="observation"
-    )
-    entity_links: Mapped[list["EntityObservationLinkORM"]] = relationship(
+    event_links: Mapped[list[EventObservationLinkORM]] = relationship(back_populates="observation")
+    entity_links: Mapped[list[EntityObservationLinkORM]] = relationship(
         back_populates="observation"
     )
 
@@ -520,6 +539,8 @@ class CameraSourceInventoryORM(TimestampMixin, Base):
     confidence_score: Mapped[float] = mapped_column(Float, default=0.5)
     graduation_score: Mapped[float] = mapped_column(Float, default=0.0)
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+
 class StorageObjectORM(TimestampMixin, Base):
     __tablename__ = "storage_objects"
 
@@ -577,7 +598,7 @@ class ScheduledTaskORM(TimestampMixin, Base):
     last_run_at: Mapped[datetime | None] = mapped_column(default=None)
     next_run_at: Mapped[datetime | None] = mapped_column(default=None)
 
-    runs: Mapped[list["ScheduledTaskRunORM"]] = relationship(back_populates="task")
+    runs: Mapped[list[ScheduledTaskRunORM]] = relationship(back_populates="task")
 
 
 class ScheduledTaskRunORM(Base):
@@ -659,7 +680,7 @@ class SourceDefinitionORM(TimestampMixin, Base):
     notes: Mapped[str] = mapped_column(Text, default="")
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
-    runs: Mapped[list["SourceRunORM"]] = relationship(back_populates="source")
+    runs: Mapped[list[SourceRunORM]] = relationship(back_populates="source")
 
 
 class SourceRunORM(Base):
@@ -724,7 +745,7 @@ class ResearchProviderORM(TimestampMixin, Base):
     last_error_text: Mapped[str | None] = mapped_column(Text, default=None)
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
-    runs: Mapped[list["ResearchProviderRunORM"]] = relationship(back_populates="provider")
+    runs: Mapped[list[ResearchProviderRunORM]] = relationship(back_populates="provider")
 
     # Compatibility aliases keep the durable-worker API attached to the one canonical
     # provider table while its external route is migrated to the policy vocabulary.
@@ -775,8 +796,12 @@ class ResearchProviderRunORM(Base):
         Index("ix_research_provider_run_priority", "status", "priority", "created_at"),
     )
 
-    research_provider_run_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    provider_id: Mapped[int] = mapped_column(ForeignKey("research_providers.provider_id"), index=True)
+    research_provider_run_id: Mapped[int] = mapped_column(
+        Integer, primary_key=True, autoincrement=True
+    )
+    provider_id: Mapped[int] = mapped_column(
+        ForeignKey("research_providers.provider_id"), index=True
+    )
     investigation_id: Mapped[int | None] = mapped_column(
         ForeignKey("investigations.investigation_id"), default=None, index=True
     )
@@ -1306,13 +1331,13 @@ class InvestigationORM(TimestampMixin, Base):
     stopped_at: Mapped[datetime | None] = mapped_column(default=None, index=True)
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
-    discovery_attempts: Mapped[list["InvestigationDiscoveryAttemptORM"]] = relationship(
+    discovery_attempts: Mapped[list[InvestigationDiscoveryAttemptORM]] = relationship(
         back_populates="investigation"
     )
-    report_versions: Mapped[list["InvestigationReportVersionORM"]] = relationship(
+    report_versions: Mapped[list[InvestigationReportVersionORM]] = relationship(
         back_populates="investigation"
     )
-    evidence_promotions: Mapped[list["InvestigationEvidencePromotionORM"]] = relationship(
+    evidence_promotions: Mapped[list[InvestigationEvidencePromotionORM]] = relationship(
         back_populates="investigation"
     )
 
@@ -1439,12 +1464,12 @@ class WatchORM(TimestampMixin, Base):
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     provenance_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
-    runs: Mapped[list["WatchRunORM"]] = relationship(back_populates="watch")
-    rule_versions: Mapped[list["WatchRuleVersionORM"]] = relationship(
+    runs: Mapped[list[WatchRunORM]] = relationship(back_populates="watch")
+    rule_versions: Mapped[list[WatchRuleVersionORM]] = relationship(
         back_populates="watch",
         cascade="all, delete-orphan",
     )
-    reports: Mapped[list["WatchReportORM"]] = relationship(
+    reports: Mapped[list[WatchReportORM]] = relationship(
         back_populates="watch",
         cascade="all, delete-orphan",
     )
@@ -1460,7 +1485,9 @@ class WatchRuleVersionORM(Base):
         Index("ix_watch_rule_version_hash", "rule_hash"),
     )
 
-    watch_rule_version_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    watch_rule_version_id: Mapped[int] = mapped_column(
+        Integer, primary_key=True, autoincrement=True
+    )
     watch_id: Mapped[int] = mapped_column(ForeignKey("watches.watch_id"), index=True)
     version_number: Mapped[int] = mapped_column(Integer)
     query_version: Mapped[str] = mapped_column(String(80), default="1", index=True)

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import socket
+from datetime import datetime, timezone
 
 import pytest
 
@@ -148,7 +148,12 @@ def test_matching_keyword_without_site_evidence_is_irrelevant() -> None:
         text="River Bridge construction update",
     )
     unrelated = VisualObservation(
-        **{**unrelated.__dict__, "target_location_names": ("River Bridge",), "named_locations": ("Different City",), "geospatial_match": 0.0}
+        **{
+            **unrelated.__dict__,
+            "target_location_names": ("River Bridge",),
+            "named_locations": ("Different City",),
+            "geospatial_match": 0.0,
+        }
     )
 
     result = pipeline.evaluate(unrelated, baseline=_observation("baseline"))

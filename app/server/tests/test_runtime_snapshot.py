@@ -8,6 +8,7 @@ from zipfile import ZipFile
 
 from fastapi.testclient import TestClient
 from typer.testing import CliRunner
+from typing_extensions import Self
 
 from src.cli import app as cli_app
 from src.config import get_settings, reset_settings_cache
@@ -21,7 +22,7 @@ class FakeClickHouseResponse:
     def read(self) -> bytes:
         return self.payload.encode("utf-8")
 
-    def __enter__(self) -> "FakeClickHouseResponse":
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:

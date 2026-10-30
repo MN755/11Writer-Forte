@@ -25,9 +25,7 @@ class OperatorPrincipal:
 
 def _parse_scopes(raw_scopes: str | None) -> frozenset[str]:
     return frozenset(
-        scope.strip().lower()
-        for scope in (raw_scopes or "").split(",")
-        if scope.strip()
+        scope.strip().lower() for scope in (raw_scopes or "").split(",") if scope.strip()
     )
 
 
@@ -41,7 +39,9 @@ def get_operator_principal(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="X-ElevenWriter-Scopes is required for this endpoint.",
         )
-    return OperatorPrincipal(actor=(actor or "api_operator").strip()[:80] or "api_operator", scopes=parsed_scopes)
+    return OperatorPrincipal(
+        actor=(actor or "api_operator").strip()[:80] or "api_operator", scopes=parsed_scopes
+    )
 
 
 def require_scope(required_scope: str) -> Callable[..., OperatorPrincipal]:
@@ -57,7 +57,7 @@ def require_scope(required_scope: str) -> Callable[..., OperatorPrincipal]:
         return scoped_principal(principal, normalized_scope)
 
     # Keep the public factory for classification/inspection and attach the target scope.
-    setattr(dependency, "required_scope", normalized_scope)
+    dependency.required_scope = normalized_scope
     return dependency
 
 

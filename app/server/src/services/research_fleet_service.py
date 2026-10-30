@@ -8,18 +8,17 @@ calling the existing bounded fetch implementation.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
 import hashlib
 import re
-from typing import Iterable, Mapping
+from collections.abc import Iterable, Mapping
+from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 from urllib.parse import urlsplit
 
 from src.services.discovery_analysis import canonicalize_url
 from src.services.discovery_fetch import Resolver, UnsafeTargetError, validate_fetch_url
 from src.services.source_coverage_service import CoverageLedger
 from src.services.trust_service import normalize_domain
-
 
 STATIC_COLLECTION_CAPABILITIES = frozenset(
     {"structured_api", "rss_atom", "sitemap", "static_html", "document", "dataset"}
@@ -61,13 +60,16 @@ class ProviderDefinition:
             raise ValueError("Providers may not require login or access-control bypass.")
         if not set(self.capabilities):
             raise ValueError("A provider must declare at least one capability.")
-        if min(
-            self.default_request_budget,
-            self.default_byte_budget,
-            self.default_concurrency,
-            self.default_retry_budget,
-            self.retention_days,
-        ) < 0:
+        if (
+            min(
+                self.default_request_budget,
+                self.default_byte_budget,
+                self.default_concurrency,
+                self.default_retry_budget,
+                self.retention_days,
+            )
+            < 0
+        ):
             raise ValueError("Provider budgets cannot be negative.")
 
     def to_public_dict(self) -> dict[str, object]:
@@ -224,8 +226,12 @@ def plan_research_fleet(
 ) -> ResearchFleetPlan:
     """Create deterministic provider tasks and an initial coverage ledger."""
 
-    normalized = normalize_research_query(question, aliases=aliases, place=place, date_range=date_range)
-    requested_languages = tuple(sorted({item.strip().lower() for item in languages if item.strip()})) or ("en",)
+    normalized = normalize_research_query(
+        question, aliases=aliases, place=place, date_range=date_range
+    )
+    requested_languages = tuple(
+        sorted({item.strip().lower() for item in languages if item.strip()})
+    ) or ("en",)
     requested_kinds = {item.strip() for item in source_kinds if item.strip()}
     ledger = CoverageLedger()
     tasks: list[ResearchFleetTask] = []
@@ -239,15 +245,25 @@ def plan_research_fleet(
         if not provider.robots_supported:
             blocked.append({"provider_id": provider.provider_id, "reason": "robots_not_supported"})
             continue
-        language_overlap = tuple(language for language in requested_languages if language in provider.languages)
+        language_overlap = tuple(
+            language for language in requested_languages if language in provider.languages
+        )
         if not language_overlap:
-            blocked.append({"provider_id": provider.provider_id, "reason": "language_not_supported"})
+            blocked.append(
+                {"provider_id": provider.provider_id, "reason": "language_not_supported"}
+            )
             continue
-        capability = next((item for item in provider.capabilities if item in STATIC_COLLECTION_CAPABILITIES), None)
+        capability = next(
+            (item for item in provider.capabilities if item in STATIC_COLLECTION_CAPABILITIES), None
+        )
         if capability is None:
-            blocked.append({"provider_id": provider.provider_id, "reason": "no_static_collection_capability"})
+            blocked.append(
+                {"provider_id": provider.provider_id, "reason": "no_static_collection_capability"}
+            )
             continue
-        task_key = f"{provider.provider_id}\0{capability}\0{normalized}\0{','.join(language_overlap)}"
+        task_key = (
+            f"{provider.provider_id}\0{capability}\0{normalized}\0{','.join(language_overlap)}"
+        )
         task_id = "fleet-" + hashlib.sha256(task_key.encode("utf-8")).hexdigest()[:20]
         tasks.append(
             ResearchFleetTask(
@@ -316,7 +332,9 @@ def admit_static_collection_url(
         raise ValueError("Provider does not support robots-aware collection.")
     if provider.access_requirement not in PUBLIC_ACCESS_REQUIREMENTS:
         raise ValueError("Provider requires prohibited access.")
-    static_capability = next((item for item in provider.capabilities if item in STATIC_COLLECTION_CAPABILITIES), None)
+    static_capability = next(
+        (item for item in provider.capabilities if item in STATIC_COLLECTION_CAPABILITIES), None
+    )
     if static_capability is None:
         raise ValueError("Provider has no approved static collection capability.")
     candidate = canonicalize_url(url)
@@ -356,7 +374,9 @@ def source_health_and_gaps(
     ]
     health: list[dict[str, object]] = []
     for provider in registry:
-        provider_attempts = [item for item in ledger.attempts if item.get("source_id") == provider.provider_id]
+        provider_attempts = [
+            item for item in ledger.attempts if item.get("source_id") == provider.provider_id
+        ]
         failures = sum(1 for item in provider_attempts if item.get("status") == "failed")
         state = "disabled" if not provider.enabled or provider.cost == "disabled" else "unknown"
         if provider.provider_id in attempted:
@@ -371,10 +391,20 @@ def source_health_and_gaps(
                 "freshness_hours": provider.freshness_hours,
             }
         )
-    covered_kinds = {provider.source_kind for provider in registry if provider.enabled and provider.cost != "disabled"}
+    covered_kinds = {
+        provider.source_kind
+        for provider in registry
+        if provider.enabled and provider.cost != "disabled"
+    }
     expected_kinds = {"official_public_record", "established_news", "public_dataset"}
     for source_kind in sorted(expected_kinds - covered_kinds):
-        open_gaps.append({"gap_key": f"source_kind:{source_kind}", "reason": "no_configured_provider", "status": "open"})
+        open_gaps.append(
+            {
+                "gap_key": f"source_kind:{source_kind}",
+                "reason": "no_configured_provider",
+                "status": "open",
+            }
+        )
     return {
         "generated_at": (now or datetime.now(timezone.utc)).isoformat(),
         "providers": health,

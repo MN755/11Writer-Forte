@@ -1,3 +1,5 @@
+from typing import Annotated
+
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
@@ -9,10 +11,12 @@ router = APIRouter(prefix="/geofences", tags=["geofences"])
 
 
 @router.get("", response_model=list[GeofenceRead])
-def get_geofences(session: Session = Depends(get_db)) -> list[GeofenceRead]:
+def get_geofences(*, session: Annotated[Session, Depends(get_db)]) -> list[GeofenceRead]:
     return list_geofences(session)
 
 
 @router.post("", response_model=GeofenceRead)
-def post_geofence(payload: GeofenceCreate, session: Session = Depends(get_db)) -> GeofenceRead:
+def post_geofence(
+    *, payload: GeofenceCreate, session: Annotated[Session, Depends(get_db)]
+) -> GeofenceRead:
     return create_geofence(session, payload, actor="api_geofence")

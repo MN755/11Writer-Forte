@@ -9,10 +9,9 @@ ending a watch.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Iterable
-
 
 RETRIABLE_FAILURES = frozenset({"network_error", "timeout", "rate_limited", "server_error"})
 
@@ -62,7 +61,9 @@ class RetryPolicy:
         try:
             return self.domain_class_budgets[domain_class]
         except KeyError as exc:
-            raise ValueError(f"No auditable budget declared for domain class {domain_class!r}.") from exc
+            raise ValueError(
+                f"No auditable budget declared for domain class {domain_class!r}."
+            ) from exc
 
 
 @dataclass(frozen=True)
@@ -93,7 +94,7 @@ class CoverageLedger:
     gaps: dict[str, dict[str, object]] = field(default_factory=dict)
 
     @classmethod
-    def from_json(cls, payload: dict[str, object] | None) -> "CoverageLedger":
+    def from_json(cls, payload: dict[str, object] | None) -> CoverageLedger:
         payload = payload or {}
         gaps = payload.get("gaps")
         return cls(
@@ -113,7 +114,9 @@ class CoverageLedger:
             "gaps": {key: self.gaps[key] for key in sorted(self.gaps)},
         }
 
-    def record_search(self, *, scope: str, source_ids: Iterable[str], occurred_at: datetime | None = None) -> None:
+    def record_search(
+        self, *, scope: str, source_ids: Iterable[str], occurred_at: datetime | None = None
+    ) -> None:
         self.searches.append(
             {
                 "scope": scope,
@@ -146,7 +149,9 @@ class CoverageLedger:
         if changed:
             self.changes.append({"source_id": candidate.source_id, "occurred_at": timestamp})
 
-    def record_gap(self, *, gap_key: str, reason: str, source_id: str, occurred_at: datetime | None = None) -> None:
+    def record_gap(
+        self, *, gap_key: str, reason: str, source_id: str, occurred_at: datetime | None = None
+    ) -> None:
         prior = self.gaps.get(gap_key, {})
         self.gaps[gap_key] = {
             "reason": reason,
@@ -211,7 +216,9 @@ def plan_collection_action(
         and source_attempts <= policy.max_retry_attempts
         and domain_attempts < policy.budget_for(candidate.domain_class)
     ):
-        delay = min(policy.retry_max_seconds, policy.retry_base_seconds * (2 ** (source_attempts - 1)))
+        delay = min(
+            policy.retry_max_seconds, policy.retry_base_seconds * (2 ** (source_attempts - 1))
+        )
         return [
             CollectionAction(
                 action="retry_source",
@@ -229,7 +236,12 @@ def plan_collection_action(
         occurred_at=timestamp,
     )
     actions: list[CollectionAction] = [
-        CollectionAction(action="record_research_gap", source_id=candidate.source_id, reason=failure_kind or outcome, gap_key=gap_key)
+        CollectionAction(
+            action="record_research_gap",
+            source_id=candidate.source_id,
+            reason=failure_kind or outcome,
+            gap_key=gap_key,
+        )
     ]
     actions.extend(
         CollectionAction(
@@ -238,7 +250,9 @@ def plan_collection_action(
             reason=f"diversify_after:{candidate.source_id}",
             gap_key=gap_key,
         )
-        for alternate in select_alternates(candidate, alternate_candidates, ledger=ledger, policy=policy)
+        for alternate in select_alternates(
+            candidate, alternate_candidates, ledger=ledger, policy=policy
+        )
     )
     return actions
 

@@ -1,3 +1,5 @@
+from typing import Annotated
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -5,14 +7,14 @@ from sqlalchemy.orm import Session
 from src.db import get_db
 from src.models import ScheduledTaskORM, ScheduledTaskRunORM
 from src.schemas import (
-    SchedulerOpsExportSummaryRead,
-    SchedulerInventorySummaryRead,
-    SchedulerOpsReportIndexRead,
-    SchedulerKickResponse,
     ScheduledTaskCreate,
     ScheduledTaskRead,
     ScheduledTaskRunRead,
     ScheduledTaskUpdate,
+    SchedulerInventorySummaryRead,
+    SchedulerKickResponse,
+    SchedulerOpsExportSummaryRead,
+    SchedulerOpsReportIndexRead,
 )
 from src.services.scheduler_service import (
     build_scheduler_inventory_summary,
@@ -28,21 +30,22 @@ router = APIRouter(prefix="/scheduler", tags=["scheduler"])
 
 
 @router.get("/tasks", response_model=list[ScheduledTaskRead])
-def list_tasks(session: Session = Depends(get_db)) -> list[ScheduledTaskORM]:
+def list_tasks(*, session: Annotated[Session, Depends(get_db)]) -> list[ScheduledTaskORM]:
     statement = select(ScheduledTaskORM).order_by(ScheduledTaskORM.task_id.asc())
     return list(session.scalars(statement))
 
 
 @router.get("/summary", response_model=SchedulerInventorySummaryRead)
-def scheduler_summary(session: Session = Depends(get_db)) -> dict[str, object]:
+def scheduler_summary(*, session: Annotated[Session, Depends(get_db)]) -> dict[str, object]:
     return build_scheduler_inventory_summary(session)
 
 
 @router.get("/report-index", response_model=SchedulerOpsReportIndexRead)
 def scheduler_report_index(
+    *,
     limit: int = 25,
     overdue_task_limit: int = 25,
-    session: Session = Depends(get_db),
+    session: Annotated[Session, Depends(get_db)],
 ) -> dict[str, object]:
     return build_scheduler_ops_report_index(
         session,
@@ -53,10 +56,11 @@ def scheduler_report_index(
 
 @router.get("/export/summary", response_model=SchedulerOpsExportSummaryRead)
 def scheduler_export_summary(
+    *,
     task_limit: int = 500,
     report_limit: int = 25,
     overdue_task_limit: int = 25,
-    session: Session = Depends(get_db),
+    session: Annotated[Session, Depends(get_db)],
 ) -> dict[str, object]:
     return build_scheduler_ops_export_summary(
         session,
@@ -65,9 +69,10 @@ def scheduler_export_summary(
         overdue_task_limit=overdue_task_limit,
     )
 
+
 @router.post("/tasks", response_model=ScheduledTaskRead)
 def create_task(
-    payload: ScheduledTaskCreate, session: Session = Depends(get_db)
+    *, payload: ScheduledTaskCreate, session: Annotated[Session, Depends(get_db)]
 ) -> ScheduledTaskORM:
     try:
         return create_scheduled_task(session, payload)
@@ -77,9 +82,10 @@ def create_task(
 
 @router.patch("/tasks/{task_id}", response_model=ScheduledTaskRead)
 def patch_task(
+    *,
     task_id: int,
     payload: ScheduledTaskUpdate,
-    session: Session = Depends(get_db),
+    session: Annotated[Session, Depends(get_db)],
 ) -> ScheduledTaskORM:
     try:
         return update_scheduled_task(session, task_id, payload)
@@ -88,13 +94,13 @@ def patch_task(
 
 
 @router.get("/runs", response_model=list[ScheduledTaskRunRead])
-def list_task_runs(session: Session = Depends(get_db)) -> list[ScheduledTaskRunORM]:
+def list_task_runs(*, session: Annotated[Session, Depends(get_db)]) -> list[ScheduledTaskRunORM]:
     statement = select(ScheduledTaskRunORM).order_by(ScheduledTaskRunORM.task_run_id.desc())
     return list(session.scalars(statement))
 
 
 @router.post("/run-due", response_model=SchedulerKickResponse)
-def kick_due_tasks(session: Session = Depends(get_db)) -> SchedulerKickResponse:
+def kick_due_tasks(*, session: Annotated[Session, Depends(get_db)]) -> SchedulerKickResponse:
     runs = run_due_tasks(session)
     return SchedulerKickResponse(
         runs_created=len(runs),
@@ -103,7 +109,9 @@ def kick_due_tasks(session: Session = Depends(get_db)) -> SchedulerKickResponse:
 
 
 @router.post("/tasks/{task_id}/run", response_model=ScheduledTaskRunRead)
-def run_task_now(task_id: int, session: Session = Depends(get_db)) -> ScheduledTaskRunORM:
+def run_task_now(
+    *, task_id: int, session: Annotated[Session, Depends(get_db)]
+) -> ScheduledTaskRunORM:
     try:
         return run_task(session, task_id)
     except ValueError as exc:

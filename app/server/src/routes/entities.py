@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.encoders import jsonable_encoder
@@ -7,10 +8,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from src.db import get_db
-from src.models import EntityCitationORM, EntityORM, EntityObservationLinkORM
+from src.models import EntityCitationORM, EntityObservationLinkORM, EntityORM
 from src.schemas import (
-    EntityObservationLinkRead,
-    EntityRead,
     EntityAliasCreate,
     EntityAliasRead,
     EntityCandidateCreate,
@@ -19,6 +18,8 @@ from src.schemas import (
     EntityCitationRead,
     EntityIdentityAssertionCreate,
     EntityIdentityAssertionRead,
+    EntityObservationLinkRead,
+    EntityRead,
     EntityRelationshipAssertionCreate,
     EntityRelationshipAssertionRead,
     EntityRelationshipTypeCreate,
@@ -27,7 +28,6 @@ from src.schemas import (
     EntityResolutionResponse,
     EntityResolutionResultRead,
 )
-from src.services.entity_resolution_service import materialize_entities
 from src.services.entity_graph_service import (
     create_alias,
     create_candidate,
@@ -38,12 +38,13 @@ from src.services.entity_graph_service import (
     get_entity_profile,
     query_network_slice,
 )
+from src.services.entity_resolution_service import materialize_entities
 
 router = APIRouter(prefix="/entities", tags=["entities"])
 
 
 @router.get("", response_model=list[EntityRead])
-def list_entities(session: Session = Depends(get_db)) -> list[EntityORM]:
+def list_entities(*, session: Annotated[Session, Depends(get_db)]) -> list[EntityORM]:
     statement = select(EntityORM).order_by(
         EntityORM.confidence_score.desc(), EntityORM.created_at.desc()
     )
@@ -52,8 +53,9 @@ def list_entities(session: Session = Depends(get_db)) -> list[EntityORM]:
 
 @router.post("/resolve", response_model=EntityResolutionResponse)
 def resolve_entities(
+    *,
     payload: EntityResolutionRequest,
-    session: Session = Depends(get_db),
+    session: Annotated[Session, Depends(get_db)],
 ) -> EntityResolutionResponse:
     results = materialize_entities(session, payload)
     return EntityResolutionResponse(
@@ -76,8 +78,9 @@ def resolve_entities(
 
 @router.get("/{entity_id}/observations", response_model=list[EntityObservationLinkRead])
 def list_entity_observations(
+    *,
     entity_id: int,
-    session: Session = Depends(get_db),
+    session: Annotated[Session, Depends(get_db)],
 ) -> list[EntityObservationLinkORM]:
     entity = session.get(EntityORM, entity_id)
     if entity is None:
@@ -93,71 +96,97 @@ def list_entity_observations(
 
 
 @router.post("/citations", response_model=EntityCitationRead)
-def add_entity_citation(payload: EntityCitationCreate, session: Session = Depends(get_db)) -> EntityCitationORM:
+def add_entity_citation(
+    *, payload: EntityCitationCreate, session: Annotated[Session, Depends(get_db)]
+) -> EntityCitationORM:
     return translate_graph_write(lambda: create_citation(session, payload))
 
 
 @router.post("/relationship-types", response_model=EntityRelationshipTypeRead)
-def add_relationship_type(payload: EntityRelationshipTypeCreate, session: Session = Depends(get_db)) -> object:
+def add_relationship_type(
+    *, payload: EntityRelationshipTypeCreate, session: Annotated[Session, Depends(get_db)]
+) -> object:
     return translate_graph_write(lambda: create_relationship_type(session, payload))
 
 
 @router.post("/candidates", response_model=EntityCandidateRead)
-def add_entity_candidate(payload: EntityCandidateCreate, session: Session = Depends(get_db)) -> object:
+def add_entity_candidate(
+    *, payload: EntityCandidateCreate, session: Annotated[Session, Depends(get_db)]
+) -> object:
     return translate_graph_write(lambda: create_candidate(session, payload))
 
 
 @router.post("/aliases", response_model=EntityAliasRead)
-def add_entity_alias(payload: EntityAliasCreate, session: Session = Depends(get_db)) -> object:
+def add_entity_alias(
+    *, payload: EntityAliasCreate, session: Annotated[Session, Depends(get_db)]
+) -> object:
     return translate_graph_write(lambda: create_alias(session, payload))
 
 
 @router.post("/identity-assertions", response_model=EntityIdentityAssertionRead)
-def add_identity_assertion(payload: EntityIdentityAssertionCreate, session: Session = Depends(get_db)) -> object:
+def add_identity_assertion(
+    *, payload: EntityIdentityAssertionCreate, session: Annotated[Session, Depends(get_db)]
+) -> object:
     return translate_graph_write(lambda: create_identity_assertion(session, payload))
 
 
 @router.post("/relationships", response_model=EntityRelationshipAssertionRead)
 def add_relationship_assertion(
-    payload: EntityRelationshipAssertionCreate, session: Session = Depends(get_db)
+    *, payload: EntityRelationshipAssertionCreate, session: Annotated[Session, Depends(get_db)]
 ) -> object:
     return translate_graph_write(lambda: create_relationship_assertion(session, payload))
 
 
 @router.get("/{entity_id}/profile")
 def entity_profile(
+    *,
     entity_id: int,
     max_redaction_level: str = Query(default="public"),
-    session: Session = Depends(get_db),
+    session: Annotated[Session, Depends(get_db)],
 ) -> JSONResponse:
-    return JSONResponse(content=jsonable_encoder(translate_graph_read(lambda: get_entity_profile(session, entity_id, max_redaction_level=max_redaction_level))))
+    return JSONResponse(
+        content=jsonable_encoder(
+            translate_graph_read(
+                lambda: get_entity_profile(
+                    session, entity_id, max_redaction_level=max_redaction_level
+                )
+            )
+        )
+    )
 
 
 @router.get("/{entity_id}/network")
 def entity_network(
+    *,
     entity_id: int,
     max_depth: int = Query(default=2, ge=0, le=6),
     jurisdiction: str | None = None,
     since: datetime | None = None,
     until: datetime | None = None,
     min_confidence: float = Query(default=0.0, ge=0.0, le=1.0),
-    source_reliability: list[str] = Query(default=[]),
+    source_reliability: Annotated[
+        list[str], Query(default_factory=list, json_schema_extra={"default": []})
+    ],
     max_redaction_level: str = Query(default="public"),
-    session: Session = Depends(get_db),
+    session: Annotated[Session, Depends(get_db)],
 ) -> JSONResponse:
-    return JSONResponse(content=jsonable_encoder(translate_graph_read(
-        lambda: query_network_slice(
-            session,
-            entity_id=entity_id,
-            max_depth=max_depth,
-            jurisdiction=jurisdiction,
-            since=since,
-            until=until,
-            min_confidence=min_confidence,
-            source_reliability=set(source_reliability) or None,
-            max_redaction_level=max_redaction_level,
+    return JSONResponse(
+        content=jsonable_encoder(
+            translate_graph_read(
+                lambda: query_network_slice(
+                    session,
+                    entity_id=entity_id,
+                    max_depth=max_depth,
+                    jurisdiction=jurisdiction,
+                    since=since,
+                    until=until,
+                    min_confidence=min_confidence,
+                    source_reliability=set(source_reliability) or None,
+                    max_redaction_level=max_redaction_level,
+                )
+            )
         )
-    )))
+    )
 
 
 def translate_graph_write(operation: object) -> object:

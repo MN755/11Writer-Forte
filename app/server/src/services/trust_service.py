@@ -5,10 +5,8 @@ from urllib.parse import urlparse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from src.models import CustodyLogORM
-from src.models import SourceTrustProfileORM
-from src.schemas import SourceTrustProfileCreate
-from src.schemas import SourceTrustProfileUpdate
+from src.models import CustodyLogORM, SourceTrustProfileORM
+from src.schemas import SourceTrustProfileCreate, SourceTrustProfileUpdate
 
 DEFAULT_INTEGRITY_SOURCES = (
     ("nytimes.com", "trusted", "auto_approve_stable", True, "Seeded starter integrity source."),
@@ -46,8 +44,7 @@ def normalize_domain(value: str | None) -> str | None:
     elif ":" in candidate and candidate.count(":") == 1:
         candidate = candidate.split(":", 1)[0]
     candidate = candidate.split("/")[0]
-    if candidate.startswith("www."):
-        candidate = candidate[4:]
+    candidate = candidate.removeprefix("www.")
     return candidate or None
 
 

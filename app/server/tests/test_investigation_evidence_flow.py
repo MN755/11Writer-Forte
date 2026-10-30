@@ -15,7 +15,6 @@ from src.services.investigation_planner import (
 )
 from src.services.investigation_report_service import render_investigation_report
 
-
 NOW = datetime(2026, 7, 10, tzinfo=timezone.utc)
 
 

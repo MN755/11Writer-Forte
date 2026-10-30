@@ -3,13 +3,14 @@ from __future__ import annotations
 import ipaddress
 import socket
 import time
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.message import Message
 from email.utils import parsedate_to_datetime
 from functools import partial
 from http.client import HTTPConnection, HTTPSConnection
-from typing import Callable, Mapping, Protocol
+from typing import Protocol
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin, urlsplit
 from urllib.request import (
@@ -21,6 +22,8 @@ from urllib.request import (
     Request,
     build_opener,
 )
+
+from typing_extensions import Self
 
 
 class DiscoveryFetchError(RuntimeError):
@@ -50,7 +53,7 @@ class FetchResponse(Protocol):
 
     def geturl(self) -> str: ...
 
-    def __enter__(self) -> "FetchResponse": ...
+    def __enter__(self) -> Self: ...
 
     def __exit__(self, exc_type, exc, traceback) -> object: ...
 
@@ -83,7 +86,7 @@ class FetchPolicy:
     allow_private_networks: bool = False
     user_agent: str = "11Writer-Forte/0.1 (+bounded-source-discovery)"
 
-    def normalized(self) -> "FetchPolicy":
+    def normalized(self) -> FetchPolicy:
         return FetchPolicy(
             timeout_seconds=max(0.1, min(float(self.timeout_seconds), 120.0)),
             retry_attempts=max(1, min(int(self.retry_attempts), 5)),
@@ -273,11 +276,11 @@ def validate_fetch_url(
         raise UnsafeTargetError("Discovery target contains an invalid port.")
 
     hostname = normalize_hostname(parsed.hostname)
-    if hostname in {"localhost", "localhost.localdomain"} or hostname.endswith(
-        (".localhost", ".local")
-    ):
-        if not allow_private_networks:
-            raise UnsafeTargetError(f"Private or local target is blocked: {hostname}")
+    if (
+        hostname in {"localhost", "localhost.localdomain"}
+        or hostname.endswith((".localhost", ".local"))
+    ) and not allow_private_networks:
+        raise UnsafeTargetError(f"Private or local target is blocked: {hostname}")
 
     if address_pool is not None:
         if address_pool.allow_private_networks != bool(allow_private_networks):

@@ -9,6 +9,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 from typer.testing import CliRunner
+from typing_extensions import Self
 
 from src.cli import app as cli_app
 from src.config import reset_settings_cache
@@ -24,7 +25,7 @@ def flaky_scheduler_json_server(payload: list[dict[str, object]]):
     state = {"requests": 0}
 
     class Handler(BaseHTTPRequestHandler):
-        def do_GET(self) -> None:  # noqa: N802
+        def do_GET(self) -> None:
             state["requests"] += 1
             if state["requests"] == 1:
                 self.send_response(503)
@@ -37,7 +38,7 @@ def flaky_scheduler_json_server(payload: list[dict[str, object]]):
             self.end_headers()
             self.wfile.write(json.dumps(payload).encode("utf-8"))
 
-        def log_message(self, format: str, *args: object) -> None:  # noqa: A003
+        def log_message(self, format: str, *args: object) -> None:
             return
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
@@ -58,7 +59,7 @@ class FakeClickHouseResponse:
     def read(self) -> bytes:
         return self.payload.encode("utf-8")
 
-    def __enter__(self) -> "FakeClickHouseResponse":
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:

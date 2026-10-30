@@ -1,31 +1,34 @@
+from typing import Annotated
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from src.db import get_db
 from src.schemas import (
-    CameraOpsExportSummaryRead,
-    CameraOpsReportIndexRead,
     CameraInventoryOpsDetailRead,
     CameraInventoryRead,
     CameraInventorySummaryRead,
     CameraMaterializationRequest,
     CameraMaterializationResponse,
+    CameraOpsExportSummaryRead,
+    CameraOpsReportIndexRead,
 )
-from src.services.camera_source_service import materialize_camera_source_inventory
 from src.services.camera_service import (
-    build_camera_ops_export_summary,
-    build_camera_ops_report_index,
     build_camera_inventory_ops_detail,
     build_camera_inventory_summary,
+    build_camera_ops_export_summary,
+    build_camera_ops_report_index,
     list_cameras,
     materialize_camera_inventory,
 )
+from src.services.camera_source_service import materialize_camera_source_inventory
 
 router = APIRouter(prefix="/cameras", tags=["cameras"])
 
 
 @router.get("", response_model=list[CameraInventoryRead])
 def list_camera_inventory(
+    *,
     layer_key: str | None = None,
     source_domain: str | None = None,
     status: str | None = None,
@@ -35,7 +38,7 @@ def list_camera_inventory(
     max_lon: float | None = None,
     max_lat: float | None = None,
     limit: int = 200,
-    session: Session = Depends(get_db),
+    session: Annotated[Session, Depends(get_db)],
 ) -> list[object]:
     return list_cameras(
         session,
@@ -53,8 +56,9 @@ def list_camera_inventory(
 
 @router.post("/materialize", response_model=CameraMaterializationResponse)
 def materialize_cameras(
+    *,
     payload: CameraMaterializationRequest,
-    session: Session = Depends(get_db),
+    session: Annotated[Session, Depends(get_db)],
 ) -> dict[str, object]:
     result = materialize_camera_inventory(
         session,
@@ -78,6 +82,7 @@ def materialize_cameras(
 
 @router.get("/summary", response_model=CameraInventorySummaryRead)
 def summarize_cameras(
+    *,
     layer_key: str | None = None,
     source_domain: str | None = None,
     status: str | None = None,
@@ -87,7 +92,7 @@ def summarize_cameras(
     max_lon: float | None = None,
     max_lat: float | None = None,
     stale_after_hours: float = 24.0,
-    session: Session = Depends(get_db),
+    session: Annotated[Session, Depends(get_db)],
 ) -> dict[str, object]:
     return build_camera_inventory_summary(
         session,
@@ -105,6 +110,7 @@ def summarize_cameras(
 
 @router.get("/report-index", response_model=CameraOpsReportIndexRead)
 def camera_report_index(
+    *,
     layer_key: str | None = None,
     source_domain: str | None = None,
     status: str | None = None,
@@ -116,7 +122,7 @@ def camera_report_index(
     stale_after_hours: float = 24.0,
     limit: int = 25,
     stale_camera_limit: int = 25,
-    session: Session = Depends(get_db),
+    session: Annotated[Session, Depends(get_db)],
 ) -> dict[str, object]:
     return build_camera_ops_report_index(
         session,
@@ -136,6 +142,7 @@ def camera_report_index(
 
 @router.get("/export/summary", response_model=CameraOpsExportSummaryRead)
 def export_camera_summary(
+    *,
     layer_key: str | None = None,
     source_domain: str | None = None,
     status: str | None = None,
@@ -148,7 +155,7 @@ def export_camera_summary(
     camera_limit: int = 500,
     report_limit: int = 25,
     stale_camera_limit: int = 25,
-    session: Session = Depends(get_db),
+    session: Annotated[Session, Depends(get_db)],
 ) -> dict[str, object]:
     return build_camera_ops_export_summary(
         session,
@@ -169,7 +176,7 @@ def export_camera_summary(
 
 @router.get("/{camera_inventory_id}/ops", response_model=CameraInventoryOpsDetailRead)
 def camera_ops_detail(
-    camera_inventory_id: int, session: Session = Depends(get_db)
+    *, camera_inventory_id: int, session: Annotated[Session, Depends(get_db)]
 ) -> dict[str, object]:
     try:
         return build_camera_inventory_ops_detail(session, camera_inventory_id)

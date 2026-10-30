@@ -6,13 +6,12 @@ changes lifecycle state, or converts an uncertain claim into a conclusion.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from html import escape
-from typing import Iterable
 
 from src.services.evidence_service import ClaimAssessment, ClaimRecord, EvidenceRecord
-
 
 REPORT_SPEC_VERSION = "investigation-report/v1"
 

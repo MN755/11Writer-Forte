@@ -9,7 +9,6 @@ from src.services.evidence_service import (
     StatementKind,
 )
 
-
 NOW = datetime(2026, 7, 10, tzinfo=timezone.utc)
 
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -14,6 +15,9 @@ from pathlib import Path
 from typing import Any
 
 from src.config import get_settings
+from src.errors import redacted_exception_info
+
+logger = logging.getLogger("elevenwriter.runtime." + __name__)
 
 
 class LocalMediaRuntimeError(RuntimeError):
@@ -99,13 +103,17 @@ def build_model_approval(
     """Produce the required approval evidence from already-provisioned local files."""
     root = Path(model_path).resolve()
     if not (root / "model.bin").is_file() or not (root / "config.json").is_file():
-        raise LocalMediaRuntimeError("Model directory is missing faster-whisper model.bin or config.json.")
+        raise LocalMediaRuntimeError(
+            "Model directory is missing faster-whisper model.bin or config.json."
+        )
     package_lock = Path(package_lock_path).resolve()
     sbom = Path(sbom_path).resolve()
     if not package_lock.is_file() or not sbom.is_file():
         raise LocalMediaRuntimeError("Package lock and SBOM must exist before approval.")
     if not cve_review_ref.strip():
-        raise LocalMediaRuntimeError("A completed CVE review reference is required before approval.")
+        raise LocalMediaRuntimeError(
+            "A completed CVE review reference is required before approval."
+        )
     return LocalModelApproval(
         model_id=model_id,
         version=version,
@@ -139,9 +147,13 @@ def build_tesseract_approval(
     executable, tessdata = Path(executable_path).resolve(), Path(tessdata_path).resolve()
     package_lock, sbom = Path(package_lock_path).resolve(), Path(sbom_path).resolve()
     if not executable.is_file() or not (tessdata / "eng.traineddata").is_file():
-        raise LocalMediaRuntimeError("Tesseract executable or Apache-licensed eng.traineddata is unavailable.")
+        raise LocalMediaRuntimeError(
+            "Tesseract executable or Apache-licensed eng.traineddata is unavailable."
+        )
     if not package_lock.is_file() or not sbom.is_file() or not cve_review_ref.strip():
-        raise LocalMediaRuntimeError("Tesseract approval requires a lockfile, SBOM, and CVE review reference.")
+        raise LocalMediaRuntimeError(
+            "Tesseract approval requires a lockfile, SBOM, and CVE review reference."
+        )
     version = _run_command(executable, "--version").splitlines()[0].strip()
     return TesseractApproval(
         engine_version=version,
@@ -170,7 +182,10 @@ def tesseract_ocr_offline(
     page_segmentation_mode: int = 3,
 ) -> TesseractOcrResult:
     """Run a checksum-verified Tesseract LSTM OCR invocation with no network capability."""
-    if not language.replace("+", "").replace("_", "").isalnum() or not 0 <= page_segmentation_mode <= 13:
+    if (
+        not language.replace("+", "").replace("_", "").isalnum()
+        or not 0 <= page_segmentation_mode <= 13
+    ):
         raise LocalMediaRuntimeError("Invalid Tesseract language or page segmentation mode.")
     try:
         approval_file = resolve_data_dir_path(approval_path, label="Tesseract approval record")
@@ -233,7 +248,9 @@ def transcribe_offline(
         raise LocalMediaRuntimeError("faster-whisper is not installed in this runtime.") from exc
 
     def execute(device: str, compute_type: str) -> tuple[list[Any], Any, float]:
-        model = WhisperModel(str(model_path), device=device, compute_type=compute_type, local_files_only=True)
+        model = WhisperModel(
+            str(model_path), device=device, compute_type=compute_type, local_files_only=True
+        )
         started = time.perf_counter()
         segments, info = model.transcribe(str(audio), beam_size=1, vad_filter=False)
         return list(segments), info, time.perf_counter() - started
@@ -244,6 +261,9 @@ def transcribe_offline(
             rows, info, elapsed = execute("cuda", "float16")
             device = "cuda"
         except Exception:
+            logger.error(
+                "local media runtime service operation failed", exc_info=redacted_exception_info()
+            )
             rows, info, elapsed = execute("cpu", "int8")
             cpu_fallback = True
     else:
@@ -298,8 +318,23 @@ def generate_video_derivatives(
     source_path = _resolve_under_root(source, approved_root, label="Derivative source")
     root = _resolve_under_root(output_dir, approved_root, label="Derivative output directory")
     root.mkdir(parents=True, exist_ok=True)
-    proxy, keyframe, wav, waveform = root / "proxy.mp4", root / "keyframe.jpg", root / "audio.wav", root / "waveform.json"
-    _run_ffmpeg(ffmpeg, "-i", str(source_path), "-vf", "scale='min(1280,iw)':-2", "-an", "-movflags", "+faststart", str(proxy))
+    proxy, keyframe, wav, waveform = (
+        root / "proxy.mp4",
+        root / "keyframe.jpg",
+        root / "audio.wav",
+        root / "waveform.json",
+    )
+    _run_ffmpeg(
+        ffmpeg,
+        "-i",
+        str(source_path),
+        "-vf",
+        "scale='min(1280,iw)':-2",
+        "-an",
+        "-movflags",
+        "+faststart",
+        str(proxy),
+    )
     _run_ffmpeg(ffmpeg, "-ss", "0", "-i", str(source_path), "-frames:v", "1", str(keyframe))
     _run_ffmpeg(ffmpeg, "-i", str(source_path), "-vn", "-ac", "1", "-ar", "8000", str(wav))
     waveform.write_text(json.dumps(_waveform(wav), separators=(",", ":")), encoding="utf-8")
@@ -348,14 +383,21 @@ def hash_file(path: str | Path) -> str:
 
 def hash_tree(root: str | Path) -> str:
     base, digest = Path(root).resolve(), hashlib.sha256()
-    for path in sorted(item for item in base.rglob("*") if item.is_file() and ".cache" not in item.parts):
+    for path in sorted(
+        item for item in base.rglob("*") if item.is_file() and ".cache" not in item.parts
+    ):
         digest.update(path.relative_to(base).as_posix().encode("utf-8"))
         digest.update(hash_file(path).encode("ascii"))
     return digest.hexdigest()
 
 
 def _run_ffmpeg(ffmpeg: str, *arguments: str) -> None:
-    completed = subprocess.run([ffmpeg, "-nostdin", "-v", "error", "-y", *arguments], capture_output=True, text=True, check=False)
+    completed = subprocess.run(
+        [ffmpeg, "-nostdin", "-v", "error", "-y", *arguments],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
     if completed.returncode:
         raise LocalMediaRuntimeError(f"FFmpeg failed: {completed.stderr.strip()}")
 
@@ -375,7 +417,17 @@ def _waveform(wav_path: Path, buckets: int = 200) -> dict[str, Any]:
         if width != 2:
             raise LocalMediaRuntimeError("Expected FFmpeg to produce signed 16-bit PCM.")
         raw = stream.readframes(frames)
-        samples = [int.from_bytes(raw[index:index + 2], "little", signed=True) for index in range(0, len(raw), 2)]
+        samples = [
+            int.from_bytes(raw[index : index + 2], "little", signed=True)
+            for index in range(0, len(raw), 2)
+        ]
         step = max(1, len(samples) // buckets)
-        points = [round(max(abs(sample) for sample in samples[index:index + step]) / 32768, 6) for index in range(0, len(samples), step)]
-        return {"sample_rate": stream.getframerate(), "duration_seconds": round(frames / stream.getframerate(), 6), "peaks": points[:buckets]}
+        points = [
+            round(max(abs(sample) for sample in samples[index : index + step]) / 32768, 6)
+            for index in range(0, len(samples), step)
+        ]
+        return {
+            "sample_rate": stream.getframerate(),
+            "duration_seconds": round(frames / stream.getframerate(), 6),
+            "peaks": points[:buckets],
+        }

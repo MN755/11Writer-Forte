@@ -8,7 +8,11 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 
 from src.config import get_settings
-from src.services.local_intelligence_service import LocalIntelligenceError, LocalIntelligenceRuntime, ModelRegistry
+from src.services.local_intelligence_service import (
+    LocalIntelligenceError,
+    LocalIntelligenceRuntime,
+    ModelRegistry,
+)
 
 router = APIRouter(prefix="/local-intelligence", tags=["local-intelligence"])
 

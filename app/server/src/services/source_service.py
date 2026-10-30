@@ -22,6 +22,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from src.config import get_settings
+from src.errors import UpstreamPayloadError
 from src.models import (
     CustodyLogORM,
     ScheduledTaskORM,
@@ -31,10 +32,10 @@ from src.models import (
     StorageObjectORM,
 )
 from src.schemas import SourceDefinitionCreate, SourceDefinitionUpdate
+from src.services.discovery_fetch import FetchPolicy, fetch_url, read_bounded
 from src.services.import_service import import_local_path
 from src.services.layer_service import ensure_data_layer
 from src.services.storage_service import register_source_run_storage_object
-from src.services.discovery_fetch import FetchPolicy, fetch_url, read_bounded
 
 
 @dataclass(frozen=True)
@@ -132,7 +133,7 @@ def update_source_definition(
 
     if "name" in changes and changes["name"] != record.name:
         ensure_unique_source_name(session, str(changes["name"]), source_id=source_id)
-    if "layer_key" in changes and changes["layer_key"]:
+    if changes.get("layer_key"):
         ensure_data_layer(session, str(changes["layer_key"]), actor=actor)
 
     change_details = apply_changes(record, changes)
@@ -991,7 +992,7 @@ def apply_basic_auth_headers(metadata: dict[str, Any], headers: dict[str, str]) 
     password = os.getenv(password_env)
     if password is None:
         raise RuntimeError(f"HTTP source basic auth password env var '{password_env}' is not set.")
-    token = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode("ascii")
+    token = base64.b64encode(f"{username}:{password}".encode()).decode("ascii")
     headers.setdefault("Authorization", f"Basic {token}")
 
 
@@ -1109,16 +1110,16 @@ def materialize_paginated_http_source_payload(
 
         offset += page.item_count
         more_pages_available = True
-        if page.item_count <= 0:
-            more_pages_available = False
-        elif total_available is not None and offset >= total_available:
-            more_pages_available = False
-        elif page.has_more is False:
-            more_pages_available = False
-        elif (
-            page.has_more is None
-            and total_available is None
-            and page.item_count < pagination.page_size
+        if (
+            page.item_count <= 0
+            or total_available is not None
+            and offset >= total_available
+            or page.has_more is False
+            or (
+                page.has_more is None
+                and total_available is None
+                and page.item_count < pagination.page_size
+            )
         ):
             more_pages_available = False
         if not more_pages_available:
@@ -1494,7 +1495,7 @@ def parse_arcgis_feature_document(
 ) -> list[dict[str, Any]]:
     features = document.get("features")
     if not isinstance(features, list):
-        raise RuntimeError("ArcGIS feature payload did not contain a features list.")
+        raise UpstreamPayloadError("ArcGIS feature payload did not contain a features list.")
     spatial_reference = document.get("spatialReference")
     wkid = extract_arcgis_wkid(spatial_reference)
     records: list[dict[str, Any]] = []
@@ -1552,10 +1553,10 @@ def parse_ckan_package_search_document(
 ) -> list[dict[str, Any]]:
     result = document.get("result")
     if not isinstance(result, dict):
-        raise RuntimeError("CKAN package search payload did not contain a result object.")
+        raise UpstreamPayloadError("CKAN package search payload did not contain a result object.")
     packages = result.get("results")
     if not isinstance(packages, list):
-        raise RuntimeError("CKAN package search payload did not contain a results list.")
+        raise UpstreamPayloadError("CKAN package search payload did not contain a results list.")
 
     records: list[dict[str, Any]] = []
     for package in packages:
@@ -1732,7 +1733,7 @@ def parse_json_payload(payload: bytes, label: str) -> dict[str, Any]:
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise RuntimeError(f"{label} could not be decoded as JSON.") from exc
     if not isinstance(parsed, dict):
-        raise RuntimeError(f"{label} did not decode to a JSON object.")
+        raise UpstreamPayloadError(f"{label} did not decode to a JSON object.")
     return parsed
 
 

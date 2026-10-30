@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 import time
-from concurrent.futures import ThreadPoolExecutor
 from collections import Counter
+from collections.abc import Iterable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 from urllib.parse import quote_plus, urlsplit, urlunsplit
 from urllib.robotparser import RobotFileParser
 
@@ -16,6 +18,7 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from src.config import get_settings
+from src.errors import redacted_exception_info
 from src.models import (
     AlertORM,
     CameraSourceInventoryORM,
@@ -60,6 +63,7 @@ from src.services.discovery_fetch import (
 from src.services.layer_service import ensure_data_layer
 from src.services.trust_service import normalize_domain, resolve_trust
 
+logger = logging.getLogger("elevenwriter.runtime." + __name__)
 
 DISCOVERY_MODES = {
     "query_seeded",
@@ -990,9 +994,10 @@ def active_suppression_for_url(
         )
     )
     for suppression in suppressions:
-        if suppression.scope == "domain" and suppression.normalized_domain:
-            if domain_matches(domain, suppression.normalized_domain):
-                return suppression
+        if (suppression.scope == "domain" and suppression.normalized_domain) and (
+            domain_matches(domain, suppression.normalized_domain)
+        ):
+            return suppression
         if suppression.candidate_id is not None:
             candidate = session.get(SourceCandidateORM, suppression.candidate_id)
             if candidate is not None and candidate.canonical_url == canonical_url:
@@ -1624,6 +1629,7 @@ def process_discovery_frontier(
                 touched_this_call.add(candidate.candidate_id)
             processed_this_call += 1
         except Exception as exc:
+            logger.error("discovery service operation failed", exc_info=redacted_exception_info())
             session.rollback()
             handle_frontier_error(session, campaign, run, entry, exc, actor=actor)
             processed_this_call += 1
@@ -1877,6 +1883,7 @@ def process_frontier_batch(
                 actor=actor,
             )
         except Exception as exc:
+            logger.error("discovery service operation failed", exc_info=redacted_exception_info())
             session.rollback()
             handle_frontier_error(session, campaign, run, entry, exc, actor=actor)
             processed_count += 1
@@ -1915,6 +1922,9 @@ def process_frontier_batch(
                     if candidate is not None:
                         candidate_ids.add(candidate.candidate_id)
                 except Exception as exc:
+                    logger.error(
+                        "discovery service operation failed", exc_info=redacted_exception_info()
+                    )
                     session.rollback()
                     handle_frontier_error(session, campaign, run, entry, exc, actor=actor)
                 processed_count += 1
@@ -1963,7 +1973,7 @@ def prepare_frontier_fetch_task(
         session.commit()
         return None
     if urlsplit(entry.canonical_url).scheme not in {"http", "https"}:
-        candidate = process_frontier_entry(
+        process_frontier_entry(
             session,
             campaign,
             run,
@@ -1971,7 +1981,7 @@ def prepare_frontier_fetch_task(
             domain_policy=domain_policy,
             actor=actor,
         )
-        return None if candidate is None else None
+        return None
 
     fetch_policy = effective_fetch_policy(policy, domain_policy)
     validate_fetch_url(
@@ -4684,6 +4694,7 @@ def check_candidate_health(
         session.refresh(check)
         return check
     except Exception as exc:
+        logger.error("discovery service operation failed", exc_info=redacted_exception_info())
         session.rollback()
         candidate = session.get(SourceCandidateORM, candidate_id)
         assert candidate is not None

@@ -8,7 +8,6 @@ from fastapi.responses import JSONResponse
 
 from src.config import get_settings
 from src.db import init_db
-from src.security import authenticate_operator, required_scope_for_request
 from src.routes.alerts import router as alerts_router
 from src.routes.browser_collection import router as browser_collection_router
 from src.routes.camera_sources import router as camera_sources_router
@@ -22,19 +21,20 @@ from src.routes.events import router as events_router
 from src.routes.geofences import router as geofences_router
 from src.routes.health import router as health_router
 from src.routes.imports import router as imports_router
-from src.routes.investigations import router as investigations_router
 from src.routes.investigation_control import router as investigation_control_router
+from src.routes.investigations import router as investigations_router
 from src.routes.local_intelligence import router as local_intelligence_router
 from src.routes.media_intelligence import router as media_intelligence_router
 from src.routes.observations import router as observations_router
 from src.routes.operations import router as operations_router
 from src.routes.research_fleet import router as research_fleet_router
 from src.routes.scheduler import router as scheduler_router
-from src.routes.storage import router as storage_router
-from src.routes.sources import router as sources_router
 from src.routes.source_trust import router as source_trust_router
-from src.routes.watches import router as watches_router
+from src.routes.sources import router as sources_router
+from src.routes.storage import router as storage_router
 from src.routes.watch_feed import router as watch_feed_router
+from src.routes.watches import router as watches_router
+from src.security import authenticate_operator, required_scope_for_request
 
 
 @asynccontextmanager
@@ -80,6 +80,7 @@ def create_application() -> FastAPI:
         response = await call_next(request)
         response.headers["X-11Writer-Operator"] = principal.principal_id
         return response
+
     application.include_router(health_router)
     application.include_router(events_router, prefix=settings.api_prefix)
     application.include_router(entities_router, prefix=settings.api_prefix)

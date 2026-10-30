@@ -21,7 +21,7 @@ def flaky_json_server(payload: list[dict[str, object]]):
     state = {"requests": 0, "last_user_agent": None, "last_header": None}
 
     class Handler(BaseHTTPRequestHandler):
-        def do_GET(self) -> None:  # noqa: N802
+        def do_GET(self) -> None:
             state["requests"] += 1
             state["last_user_agent"] = self.headers.get("User-Agent")
             state["last_header"] = self.headers.get("X-Test-Token")
@@ -36,7 +36,7 @@ def flaky_json_server(payload: list[dict[str, object]]):
             self.end_headers()
             self.wfile.write(json.dumps(payload).encode("utf-8"))
 
-        def log_message(self, format: str, *args: object) -> None:  # noqa: A003
+        def log_message(self, format: str, *args: object) -> None:
             return
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
@@ -52,11 +52,11 @@ def flaky_json_server(payload: list[dict[str, object]]):
 
 @contextmanager
 def basic_auth_xml_server(payload: str, *, username: str, password: str):
-    expected_token = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode("ascii")
+    expected_token = base64.b64encode(f"{username}:{password}".encode()).decode("ascii")
     state = {"requests": 0, "last_authorization": None}
 
     class Handler(BaseHTTPRequestHandler):
-        def do_GET(self) -> None:  # noqa: N802
+        def do_GET(self) -> None:
             state["requests"] += 1
             state["last_authorization"] = self.headers.get("Authorization")
             if state["last_authorization"] != f"Basic {expected_token}":
@@ -69,7 +69,7 @@ def basic_auth_xml_server(payload: str, *, username: str, password: str):
             self.end_headers()
             self.wfile.write(payload.encode("utf-8"))
 
-        def log_message(self, format: str, *args: object) -> None:  # noqa: A003
+        def log_message(self, format: str, *args: object) -> None:
             return
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
@@ -93,7 +93,7 @@ def static_http_server(
     state = {"requests": 0, "last_accept": None}
 
     class Handler(BaseHTTPRequestHandler):
-        def do_GET(self) -> None:  # noqa: N802
+        def do_GET(self) -> None:
             state["requests"] += 1
             state["last_accept"] = self.headers.get("Accept")
             self.send_response(200)
@@ -101,7 +101,7 @@ def static_http_server(
             self.end_headers()
             self.wfile.write(payload)
 
-        def log_message(self, format: str, *args: object) -> None:  # noqa: A003
+        def log_message(self, format: str, *args: object) -> None:
             return
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
@@ -120,7 +120,7 @@ def dynamic_http_server(responder):
     state = {"requests": [], "last_accept": None}
 
     class Handler(BaseHTTPRequestHandler):
-        def do_GET(self) -> None:  # noqa: N802
+        def do_GET(self) -> None:
             state["requests"].append(self.path)
             state["last_accept"] = self.headers.get("Accept")
             status_code, content_type, payload = responder(self.path)
@@ -129,7 +129,7 @@ def dynamic_http_server(responder):
             self.end_headers()
             self.wfile.write(payload)
 
-        def log_message(self, format: str, *args: object) -> None:  # noqa: A003
+        def log_message(self, format: str, *args: object) -> None:
             return
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
@@ -783,9 +783,9 @@ def test_http_jsonl_source_imports_multiple_records(client: TestClient) -> None:
 
 def test_http_csv_source_materializes_rows_as_json_records(client: TestClient) -> None:
     csv_payload = (
-        "camera_id,name,image_url,latitude,longitude\n"
-        "mn-1,Port Camera,https://cams.example.com/port.jpg,44.95,-93.09\n"
-    ).encode("utf-8")
+        b"camera_id,name,image_url,latitude,longitude\n"
+        b"mn-1,Port Camera,https://cams.example.com/port.jpg,44.95,-93.09\n"
+    )
     with static_http_server(csv_payload, content_type="text/csv", path="/cameras.csv") as (
         target_uri,
         state,
@@ -823,7 +823,7 @@ def test_http_csv_source_materializes_rows_as_json_records(client: TestClient) -
 
 
 def test_rss_source_parses_feed_items(client: TestClient) -> None:
-    rss_payload = """<?xml version="1.0" encoding="UTF-8"?>
+    rss_payload = b"""<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0">
   <channel>
     <title>Port Alerts</title>
@@ -837,7 +837,7 @@ def test_rss_source_parses_feed_items(client: TestClient) -> None:
     </item>
   </channel>
 </rss>
-""".encode("utf-8")
+"""
     with static_http_server(rss_payload, content_type="application/rss+xml", path="/feed.xml") as (
         target_uri,
         state,

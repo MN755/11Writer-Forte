@@ -8,10 +8,10 @@ from sqlalchemy.orm import Session
 from src.models import (
     AlertORM,
     CustodyLogORM,
-    EntityORM,
     EntityObservationLinkORM,
-    EventORM,
+    EntityORM,
     EventObservationLinkORM,
+    EventORM,
     LocalImportRunORM,
     ObservationORM,
     ScheduledTaskORM,
@@ -166,7 +166,7 @@ def build_event_export_bundle(
         else []
     )
     scheduled_task_map = {task.task_id: task for task in [*scheduled_tasks, *geofence_tasks]}
-    scheduled_tasks = list(sorted(scheduled_task_map.values(), key=lambda task: task.task_id))
+    scheduled_tasks = sorted(scheduled_task_map.values(), key=lambda task: task.task_id)
     task_ids = [task.task_id for task in scheduled_tasks]
     scheduled_task_runs = (
         list(

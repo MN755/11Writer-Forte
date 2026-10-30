@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import base64
 import binascii
+import shutil
 from dataclasses import asdict
 from datetime import datetime
-import shutil
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -30,8 +30,8 @@ from src.services.local_media_runtime_service import (
     generate_image_derivatives,
     generate_video_derivatives,
     resolve_data_dir_path,
-    transcribe_offline,
     tesseract_ocr_offline,
+    transcribe_offline,
 )
 from src.services.local_vision_runtime_service import (
     LocalVisionRuntimeError,
@@ -102,7 +102,11 @@ def generate_derivatives(payload: MediaDerivativeRequest) -> dict[str, Any]:
                     role="derived",
                     owner=ArtifactOwner("artifact", parent.artifact_uid, "derived_from"),
                     original_uri=parent.original_uri,
-                    media_type="image/jpeg" if path.endswith((".jpg", ".jpeg")) else "application/json" if path.endswith(".json") else "video/mp4",
+                    media_type="image/jpeg"
+                    if path.endswith((".jpg", ".jpeg"))
+                    else "application/json"
+                    if path.endswith(".json")
+                    else "video/mp4",
                     retention_class=parent.retention_class,
                     transform_chain=[f"{payload.derivative_kind}:{name}"],
                     provenance={"parent_artifact_uid": parent.artifact_uid},
@@ -139,7 +143,9 @@ def ocr_local_image(payload: TesseractOcrRequest) -> dict[str, Any]:
     """Run the approved local Tesseract LSTM engine over a data-dir image."""
     try:
         image_path = resolve_data_dir_path(payload.image_path, label="OCR image input")
-        approval_path = resolve_data_dir_path(payload.approval_path, label="Tesseract approval record")
+        approval_path = resolve_data_dir_path(
+            payload.approval_path, label="Tesseract approval record"
+        )
         return asdict(
             tesseract_ocr_offline(
                 image_path,
@@ -153,7 +159,9 @@ def ocr_local_image(payload: TesseractOcrRequest) -> dict[str, Any]:
 
 
 @router.post("/intake")
-def intake_media(payload: MediaIntakeRequest, session: Session = Depends(get_db)) -> dict[str, Any]:
+def intake_media(
+    *, payload: MediaIntakeRequest, session: Annotated[Session, Depends(get_db)]
+) -> dict[str, Any]:
     """Ingest already-acquired bytes; this endpoint never fetches a supplied URL."""
     try:
         raw = base64.b64decode(payload.payload_base64, validate=True)
@@ -221,9 +229,11 @@ def intake_media(payload: MediaIntakeRequest, session: Session = Depends(get_db)
 def validate_web_image_reference(payload: WebImageReferenceRequest) -> dict[str, Any]:
     """Validate/canonicalize a public image/page reference without fetching either URL."""
     try:
-        return _media_service().ingest_web_image_reference(
-            payload.image_url, source_page_url=payload.source_page_url
-        ).to_dict()
+        return (
+            _media_service()
+            .ingest_web_image_reference(payload.image_url, source_page_url=payload.source_page_url)
+            .to_dict()
+        )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 

@@ -1,3 +1,5 @@
+from typing import Annotated
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -20,7 +22,7 @@ router = APIRouter(prefix="/source-trust", tags=["source-trust"])
 
 
 @router.get("/profiles", response_model=list[SourceTrustProfileRead])
-def list_profiles(session: Session = Depends(get_db)) -> list[SourceTrustProfileORM]:
+def list_profiles(*, session: Annotated[Session, Depends(get_db)]) -> list[SourceTrustProfileORM]:
     return list(
         session.scalars(select(SourceTrustProfileORM).order_by(SourceTrustProfileORM.domain.asc()))
     )
@@ -28,8 +30,9 @@ def list_profiles(session: Session = Depends(get_db)) -> list[SourceTrustProfile
 
 @router.post("/profiles", response_model=SourceTrustProfileRead)
 def create_profile(
+    *,
     payload: SourceTrustProfileCreate,
-    session: Session = Depends(get_db),
+    session: Annotated[Session, Depends(get_db)],
 ) -> SourceTrustProfileORM:
     try:
         return create_source_trust_profile(session, payload, actor="api_source_trust")
@@ -39,9 +42,10 @@ def create_profile(
 
 @router.patch("/profiles/{trust_profile_id}", response_model=SourceTrustProfileRead)
 def patch_profile(
+    *,
     trust_profile_id: int,
     payload: SourceTrustProfileUpdate,
-    session: Session = Depends(get_db),
+    session: Annotated[Session, Depends(get_db)],
 ) -> SourceTrustProfileORM:
     try:
         return update_source_trust_profile(
@@ -57,6 +61,6 @@ def patch_profile(
 
 
 @router.post("/seed-defaults", response_model=IntegritySeedResponse)
-def seed_profiles(session: Session = Depends(get_db)) -> IntegritySeedResponse:
+def seed_profiles(*, session: Annotated[Session, Depends(get_db)]) -> IntegritySeedResponse:
     created = seed_default_integrity_sources(session, actor="api_source_trust")
     return IntegritySeedResponse(created=len(created), domains=created)

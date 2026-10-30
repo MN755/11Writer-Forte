@@ -19,7 +19,6 @@ from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlsplit, urlunsplit
 
-
 MediaKind = Literal["image", "video", "audio"]
 
 

@@ -9,17 +9,17 @@ from __future__ import annotations
 
 import ipaddress
 import re
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from datetime import datetime
-from typing import Any, Mapping
+from typing import Any
 from urllib.parse import urlsplit
 
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
-from pydantic import BaseModel, Field
 
 from src.models import CustodyLogORM, ResearchProviderORM, utcnow
-
 
 ALLOWED_CAPABILITIES = frozenset(
     {"search", "fetch_feed", "fetch_static", "parse_document", "browser_render", "source_health"}
@@ -94,9 +94,19 @@ def _payload_dict(payload: Any, *, exclude_unset: bool = False) -> dict[str, Any
         return {
             field: getattr(payload, field)
             for field in (
-                "provider_key", "display_name", "provider_kind", "capabilities_json", "base_urls_json",
-                "access_mode", "terms_url", "license_note", "robots_mode", "jurisdictions_json",
-                "languages_json", "request_budget_json", "artifact_capture_mode",
+                "provider_key",
+                "display_name",
+                "provider_kind",
+                "capabilities_json",
+                "base_urls_json",
+                "access_mode",
+                "terms_url",
+                "license_note",
+                "robots_mode",
+                "jurisdictions_json",
+                "languages_json",
+                "request_budget_json",
+                "artifact_capture_mode",
             )
         }
     raise TypeError("Provider payload must be a Pydantic model or mapping.")
@@ -155,7 +165,9 @@ def validate_approved_origin(value: Any) -> str:
     if parsed.query or parsed.fragment:
         raise _error("Provider base URLs must not contain a query or fragment.")
     hostname = parsed.hostname.rstrip(".").lower()
-    if hostname in {"localhost", "localhost.localdomain"} or hostname.endswith((".localhost", ".local")):
+    if hostname in {"localhost", "localhost.localdomain"} or hostname.endswith(
+        (".localhost", ".local")
+    ):
         raise _error("Provider base URLs may not target local hosts.")
     try:
         literal = ipaddress.ip_address(hostname.split("%", 1)[0])
@@ -176,7 +188,7 @@ def validate_approved_origin(value: Any) -> str:
         raise _error("Provider base URL contains an invalid port.") from exc
     authority = hostname if port is None else f"{hostname}:{port}"
     path = parsed.path.rstrip("/")
-    return f"{parsed.scheme.lower()}://{authority}{path}" or candidate
+    return f"{parsed.scheme.lower()}://{authority}{path}"
 
 
 def validate_public_request_url(value: Any) -> str:
@@ -187,9 +199,7 @@ def validate_public_request_url(value: Any) -> str:
     parsed = urlsplit(value.strip())
     # Origin validation does the difficult hostname/IP checks; add the request parts
     # back afterwards because search and dataset endpoints commonly require a query.
-    validate_approved_origin(
-        f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
-    )
+    validate_approved_origin(f"{parsed.scheme}://{parsed.netloc}{parsed.path}")
     return value.strip()
 
 
@@ -232,7 +242,9 @@ def validate_provider_configuration(payload: Any) -> dict[str, Any]:
     normalized["request_budget_json"] = normalize_budget(data.get("request_budget_json"))
     for field_name in ("jurisdictions_json", "languages_json"):
         value = data.get(field_name, [])
-        if not isinstance(value, list) or any(not isinstance(item, str) or not item.strip() for item in value):
+        if not isinstance(value, list) or any(
+            not isinstance(item, str) or not item.strip() for item in value
+        ):
             raise _error(f"{field_name} must be a list of non-empty strings.")
         normalized[field_name] = sorted({item.strip() for item in value})
     return normalized
@@ -263,7 +275,9 @@ def _record_custody(
 
 def create_provider(session: Session, payload: Any, *, actor: str) -> ResearchProviderORM:
     data = validate_provider_configuration(payload)
-    existing = session.scalar(select(ResearchProviderORM).where(ResearchProviderORM.provider_key == data["provider_key"]))
+    existing = session.scalar(
+        select(ResearchProviderORM).where(ResearchProviderORM.provider_key == data["provider_key"])
+    )
     if existing is not None:
         raise _error(f"Provider '{data['provider_key']}' already exists.")
     # Activation is intentionally a separate, admin-scoped action even when the
@@ -320,7 +334,9 @@ def list_providers(
     return providers
 
 
-def update_provider(session: Session, provider_id: int, payload: Any, *, actor: str) -> ResearchProviderORM:
+def update_provider(
+    session: Session, provider_id: int, payload: Any, *, actor: str
+) -> ResearchProviderORM:
     provider = get_provider(session, provider_id)
     updates = _payload_dict(payload, exclude_unset=True)
     if not updates:
@@ -330,14 +346,26 @@ def update_provider(session: Session, provider_id: int, payload: Any, *, actor: 
     candidate = {
         column: getattr(provider, column)
         for column in (
-            "provider_key", "display_name", "provider_kind", "capabilities_json", "base_urls_json",
-            "access_mode", "terms_url", "license_note", "robots_mode", "jurisdictions_json",
-            "languages_json", "request_budget_json", "artifact_capture_mode",
+            "provider_key",
+            "display_name",
+            "provider_kind",
+            "capabilities_json",
+            "base_urls_json",
+            "access_mode",
+            "terms_url",
+            "license_note",
+            "robots_mode",
+            "jurisdictions_json",
+            "languages_json",
+            "request_budget_json",
+            "artifact_capture_mode",
         )
     }
     candidate.update(updates)
     normalized = validate_provider_configuration(candidate)
-    changed = sorted(key for key, value in normalized.items() if getattr(provider, key, None) != value)
+    changed = sorted(
+        key for key, value in normalized.items() if getattr(provider, key, None) != value
+    )
     for key in changed:
         setattr(provider, key, normalized[key])
     # Configuration changes must be explicitly re-approved before scheduling resumes.
@@ -409,7 +437,9 @@ def enable_provider(session: Session, provider_id: int, *, actor: str) -> Resear
     return provider
 
 
-def pause_provider(session: Session, provider_id: int, *, reason: str, actor: str) -> ResearchProviderORM:
+def pause_provider(
+    session: Session, provider_id: int, *, reason: str, actor: str
+) -> ResearchProviderORM:
     if not reason.strip():
         raise _error("A non-empty pause reason is required.")
     provider = get_provider(session, provider_id)
@@ -444,7 +474,11 @@ def _url_matches_approved_prefix(url: str, origins: list[str]) -> bool:
             continue
         required_path = origin_parts.path.rstrip("/")
         actual_path = candidate_parts.path.rstrip("/")
-        if not required_path or actual_path == required_path or actual_path.startswith(f"{required_path}/"):
+        if (
+            not required_path
+            or actual_path == required_path
+            or actual_path.startswith(f"{required_path}/")
+        ):
             return True
     return False
 
@@ -458,14 +492,27 @@ def evaluate_provider_request(
 ) -> ProviderPolicyDecision:
     provider = get_provider(session, provider_id)
     budget = normalize_budget(provider.request_budget_json or {})
-    common = {"provider": provider.provider_key, "url": url, "capability": capability, "applied_budget": budget}
+    common = {
+        "provider": provider.provider_key,
+        "url": url,
+        "capability": capability,
+        "applied_budget": budget,
+    }
     if provider.paused_at is not None:
         return ProviderPolicyDecision(False, "domain_paused", **common)
     if not provider.enabled:
         return ProviderPolicyDecision(False, "provider_disabled", **common)
     if provider.health_status not in USABLE_HEALTH_STATUSES:
-        return ProviderPolicyDecision(False, "schema_quarantined" if provider.health_status == "schema_quarantined" else "provider_disabled", **common)
-    if capability not in ALLOWED_CAPABILITIES or capability not in (provider.capabilities_json or []):
+        return ProviderPolicyDecision(
+            False,
+            "schema_quarantined"
+            if provider.health_status == "schema_quarantined"
+            else "provider_disabled",
+            **common,
+        )
+    if capability not in ALLOWED_CAPABILITIES or capability not in (
+        provider.capabilities_json or []
+    ):
         return ProviderPolicyDecision(False, "unsupported_capability", **common)
     try:
         validate_public_request_url(url)
@@ -481,8 +528,16 @@ def provider_coverage_summary(session: Session) -> dict[str, object]:
     all_capabilities = sorted(ALLOWED_CAPABILITIES)
     by_capability: dict[str, dict[str, object]] = {}
     for capability in all_capabilities:
-        matching = [provider for provider in providers if capability in (provider.capabilities_json or [])]
-        available = [provider for provider in matching if provider.enabled and provider.paused_at is None and provider.health_status in USABLE_HEALTH_STATUSES]
+        matching = [
+            provider for provider in providers if capability in (provider.capabilities_json or [])
+        ]
+        available = [
+            provider
+            for provider in matching
+            if provider.enabled
+            and provider.paused_at is None
+            and provider.health_status in USABLE_HEALTH_STATUSES
+        ]
         by_capability[capability] = {
             "configured_count": len(matching),
             "available_count": len(available),

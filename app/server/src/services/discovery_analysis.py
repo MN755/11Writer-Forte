@@ -23,15 +23,18 @@ import hashlib
 import html
 import ipaddress
 import json
+import logging
+import math
 import posixpath
 import re
 from collections import Counter
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
 from io import StringIO
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any
 from urllib.parse import (
     parse_qsl,
     quote,
@@ -42,6 +45,9 @@ from urllib.parse import (
 )
 from xml.etree import ElementTree
 
+from src.errors import redacted_exception_info
+
+logger = logging.getLogger("elevenwriter.runtime." + __name__)
 
 MAX_DOCUMENT_BYTES = 4 * 1024 * 1024
 MAX_EXTRACTED_TEXT = 256 * 1024
@@ -400,6 +406,7 @@ def analyze_document(
             parser.feed(text)
             parser.close()
         except Exception:
+            logger.error("discovery analysis operation failed", exc_info=redacted_exception_info())
             warnings.append("malformed_html")
         effective_base = urljoin(canonical, parser.base_href) if parser.base_href else canonical
         raw_links.extend(parser.raw_links)
@@ -921,7 +928,7 @@ class _DiscoveryHTMLParser(HTMLParser):
                     self.raw_links.append(
                         (match.group(1), "html_meta", "refresh", None, False, None)
                     )
-            elif content and (name.endswith(":url") or name.endswith("_url")):
+            elif content and (name.endswith((":url", "_url"))):
                 self.raw_links.append(
                     (content, "html_meta", name or "reference", None, False, None)
                 )
@@ -977,9 +984,10 @@ class _DiscoveryHTMLParser(HTMLParser):
             self._in_th = False
 
     def handle_data(self, data: str) -> None:
-        if self._script_type or (self.tags.get("script") and self._skip_text):
-            if self._script_parts is not None:
-                self._script_parts.append(data)
+        if (self._script_type or (self.tags.get("script") and self._skip_text)) and (
+            self._script_parts is not None
+        ):
+            self._script_parts.append(data)
         if self._in_title:
             self._title_parts.append(data)
         if self._anchor_index is not None:
@@ -1525,9 +1533,10 @@ def _extract_csv_signals(
         if name in {"url", "uri", "link", "endpoint", "downloadurl"}
     ]
     for row in rows[1:201]:
-        if lat_index is not None and lon_index is not None:
-            if lat_index < len(row) and lon_index < len(row):
-                _add_point(geo, _as_float(row[lat_index]), _as_float(row[lon_index]), "csv")
+        if (lat_index is not None and lon_index is not None) and (
+            lat_index < len(row) and lon_index < len(row)
+        ):
+            _add_point(geo, _as_float(row[lat_index]), _as_float(row[lon_index]), "csv")
         for index in url_indexes:
             if index < len(row) and row[index]:
                 links.append((row[index], "csv_url", headers[index], None, False, None))
@@ -2469,7 +2478,7 @@ def _as_float(value: Any) -> float | None:
         number = float(value)
     except (TypeError, ValueError):
         return None
-    return number if number == number and number not in {float("inf"), float("-inf")} else None
+    return number if math.isfinite(number) else None
 
 
 def _first_numeric(mapping: Mapping[str, Any], *keys: str) -> float | None:
@@ -2512,7 +2521,7 @@ def _text_line_shapes(text: str) -> list[str]:
     return sorted(shapes)[:50]
 
 
-def _clamp(value: float | int) -> float:
+def _clamp(value: float) -> float:
     try:
         number = float(value)
     except (TypeError, ValueError) as exc:

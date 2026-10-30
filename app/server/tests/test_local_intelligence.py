@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import hashlib
-from pathlib import Path
 import socket
 import sys
+from pathlib import Path
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-import pytest
 
 from src.routes.local_intelligence import router
 from src.services.artifact_store_service import ArtifactOwner, ArtifactStore
@@ -50,7 +50,13 @@ def _approved_payload(
         "benchmark": {
             "benchmark_version": "corpus-2026.07",
             "corpus_manifest_sha256": _sha(b"licensed benchmark corpus"),
-            "metrics": {"precision": 0.9, "recall": 0.85, "false_alert_rate": 0.04, "latency_ms": 12.5, "top_k_recall": 0.9},
+            "metrics": {
+                "precision": 0.9,
+                "recall": 0.85,
+                "false_alert_rate": 0.04,
+                "latency_ms": 12.5,
+                "top_k_recall": 0.9,
+            },
             "environment": {"gpu": "RTX 4070 Laptop", "driver": "provisioned"},
         },
     }
@@ -73,7 +79,9 @@ def _approved_payload(
 
 def _artifact(data_dir: Path) -> str:
     store = ArtifactStore(data_dir / "artifact_store")
-    return store.ingest_bytes(b"local input bytes", role="raw", owner=ArtifactOwner("test", "input")).artifact_uid
+    return store.ingest_bytes(
+        b"local input bytes", role="raw", owner=ArtifactOwner("test", "input")
+    ).artifact_uid
 
 
 def test_registry_rejects_fixture_and_checksum_mismatch(tmp_path: Path) -> None:
@@ -94,7 +102,10 @@ def test_registry_rejects_fixture_and_checksum_mismatch(tmp_path: Path) -> None:
     development = _approved_payload(tmp_path, runtime="artifact_hash_features_v1")
     with pytest.raises(LocalIntelligenceError, match="development-only"):
         ModelRegistry(tmp_path).approve(development)
-    assert ModelRegistry(tmp_path, allow_development_runner=True).approve(development).runtime == "artifact_hash_features_v1"
+    assert (
+        ModelRegistry(tmp_path, allow_development_runner=True).approve(development).runtime
+        == "artifact_hash_features_v1"
+    )
 
 
 def test_artifact_only_command_runtime_selects_gpu_or_bounded_cpu_fallback(tmp_path: Path) -> None:
@@ -102,8 +113,12 @@ def test_artifact_only_command_runtime_selects_gpu_or_bounded_cpu_fallback(tmp_p
     manifest = registry.approve(_approved_payload(tmp_path))
     artifact_id = _artifact(tmp_path)
 
-    gpu = LocalIntelligenceRuntime(tmp_path, gpu_available=True).run(artifact_id=artifact_id, model_id=manifest.model_id)
-    cpu = LocalIntelligenceRuntime(tmp_path, gpu_available=False).run(artifact_id=artifact_id, model_id=manifest.model_id)
+    gpu = LocalIntelligenceRuntime(tmp_path, gpu_available=True).run(
+        artifact_id=artifact_id, model_id=manifest.model_id
+    )
+    cpu = LocalIntelligenceRuntime(tmp_path, gpu_available=False).run(
+        artifact_id=artifact_id, model_id=manifest.model_id
+    )
     assert gpu.device == "cuda:0" and not gpu.cpu_fallback
     assert cpu.device == "cpu" and cpu.cpu_fallback
     assert gpu.features["seen_artifact_id"] == artifact_id
@@ -111,14 +126,18 @@ def test_artifact_only_command_runtime_selects_gpu_or_bounded_cpu_fallback(tmp_p
 
 
 def test_no_network_guard_fails_closed() -> None:
-    with no_network_runtime_guard():
-        with pytest.raises(LocalIntelligenceError, match="Outbound network"):
-            socket.create_connection(("example.com", 443))
+    with (
+        no_network_runtime_guard(),
+        pytest.raises(LocalIntelligenceError, match="Outbound network"),
+    ):
+        socket.create_connection(("example.com", 443))
     # The process-level patch is restored after the bounded inference scope.
     assert socket.getaddrinfo is not None
 
 
-def test_routes_approve_and_infer_artifact_ids_only(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_routes_approve_and_infer_artifact_ids_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("ELEVENWRITER_DATA_DIR", str(tmp_path))
     from src.config import reset_settings_cache
 
@@ -127,12 +146,30 @@ def test_routes_approve_and_infer_artifact_ids_only(tmp_path: Path, monkeypatch:
     app.include_router(router, prefix="/api")
     artifact_id = _artifact(tmp_path)
     with TestClient(app) as client:
-        assert client.get("/api/local-intelligence/health").json()["fixture_inference"] == "rejected"
-        approved = client.post("/api/local-intelligence/models/approve", json=_approved_payload(tmp_path))
+        assert (
+            client.get("/api/local-intelligence/health").json()["fixture_inference"] == "rejected"
+        )
+        approved = client.post(
+            "/api/local-intelligence/models/approve", json=_approved_payload(tmp_path)
+        )
         assert approved.status_code == 201
-        rejected = client.post("/api/local-intelligence/infer", json={"artifact_id": artifact_id, "model_id": "local-image-features", "input_path": "C:/nope"})
+        rejected = client.post(
+            "/api/local-intelligence/infer",
+            json={
+                "artifact_id": artifact_id,
+                "model_id": "local-image-features",
+                "input_path": "C:/nope",
+            },
+        )
         assert rejected.status_code == 422
-        response = client.post("/api/local-intelligence/infer", json={"artifact_id": artifact_id, "model_id": "local-image-features", "prefer_gpu": False})
+        response = client.post(
+            "/api/local-intelligence/infer",
+            json={
+                "artifact_id": artifact_id,
+                "model_id": "local-image-features",
+                "prefer_gpu": False,
+            },
+        )
         assert response.status_code == 200
         assert response.json()["device"] == "cpu"
     reset_settings_cache()

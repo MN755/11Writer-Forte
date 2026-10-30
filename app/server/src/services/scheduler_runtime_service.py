@@ -4,8 +4,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from sqlalchemy.orm import Session
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import Session, sessionmaker
 
 from src.models import ScheduledTaskRunORM
 from src.services.scheduler_service import run_due_tasks

@@ -7,11 +7,12 @@ record attempts and request the next eligible item without changing planning pol
 
 from __future__ import annotations
 
+import re
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from enum import Enum
-import re
-from typing import Iterable, Mapping, Protocol
+from typing import Protocol
 from urllib.parse import urlparse
 
 
@@ -93,7 +94,7 @@ class SourceCatalogEntry:
         return (urlparse(self.target_uri).hostname or "").lower()
 
     @classmethod
-    def from_mapping(cls, value: Mapping[str, object]) -> "SourceCatalogEntry":
+    def from_mapping(cls, value: Mapping[str, object]) -> SourceCatalogEntry:
         raw_class = str(value.get("source_class") or value.get("domain_class") or "other_public")
         try:
             source_class = SourceClass(raw_class)

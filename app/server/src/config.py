@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-from functools import lru_cache
 import ipaddress
+from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
 
 OperatorScope = Literal["read", "operate", "admin"]
 
@@ -100,7 +99,9 @@ class Settings(BaseSettings):
                 for network in self.local_api_trusted_networks
             ]
         except ValueError as exc:
-            raise ValueError("ELEVENWRITER_LOCAL_API_TRUSTED_NETWORKS contains an invalid CIDR.") from exc
+            raise ValueError(
+                "ELEVENWRITER_LOCAL_API_TRUSTED_NETWORKS contains an invalid CIDR."
+            ) from exc
 
         credentials = self.configured_operator_tokens()
         if self.auth_mode == "token":
@@ -111,7 +112,9 @@ class Settings(BaseSettings):
                 )
             for principal, credential in credentials.items():
                 if not principal or len(principal) > 80:
-                    raise ValueError("Operator principal names must be between 1 and 80 characters.")
+                    raise ValueError(
+                        "Operator principal names must be between 1 and 80 characters."
+                    )
                 if len(credential.token.get_secret_value()) < 32:
                     raise ValueError(
                         f"Operator token for {principal!r} is too short; use at least 32 random characters."
@@ -175,6 +178,7 @@ class Settings(BaseSettings):
         if self.clickhouse_r2_storage_mode == "r2_disk" and self.clickhouse_r2_storage_configured:
             return self.clickhouse_r2_storage_policy
         return None
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

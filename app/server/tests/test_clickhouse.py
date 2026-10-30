@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from typing_extensions import Self
 
 from src.config import reset_settings_cache
 from src.services import clickhouse_service
@@ -16,7 +17,7 @@ class FakeResponse:
     def read(self) -> bytes:
         return self.payload.encode("utf-8")
 
-    def __enter__(self) -> "FakeResponse":
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:

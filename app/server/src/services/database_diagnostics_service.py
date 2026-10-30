@@ -9,11 +9,11 @@ from src.config import get_settings
 from src.db import REQUIRED_ADDITIVE_COLUMNS, REQUIRED_POSTGIS_INDEX_DDLS
 from src.models import (
     AlertORM,
+    CameraInventoryORM,
+    CameraSourceInventoryORM,
     CandidateHealthCheckORM,
     CandidatePromotionDecisionORM,
     CandidateSuppressionORM,
-    CameraInventoryORM,
-    CameraSourceInventoryORM,
     CustodyLogORM,
     DataLayerORM,
     DiscoveryArtifactORM,
@@ -29,18 +29,18 @@ from src.models import (
     GeofenceORM,
     LocalImportRunORM,
     ObservationORM,
-    RobotsObservationORM,
     ResearchProviderORM,
     ResearchProviderRunORM,
+    RobotsObservationORM,
     ScheduledTaskORM,
     ScheduledTaskRunORM,
     SituationProductORM,
-    StorageObjectORM,
-    SourceDefinitionORM,
     SourceCandidateORM,
     SourceCandidateRevisionORM,
+    SourceDefinitionORM,
     SourceRunORM,
     SourceTrustProfileORM,
+    StorageObjectORM,
 )
 
 TABLE_COUNT_MODELS: tuple[tuple[str, object], ...] = (

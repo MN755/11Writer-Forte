@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
-from src.services.discovery_fetch import FetchResult
 from src.services import research_provider_service
+from src.services.discovery_fetch import FetchResult
 
 
 def test_provider_run_is_idempotent_leased_and_collected_through_safe_boundary(
